@@ -11,7 +11,8 @@ Chaque jalon a un critère d'acceptation vérifiable. Un jalon n'est pas termin�
 tant que son critère ne passe pas sur du vrai matériel et un vrai broker.
 
 **État au 17 septembre 2026 : jalons 0, 1, 2 et 4 terminés et éprouvés** sur un
-Mosquitto 1.5.7 et un parc Shelly réel.
+Mosquitto 1.5.7 et un parc Shelly réel. **Le jalon 3 est écrit et contrôlé hors
+ligne, mais pas éprouvé** : voir ci-dessous.
 
 Deux choses ont bougé depuis, et l'ordre ci-dessous n'en rendait plus compte :
 
@@ -28,19 +29,21 @@ Deux choses ont bougé depuis, et l'ordre ci-dessous n'en rendait plus compte :
   que deux issues, tout créer ou ne rien créer. L'explorateur de topics, lui,
   reste à écrire.
 
-**Le jalon 3 (Shelly Gen2+) reste à faire, et il est repoussé volontairement.**
-Aucun appareil Gen2+ n'était joignable au moment de l'écrire : sur les deux
-présents, l'un était hors tension et l'autre, alimenté par pile, dort la plupart
-du temps — son `online: true` retenu datait de sa dernière connexion. Or tout le
-jalon repose sur une conversation RPC avec l'appareil : sans appareil qui
-réponde, on peut l'écrire mais pas le prouver, et son critère d'acceptation est
-précisément qu'un Shelly moderne apparaisse tout seul.
+**Le jalon 3 (Shelly Gen2+) est écrit, et c'est la seconde branche de
+l'alternative qui a été prise.** Aucun appareil Gen2+ n'était joignable : sur les
+deux présents, l'un était hors tension et l'autre, alimenté par pile, dort la
+plupart du temps — son `online: true` retenu datait de sa dernière connexion.
+L'adapter a donc été écrit d'après la documentation officielle et contrôlé sur
+des conversations reconstituées, avec exactement la réserve que ce plan
+annonçait : **un jeu de données écrit d'après une lecture de la documentation
+encode la compréhension qu'on en a, et peut donc confirmer une erreur qu'on
+partagerait avec lui.** Les vingt-deux contrôles de `tests/check-shelly-gen2.php`
+établissent que l'adapter fait ce qu'on a voulu, jamais qu'un Shelly réel répond
+ainsi.
 
-Il sera fait dès qu'un Gen2, Gen3 ou Gen4 pourra être mis sous tension. À
-défaut, il le sera contre un Shelly émulé écrit d'après l'API officielle — avec
-la réserve que cela suppose : un émulateur encode la compréhension qu'on a de
-l'API et peut donc confirmer une erreur qu'on partagerait avec lui. La
-validation sur matériel réel resterait à faire dans ce cas.
+**La validation sur matériel reste donc entière, et le critère d'acceptation
+n'est pas atteint.** Trois points en particulier ne se tranchent pas sans
+appareil, et ils sont notés à la fin du jalon.
 
 **Le jalon 4 (Gen1) est traité avant lui**, le parc Gen1 étant nombreux et
 vivant, donc entièrement vérifiable.
@@ -111,7 +114,7 @@ base sur re-réception d'une découverte identique.
 
 ---
 
-## Jalon 3 — Shelly Gen2 / Gen3 / Gen4 *(le cœur du sujet)*
+## Jalon 3 — Shelly Gen2 / Gen3 / Gen4 *(écrit, non éprouvé)*
 
 - Adapter `shelly.gen2` : écoute de `+/online` et `+/events/rpc` — les deux
   seuls topics actifs par défaut sur un Shelly moderne.
@@ -137,6 +140,56 @@ du Shelly** (`status_ntf` reste à sa valeur d'usine), avec toutes ses
 commandes, leurs types génériques et leurs unités. Un modèle absent du
 catalogue est découvert aussi complètement qu'un modèle connu — c'est le test
 qui valide toute l'approche.
+
+**Ce qui a réellement été livré**, et en quoi cela diffère du plan :
+
+- `Shelly.GetDeviceInfo`, puis `Shelly.GetComponents` paginée avec `status` et
+  `config`, et repli `Shelly.GetStatus` + `Shelly.GetConfig` sur le 404 « No
+  handler for » d'un micrologiciel antérieur à la 1.x — conforme au plan. Le
+  paramètre `keys` n'est jamais employé : il n'existe qu'à partir de la version
+  1.5.0, et un appareil plus ancien refuserait la requête entière.
+- La découverte ne se fonde pas sur `+/online` et `+/events/rpc` seuls, comme le
+  plan le prévoyait, mais sur **trois** voies : ces deux-là, plus l'annonce
+  diffusée `shellies/command` → `shellies/announce`, que le plan ignorait et que
+  la documentation donne pour active en sortie d'usine depuis la version 0.14.0.
+  Aucune n'est indispensable aux autres — et c'est délibéré, la troisième étant
+  précisément celle dont la documentation et la pratique se contredisent.
+- **Le `profile` n'a pas eu à trancher `switch` contre `cover`** : un appareil en
+  profil volet n'énumère tout simplement plus de composant `switch`. Le piège de
+  la génération 1 n'existe pas ici, et l'aiguillage prévu au plan aurait été du
+  code mort.
+- **Le catalogue est purement décoratif**, comme annoncé, et son repli est
+  meilleur que prévu : à défaut de fiche, l'appareil publie lui-même un nom
+  d'application lisible.
+- **Les commandes d'événement ne sont pas par entrée mais par appareil** — deux
+  commandes, l'événement et le composant concerné. Le plan supposait des
+  commandes `BUTTON` par entrée ; c'est impossible sans étendre le langage de
+  sélecteurs du noyau, un chemin par points ne sachant pas filtrer sur la valeur
+  d'un champ voisin. L'extensibilité du plugin ayant été démontrée sans toucher
+  au noyau (jalon 4 bis), la promesse a été tenue plutôt que la forme.
+- `Shelly.ListMethods` n'est pas appelée : une requête de plus pour deviner ce
+  qu'une erreur dit déjà.
+
+**Les trois points qui ne se trancheront que sur matériel :**
+
+1. **`shellies/command` + `announce` répond-il vraiment sur un Gen2 ?** La
+   documentation officielle l'affirme, un fil communautaire affirme le
+   contraire, et aucune des intégrations existantes ne s'en sert — toutes font
+   saisir la liste des appareils à la main. Si cela répond, la découverte est
+   immédiate ; sinon, `online` et `events/rpc` la font quand même. L'essai coûte
+   une minute et vaut d'être fait en premier.
+2. **Le champ `src` d'une notification reste-t-il l'identifiant de l'appareil
+   quand un préfixe personnalisé est défini ?** Les deux exemples observés dans
+   la nature avaient un préfixe d'usine, donc indiscernable.
+3. **Le délai de réponse réel d'un appareil sur secteur.** Aucun chiffre n'est
+   documenté ; cinq secondes et trois tentatives sont un pari généreux, à
+   ajuster.
+
+**Et une limite qui, elle, ne se corrigera pas** : `events/rpc` n'étant pas
+retenu, les commandes gardent leur dernière valeur au redémarrage du démon
+jusqu'à ce que l'appareil reparle. `NotifyFullStatus` n'est poussé sur MQTT que
+par les appareils sur pile, et `status/<composant>` suppose de retourner
+`status_ntf` sur l'appareil — ce que le critère d'acceptation interdit.
 
 ---
 

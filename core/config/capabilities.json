@@ -264,6 +264,16 @@
             "isVisible": 1,
             "order": 901
         },
+        "generic.binary": {
+            "name": "État",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "GENERIC_INFO",
+            "unit": "",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 902
+        },
         "generic.numeric": {
             "name": "Valeur",
             "type": "info",
@@ -283,6 +293,16 @@
             "isVisible": 1,
             "isHistorized": 0,
             "order": 98
+        },
+        "generic.text": {
+            "name": "Texte",
+            "type": "action",
+            "subType": "message",
+            "generic_type": "GENERIC_ACTION",
+            "unit": "",
+            "links": "generic.value",
+            "isVisible": 1,
+            "order": 903
         },
         "generic.value": {
             "name": "Valeur",
@@ -398,6 +418,30 @@
                 "mobile": "core::light"
             }
         },
+        "light.white": {
+            "name": "Voie blanche",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "LIGHT_SLIDER",
+            "unit": "%",
+            "links": "light.white_state",
+            "isVisible": 1,
+            "order": 27,
+            "template": {
+                "dashboard": "core::light",
+                "mobile": "core::light"
+            }
+        },
+        "light.white_state": {
+            "name": "Blanc",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "LIGHT_BRIGHTNESS",
+            "unit": "%",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 28
+        },
         "lock.close": {
             "name": "Fermer",
             "type": "action",
@@ -448,6 +492,16 @@
             "isHistorized": 1,
             "order": 50
         },
+        "power.apparent": {
+            "name": "Puissance apparente",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "VA",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 54
+        },
         "power.current": {
             "name": "Courant",
             "type": "info",
@@ -467,6 +521,16 @@
             "isVisible": 0,
             "isHistorized": 0,
             "order": 54
+        },
+        "power.frequency": {
+            "name": "Fréquence",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "Hz",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 55
         },
         "power.reactive": {
             "name": "Puissance réactive",

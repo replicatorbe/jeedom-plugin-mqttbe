@@ -209,13 +209,27 @@ sur demande. Une entrée ressemble à :
 {
   "topic": "shellyplus1pm-a8032abc1234/events/rpc",
   "targets": [
-    { "cmdId": 1842, "selector": {"type":"shelly.notify","component":"switch:0","field":"output"},
-      "map": {"true":"1","false":"0"}, "repeat": "onchange" },
-    { "cmdId": 1843, "selector": {"type":"shelly.notify","component":"switch:0","field":"apower"},
+    { "cmdId": 1842, "selector": {"type":"json","path":"params.switch:0.output"},
+      "repeat": "onchange" },
+    { "cmdId": 1843, "selector": {"type":"json","path":"params.switch:0.apower"},
       "round": 1, "repeat": "onchange" }
   ]
 }
 ```
+
+Une version antérieure de ce document donnait ici un sélecteur `shelly.notify`,
+avec des champs `component` et `field`. **Il n'a jamais existé**, et il n'était
+pas nécessaire : un chemin par points traverse `params`, puis `switch:0`, puis
+`output` sans qu'on ait rien à échapper — le `:` d'une clé de composant ne coupe
+pas un chemin. Ni la fabrique ni le démon ne reconnaissent autre chose que
+`raw` et `json` ; un sélecteur d'un troisième type est conservé en configuration,
+journalisé, et jamais appliqué. Écrire un adapter qui en produirait donnerait
+des commandes définitivement vides.
+
+Noter aussi qu'aucune table de correspondance n'apparaît sur `output` : le
+démon traduit lui-même un booléen JSON en `1` ou `0`. Elle est en revanche
+indispensable en génération 1, dont les topics portent les chaînes `on` et
+`off`.
 
 Le démon indexe ces entrées dans un arbre de topics (exact d'abord, puis
 jokers `+` et `#`), applique le sélecteur (chemin JSON, notification Shelly,

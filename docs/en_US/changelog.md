@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.2 — 17 September 2026
+
+This release brings discovery of second-generation Shelly devices and later —
+the Plus, Pro and Mini ranges, in Gen2, Gen3 and Gen4.
+
+### Shelly Gen2, Gen3 and Gen4
+
+- **Everything goes through the broker, and nothing else.** A modern Shelly does
+  not publish its values on separate topics the way the first generation does:
+  it holds a conversation. The plugin asks for its identity, then for the list
+  of its components, and it answers — all over MQTT, with no request ever
+  reaching the device by any other route.
+- **Nothing to configure on the device** beyond enabling MQTT. The settings
+  discovery relies on are on out of the box, and the plugin changes none of
+  them. Other integrations reach into the device to flip its "status
+  notifications" setting; this one refuses to, and manages without.
+- **A device is discovered whatever its topic prefix**, including a custom
+  multi-level prefix such as `home/living/plug`. The plugin announces itself to
+  the whole estate, listens for devices introducing themselves, and also
+  recognises those it merely overheard.
+- **The name you gave the device is picked up**, along with the name of each
+  output when there is more than one — "Desk plug" rather than "Output 1".
+  Unlike the first generation, no request is needed to obtain it: the device
+  publishes it itself.
+- **Battery sensors are never polled.** They sleep; the plugin waits for them to
+  push their full state, which they do on every wake-up. They are given no
+  "connected" indicator either: their link drops on every sleep, and showing it
+  would declare them broken almost permanently.
+- **A roller shutter is a roller shutter.** A Shelly 2PM in cover mode produces
+  a shutter with its position, its three buttons and its slider, not two
+  switches that would command nothing. The slider appears only when the device
+  is calibrated and can therefore act on it.
+- **Energy readings are converted.** A modern Shelly counts in watt-hours; the
+  command declares kWh and divides. Without that, a meter would read a thousand
+  times its true value.
+- **Older firmware is supported**: devices that cannot enumerate their
+  components are queried differently, and discovered just as completely.
+- **Components recognised**: relay outputs, covers, lights (white, colour, white
+  channel, colour temperature), inputs in their four modes, power meters,
+  single- and three-phase energy meters with their energy stores, temperature
+  and humidity sensors, illuminance, voltmeters, battery power, smoke and flood
+  detectors, presence zones, user-created virtual components, and the state of
+  the device itself.
+- **A mixed estate produces no duplicates.** A device carries the same identity
+  whichever generation discovered it.
+
+### What remains to be done, said plainly
+
+This discovery is written from the manufacturer's official documentation and
+checked against reconstructed conversations: no Gen2 device was available at the
+time of writing. The checks establish that the plugin does what was intended,
+not that a real Shelly answers that way. Validation against hardware remains to
+be done.
+
+Two known limits, described in the documentation: values are not refreshed when
+Jeedom restarts until the device has something to announce, and button presses
+are not split per input.
+
+### Fixes
+
+- **A modern Shelly is no longer mistaken for a first-generation one.** Both
+  generations share an announce topic, and the Gen1 adapter accepted what Gen2
+  devices published there: it built a device on topics that do not exist, mute
+  forever, which also took the place of the real one.
+- The capability vocabulary gains a generic binary state, apparent power,
+  frequency, a light's white channel, and writing a text value.
+- A configuration key declared twice has been cleaned up.
+
 ## 0.1 — 17 September 2026
 
 First release. It brings the link to the broker, automatic discovery of

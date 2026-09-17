@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.2 — 17 septembre 2026
+
+Cette version apporte la découverte des Shelly de deuxième génération et
+suivantes — les gammes Plus, Pro et Mini, en Gen2, Gen3 et Gen4.
+
+### Les Shelly Gen2, Gen3 et Gen4
+
+- **Tout passe par le broker, et rien d'autre.** Un Shelly moderne ne publie pas
+  ses valeurs sur des topics séparés comme le fait la génération 1 : il tient une
+  conversation. Le plugin lui demande son identité, puis la liste de ses
+  composants, et il répond — le tout en MQTT, sans qu'aucune requête ne parte
+  vers l'appareil par un autre chemin.
+- **Rien à régler sur l'appareil**, hormis activer MQTT. Les réglages dont la
+  découverte dépend sont actifs en sortie d'usine, et le plugin n'en modifie
+  aucun. D'autres intégrations vont retourner le réglage « notifications de
+  statut » sur l'appareil ; celle-ci s'y refuse, et fait sans.
+- **Un appareil est découvert quel que soit son préfixe de topic**, y compris un
+  préfixe personnalisé à plusieurs niveaux comme `maison/salon/prise`. Le plugin
+  se signale à tout le parc, écoute les appareils qui se présentent d'eux-mêmes,
+  et reconnaît aussi ceux qu'il n'a fait qu'entendre passer.
+- **Le nom que vous avez donné à l'appareil est repris**, ainsi que celui de
+  chaque sortie quand il y en a plusieurs — « Prise bureau » plutôt que
+  « Sortie 1 ». Contrairement à la génération 1, aucune requête n'est nécessaire
+  pour l'obtenir : l'appareil le publie lui-même.
+- **Les capteurs sur pile ne sont jamais interrogés.** Ils dorment ; on attend
+  qu'ils poussent leur état complet, ce qu'ils font à chaque réveil. Ils ne
+  reçoivent pas non plus d'indicateur « connecté » : leur liaison est coupée à
+  chaque sommeil, et l'afficher les déclarerait en panne presque en permanence.
+- **Un volet est un volet.** Un Shelly 2PM configuré en mode volet produit un
+  volet avec sa position, ses trois boutons et son curseur, et pas deux
+  interrupteurs qui ne commanderaient rien. Le curseur n'apparaît que si
+  l'appareil est calibré et sait donc s'y rendre.
+- **Les énergies sont converties.** Un Shelly moderne compte en watt-heures ; la
+  commande annonce des kWh et divise. Sans cela, un compteur afficherait mille
+  fois sa vraie valeur.
+- **Les micrologiciels anciens sont pris en charge** : ceux qui ne savent pas
+  énumérer leurs composants sont interrogés autrement, et découverts tout aussi
+  complètement.
+- **Composants reconnus** : sorties de relais, volets, éclairages (blanc,
+  couleur, voie blanche, température de couleur), entrées dans leurs quatre
+  modes, wattmètres, compteurs mono et triphasés avec leurs bases d'énergie,
+  sondes de température et d'humidité, luminosité, voltmètres, alimentation sur
+  pile, détecteurs de fumée et de fuite d'eau, zones de présence, composants
+  virtuels créés par l'utilisateur, et l'état du boîtier lui-même.
+- **Un parc mixte ne produit aucun doublon.** Un appareil porte la même identité
+  quelle que soit la génération qui l'a découvert.
+
+### Ce qui reste à faire, et qui est dit franchement
+
+Cette découverte est écrite d'après la documentation officielle du constructeur
+et vérifiée sur des conversations reconstituées : aucun appareil Gen2 n'était
+disponible au moment de l'écrire. Les contrôles établissent que le plugin fait
+ce qu'on a voulu, pas qu'un Shelly réel répond ainsi. La validation sur matériel
+reste à faire.
+
+Deux limites connues, décrites dans la documentation : les valeurs ne sont pas
+rafraîchies au redémarrage de Jeedom tant que l'appareil n'a rien à annoncer, et
+les appuis sur les boutons ne sont pas séparés entrée par entrée.
+
+### Corrections
+
+- **Un Shelly moderne n'est plus pris pour un Shelly de première génération.**
+  Les deux générations partagent un topic d'annonce, et l'adapter Gen1 acceptait
+  ce que les Gen2 y publiaient : il en faisait un équipement aux topics
+  inexistants, muet pour toujours, qui occupait de surcroît la place du vrai.
+- Le vocabulaire des capacités gagne l'état binaire générique, la puissance
+  apparente, la fréquence, la voie blanche d'un éclairage et l'écriture d'un
+  texte.
+- Une clé de configuration déclarée deux fois a été nettoyée.
+
 ## 0.1 — 17 septembre 2026
 
 Première version. Elle apporte la liaison avec le broker, la découverte

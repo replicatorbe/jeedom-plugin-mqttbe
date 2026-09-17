@@ -35,19 +35,53 @@ None of this goes through third-party software. OpenMQTTGateway publishes on its
 own topics and the plugin reads them: a Home Assistant may be running next door,
 or not at all, and it makes no difference. That is precisely the point of MQTT.
 
+**Shelly Gen2, Gen3 and Gen4 are discovered too** — the Plus, Pro and Mini
+ranges. They do not work like the first generation: rather than publishing each
+value on its own topic, they hold a conversation. The plugin asks them what they
+can do, they answer, and all of it travels over the MQTT broker — no request
+ever reaches the device by any other route.
+
+Three practical consequences, worth knowing:
+
+- **there is nothing to configure on the device** beyond enabling MQTT, which
+  you have to do anyway. The "RPC notifications" and "MQTT control" settings are
+  on out of the box, and the plugin will never ask you to touch them;
+- **the name you gave the device in the Shelly app is picked up**, along with
+  the name of each output when there is more than one. Unlike the first
+  generation, the plugin does not have to go and fetch it from the device: the
+  device says it itself;
+- **battery sensors are never polled.** A Shelly H&T or a smoke detector sleeps
+  nearly all the time; the plugin waits for it to wake up and push its full
+  state, which it does on its own. In exchange, those devices carry no
+  "connected" indicator: their link drops on every sleep, and showing it would
+  declare them broken twenty-three hours a day.
+
 **Everything else is created by hand**, and the plugin is built for that: any
 device that publishes over MQTT can become a full Jeedom device, as long as you
 supply the topics yourself. How to do it is described below.
 
 ## What is not there yet
 
-Better said up front, so that nobody waits for devices that will not come:
+Better said up front, so that nobody waits in vain:
 
-- **Shelly Gen2, Gen3 and Gen4** (the Plus, Pro and Mini ranges) will not be
-  discovered. It is planned, and most of the surrounding work is done, but
-  discovering those devices means holding a conversation with them, and that
-  needs powered-on hardware to validate. Until it has been checked against real
-  devices, it is not shipped;
+- **Gen2+ discovery has not yet been proven against real hardware.** It is
+  written from the manufacturer's official documentation and checked against
+  reconstructed conversations, no device having been available at the time of
+  writing. That means something specific: the checks prove the plugin does what
+  was intended, not that a real Shelly answers that way. If a device does not
+  introduce itself as it should, that is an expected shortcoming rather than a
+  surprise — report it and it will be fixed;
+- **Gen2 values are not refreshed when Jeedom restarts.** A Gen2 announces its
+  readings only when they change, and nothing it publishes is kept by the
+  broker. Commands therefore hold the last known value until the device speaks
+  again — immediately for an energy meter, at the next state change for a
+  switch. There is no way to do better without changing the device's own
+  configuration, which the plugin refuses to do;
+- **Gen2 button presses are not split per input.** The device announces the
+  event and the component concerned in a single message; the plugin turns that
+  into two commands, *Last event* and *Event component*. A scenario reacting to
+  a double press on the second input tests both. Less direct than one command
+  per input, and just as accurate;
 - **Tasmota**, **Zigbee2MQTT** and the **Home Assistant** discovery protocol come
   after that.
 
@@ -74,7 +108,7 @@ hand; they simply will not appear on their own.
    same configuration page; if you miss it, the plugin's watchdog starts the
    daemon by itself within the minute.
 6. **Go back to the plugin page.** The *Daemon* badge turns to "Running", the
-   *Broker* badge to "Connected", and your Gen1 Shellys appear within seconds —
+   *Broker* badge to "Connected", and your Shellys appear within seconds —
    on startup the plugin asks the whole first generation to introduce itself.
    Devices are created without any need to reload the page, and a green banner
    tells you how many have arrived.
@@ -245,7 +279,7 @@ you have not read.
 ## Creating a device by hand
 
 This is how you bring into Jeedom a device that discovery cannot recognise yet: a
-Gen2 Shelly, a Tasmota, a home-made sensor, anything that publishes over MQTT.
+Tasmota, a home-made sensor, anything that publishes over MQTT.
 
 1. On the plugin page, click **"Add a device"** and give it a name.
 2. Fill in its **base topic**, for example

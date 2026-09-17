@@ -1,0 +1,465 @@
+{
+    "schema": 1,
+    "adapter": "shelly.gen2",
+    "comment": "Noms commerciaux des Shelly de deuxieme generation et suivantes. Ce fichier est DECORATIF : il ne decide d'aucun canal, d'aucune capacite et d'aucun topic. Un modele qui n'y figure pas est decouvert exactement comme un modele connu — c'est meme le controle qui valide toute l'approche : les capacites se lisent dans ce que l'appareil repond, jamais dans un catalogue ecrit a la main. Sans lui, l'equipement porte le nom d'application publie par l'appareil (« Plus1PM »), et a defaut son code constructeur. Un seul champ a des consequences : « battery ». Il dit que l'appareil dort et ne repondra a aucun appel RPC ; on ne l'interroge alors pas du tout, et son etat se lit dans le NotifyFullStatus qu'il pousse a son reveil. Sources : aioshelly (home-assistant-libs), ha-shellies-discovery-gen2, le binding openHAB et les fiches produit Shelly.",
+    "models": {
+        "S1CM-0DXW00": {
+            "name": "Shelly Camera",
+            "gen": 3
+        },
+        "S3BL-C010007AEU": {
+            "name": "Shelly Multicolor Bulb Gen3",
+            "gen": 3
+        },
+        "S3BL-D010009AEU": {
+            "name": "Shelly Duo Bulb Gen3",
+            "gen": 3
+        },
+        "S3DM-0010WW": {
+            "name": "Shelly Dimmer 0/1-10V PM Gen3",
+            "gen": 3
+        },
+        "S3DM-0A101WWL": {
+            "name": "Shelly Dimmer Gen3",
+            "gen": 3
+        },
+        "S3DM-0A1WW": {
+            "name": "Shelly DALI Dimmer Gen3",
+            "gen": 3
+        },
+        "S3EM-002CXCEU": {
+            "name": "Shelly EM Gen3",
+            "gen": 3
+        },
+        "S3EM-003CXCEU63": {
+            "name": "Shelly 3EM-63 Gen3",
+            "gen": 3
+        },
+        "S3GW-1DBT001": {
+            "name": "Shelly BLU Gateway Gen3",
+            "gen": 3
+        },
+        "S3MX-0A": {
+            "name": "Shelly X MOD1",
+            "gen": 3
+        },
+        "S3PL-00112EU": {
+            "name": "Shelly Plug S Gen3",
+            "gen": 3
+        },
+        "S3PL-10112EU": {
+            "name": "Shelly AZ Plug",
+            "gen": 3
+        },
+        "S3PL-20112EU": {
+            "name": "Shelly Outdoor Plug S Gen3",
+            "gen": 3
+        },
+        "S3PL-30110EU": {
+            "name": "Shelly Plug M Gen3",
+            "gen": 3
+        },
+        "S3PL-30116EU": {
+            "name": "Shelly Plug PM Gen3",
+            "gen": 3
+        },
+        "S3PM-001PCEU16": {
+            "name": "Shelly PM Mini Gen3",
+            "gen": 3
+        },
+        "S3SH-0A2P4EU": {
+            "name": "Shelly Shutter",
+            "gen": 3
+        },
+        "S3SN-0024X": {
+            "name": "Shelly i4 Gen3",
+            "gen": 3
+        },
+        "S3SN-0U12A": {
+            "name": "Shelly H&T Gen3",
+            "gen": 3,
+            "battery": true
+        },
+        "S3SN-0U53X": {
+            "name": "The Pill by Shelly",
+            "gen": 3
+        },
+        "S3SN-1U12A": {
+            "name": "Shelly AZ H&T",
+            "gen": 3,
+            "battery": true
+        },
+        "S3SW-001P16EU": {
+            "name": "Shelly 1PM Gen3",
+            "gen": 3
+        },
+        "S3SW-001P8EU": {
+            "name": "Shelly 1PM Mini Gen3",
+            "gen": 3
+        },
+        "S3SW-001X16EU": {
+            "name": "Shelly 1 Gen3",
+            "gen": 3
+        },
+        "S3SW-001X8EU": {
+            "name": "Shelly 1 Mini Gen3",
+            "gen": 3
+        },
+        "S3SW-002P16EU": {
+            "name": "Shelly 2PM Gen3",
+            "gen": 3
+        },
+        "S3SW-0A1X1EUL": {
+            "name": "Shelly 1L Gen3",
+            "gen": 3
+        },
+        "S3SW-0A2X4EUL": {
+            "name": "Shelly 2L Gen3",
+            "gen": 3
+        },
+        "S4DM-0010WW": {
+            "name": "Shelly Dimmer 0/1-10V PM Gen4",
+            "gen": 4
+        },
+        "S4DM-0A101WWL": {
+            "name": "Shelly Dimmer Gen4",
+            "gen": 4
+        },
+        "S4DM-0A102US": {
+            "name": "Shelly Dimmer Gen4 US",
+            "gen": 4
+        },
+        "S4EM-001CXCEU63": {
+            "name": "Shelly EM-63 Gen4",
+            "gen": 4
+        },
+        "S4EM-001PXCEU16": {
+            "name": "Shelly EM Mini Gen4",
+            "gen": 4
+        },
+        "S4EM-002CXCEU": {
+            "name": "Shelly EM Gen4",
+            "gen": 4
+        },
+        "S4PB-00CU000002": {
+            "name": "Cury by Shelly",
+            "gen": 4
+        },
+        "S4PL-00116US": {
+            "name": "Shelly Plug US Gen4",
+            "gen": 4
+        },
+        "S4PL-00415US": {
+            "name": "Shelly Power Strip 4 US Gen4",
+            "gen": 4
+        },
+        "S4PL-00416EU": {
+            "name": "Shelly Power Strip 4 Gen4",
+            "gen": 4
+        },
+        "S4PL-10416EU": {
+            "name": "Shelly Power Strip 4 Gen4",
+            "gen": 4
+        },
+        "S4SN-0071A": {
+            "name": "Shelly Flood Gen4",
+            "gen": 4,
+            "battery": true
+        },
+        "S4SN-0071Z": {
+            "name": "Shelly Flood S Gen4",
+            "gen": 4,
+            "battery": true
+        },
+        "S4SN-0A24X": {
+            "name": "Shelly i4 Gen4",
+            "gen": 4
+        },
+        "S4SN-0U61X": {
+            "name": "Shelly Presence Gen4",
+            "gen": 4
+        },
+        "S4SW-001P16EU": {
+            "name": "Shelly 1PM Gen4",
+            "gen": 4
+        },
+        "S4SW-001P8EU": {
+            "name": "Shelly 1PM Mini Gen4",
+            "gen": 4
+        },
+        "S4SW-001X16EU": {
+            "name": "Shelly 1 Gen4",
+            "gen": 4
+        },
+        "S4SW-001X8EU": {
+            "name": "Shelly 1 Mini Gen4",
+            "gen": 4
+        },
+        "S4SW-002P16EU": {
+            "name": "Shelly 2PM Gen4",
+            "gen": 4
+        },
+        "S4SW-0A1X1EUL": {
+            "name": "Shelly 1L Gen4",
+            "gen": 4
+        },
+        "S4SW-0A2X4EUL": {
+            "name": "Shelly 2L Gen4",
+            "gen": 4
+        },
+        "SAWD-0A1XX10EU1": {
+            "name": "Shelly Wall Display",
+            "gen": 2
+        },
+        "SAWD-2A1XX10EU1": {
+            "name": "Shelly Wall Display X2",
+            "gen": 2
+        },
+        "SAWD-3A1XE10EU2": {
+            "name": "Shelly Wall Display XL",
+            "gen": 2
+        },
+        "SAWD-5A1XX10EU0": {
+            "name": "Shelly Wall Display X2i",
+            "gen": 2
+        },
+        "SAWD-6A1XX10EU0": {
+            "name": "Shelly Wall Display X1i",
+            "gen": 2
+        },
+        "SNDC-0D4P10WW": {
+            "name": "Shelly Plus RGBW PM",
+            "gen": 2
+        },
+        "SNDM-00100WW": {
+            "name": "Shelly Plus 0-10V Dimmer",
+            "gen": 2
+        },
+        "SNDM-0013US": {
+            "name": "Shelly Plus Wall Dimmer",
+            "gen": 2
+        },
+        "SNGW-0A11WW010": {
+            "name": "Shelly Plus 10V",
+            "gen": 2
+        },
+        "SNGW-BT01": {
+            "name": "Shelly BLU Gateway",
+            "gen": 2
+        },
+        "SNPL-00110IT": {
+            "name": "Shelly Plus Plug IT",
+            "gen": 2
+        },
+        "SNPL-00112EU": {
+            "name": "Shelly Plus Plug S",
+            "gen": 2
+        },
+        "SNPL-00112UK": {
+            "name": "Shelly Plus Plug UK",
+            "gen": 2
+        },
+        "SNPL-00116US": {
+            "name": "Shelly Plus Plug US",
+            "gen": 2
+        },
+        "SNPL-10112EU": {
+            "name": "Shelly Plus Plug S",
+            "gen": 2
+        },
+        "SNPM-001PCEU16": {
+            "name": "Shelly Plus PM Mini",
+            "gen": 2
+        },
+        "SNSN-0013A": {
+            "name": "Shelly Plus H&T",
+            "gen": 2,
+            "battery": true
+        },
+        "SNSN-0024X": {
+            "name": "Shelly Plus i4",
+            "gen": 2
+        },
+        "SNSN-0031Z": {
+            "name": "Shelly Plus Smoke",
+            "gen": 2,
+            "battery": true
+        },
+        "SNSN-0043X": {
+            "name": "Shelly Plus Uni",
+            "gen": 2
+        },
+        "SNSN-0D24X": {
+            "name": "Shelly Plus i4DC",
+            "gen": 2
+        },
+        "SNSW-001P15UL": {
+            "name": "Shelly Plus 1PM UL",
+            "gen": 2
+        },
+        "SNSW-001P16EU": {
+            "name": "Shelly Plus 1PM",
+            "gen": 2
+        },
+        "SNSW-001P8EU": {
+            "name": "Shelly Plus 1PM Mini",
+            "gen": 2
+        },
+        "SNSW-001X15UL": {
+            "name": "Shelly Plus 1 UL",
+            "gen": 2
+        },
+        "SNSW-001X16EU": {
+            "name": "Shelly Plus 1",
+            "gen": 2
+        },
+        "SNSW-001X8EU": {
+            "name": "Shelly Plus 1 Mini",
+            "gen": 2
+        },
+        "SNSW-002P15UL": {
+            "name": "Shelly Plus 2PM UL",
+            "gen": 2
+        },
+        "SNSW-002P16EU": {
+            "name": "Shelly Plus 2PM",
+            "gen": 2
+        },
+        "SNSW-102P16EU": {
+            "name": "Shelly Plus 2PM",
+            "gen": 2
+        },
+        "SPCB-01VENEU": {
+            "name": "Shelly Pro 1CB",
+            "gen": 2
+        },
+        "SPCB-02VENEU": {
+            "name": "Shelly Pro 2CB",
+            "gen": 2
+        },
+        "SPCB-03VENEU": {
+            "name": "Shelly Pro 3CB",
+            "gen": 2
+        },
+        "SPCB-04VENEU": {
+            "name": "Shelly Pro 4CB",
+            "gen": 2
+        },
+        "SPCC-001PE10EU": {
+            "name": "Shelly Pro Dimmer 0/1-10V PM",
+            "gen": 2
+        },
+        "SPDC-0D5PE16EU": {
+            "name": "Shelly Pro RGBWW PM",
+            "gen": 2
+        },
+        "SPDM-001PE01EU": {
+            "name": "Shelly Pro Dimmer 1PM",
+            "gen": 2
+        },
+        "SPDM-002PE01EU": {
+            "name": "Shelly Pro Dimmer 2PM",
+            "gen": 2
+        },
+        "SPEM-002CEBEU50": {
+            "name": "Shelly Pro EM",
+            "gen": 2
+        },
+        "SPEM-003CEBEU": {
+            "name": "Shelly Pro 3EM",
+            "gen": 2
+        },
+        "SPEM-003CEBEU120": {
+            "name": "Shelly Pro 3EM",
+            "gen": 2
+        },
+        "SPEM-003CEBEU400": {
+            "name": "Shelly Pro 3EM-400",
+            "gen": 2
+        },
+        "SPEM-003CEBEU63": {
+            "name": "Shelly Pro 3EM-3CT63",
+            "gen": 2
+        },
+        "SPSH-002PE16EU": {
+            "name": "Shelly Pro Dual Cover PM",
+            "gen": 2
+        },
+        "SPSW-001PE16EU": {
+            "name": "Shelly Pro 1PM",
+            "gen": 2
+        },
+        "SPSW-001XE16EU": {
+            "name": "Shelly Pro 1",
+            "gen": 2
+        },
+        "SPSW-002PE16EU": {
+            "name": "Shelly Pro 2PM",
+            "gen": 2
+        },
+        "SPSW-002XE16EU": {
+            "name": "Shelly Pro 2",
+            "gen": 2
+        },
+        "SPSW-003XE16EU": {
+            "name": "Shelly Pro 3",
+            "gen": 2
+        },
+        "SPSW-004PE16EU": {
+            "name": "Shelly Pro 4PM",
+            "gen": 2
+        },
+        "SPSW-101PE16EU": {
+            "name": "Shelly Pro 1PM",
+            "gen": 2
+        },
+        "SPSW-101XE16EU": {
+            "name": "Shelly Pro 1",
+            "gen": 2
+        },
+        "SPSW-102PE16EU": {
+            "name": "Shelly Pro 2PM",
+            "gen": 2
+        },
+        "SPSW-102XE16EU": {
+            "name": "Shelly Pro 2",
+            "gen": 2
+        },
+        "SPSW-104PE16EU": {
+            "name": "Shelly Pro 4PM",
+            "gen": 2
+        },
+        "SPSW-201PE15UL": {
+            "name": "Shelly Pro 1PM UL",
+            "gen": 2
+        },
+        "SPSW-201PE16EU": {
+            "name": "Shelly Pro 1PM",
+            "gen": 2
+        },
+        "SPSW-201XE15UL": {
+            "name": "Shelly Pro 1 UL",
+            "gen": 2
+        },
+        "SPSW-201XE16EU": {
+            "name": "Shelly Pro 1",
+            "gen": 2
+        },
+        "SPSW-202PE16EU": {
+            "name": "Shelly Pro 2PM",
+            "gen": 2
+        },
+        "SPSW-202XE12UL": {
+            "name": "Shelly Pro 2 UL",
+            "gen": 2
+        },
+        "SPSW-202XE16EU": {
+            "name": "Shelly Pro 2",
+            "gen": 2
+        },
+        "SPSW-204PE16EU": {
+            "name": "Shelly Pro 4PM",
+            "gen": 2
+        }
+    }
+}

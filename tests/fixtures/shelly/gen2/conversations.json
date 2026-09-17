@@ -1,0 +1,1197 @@
+{
+  "comment": "Conversations RPC et trames de notification des Shelly de generation 2 et suivantes. AUCUNE N'EST UNE CAPTURE REELLE : personne ici n'avait de Gen2 sous tension au moment de l'ecrire. Elles sont reconstituees d'apres la documentation officielle https://shelly-api-docs.shelly.cloud/gen2/ — structure de Shelly.GetDeviceInfo, Shelly.GetComponents, Shelly.GetStatus et des objets de statut composant par composant — puis anonymisees comme les captures Gen1 : SSID « reseau-essai », adresses en 192.0.2.x reservees a la documentation, MAC et identifiants fabriques. La reserve que cela suppose est entiere : un jeu de donnees ecrit d'apres une lecture de la documentation confirme la comprehension qu'on en a, y compris quand elle est fausse. Ces controles prouvent que l'adapter fait ce qu'on a voulu, pas qu'un Shelly reel repond ainsi. La validation sur materiel reste a faire.",
+  "appareils": {
+    "plus1pm": {
+      "prefixe": "shellyplus1pm-a8b0c1000030",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Chaudiere",
+        "id": "shellyplus1pm-a8b0c1000030",
+        "mac": "A8B0C1000030",
+        "model": "SNSW-001P16EU",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "Plus1PM",
+        "auth_en": false,
+        "auth_domain": null
+      },
+      "composants": [
+        {
+          "key": "switch:0",
+          "status": {
+            "id": 0,
+            "source": "MQTT",
+            "output": true,
+            "apower": 1284.3,
+            "voltage": 231.4,
+            "current": 5.55,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 87759.2,
+              "by_minute": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 41.8,
+              "tF": 107.2
+            }
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "in_mode": "follow",
+            "initial_state": "restore_last",
+            "auto_on": false
+          }
+        },
+        {
+          "key": "input:0",
+          "status": {
+            "id": 0,
+            "state": false
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "type": "switch",
+            "enable": true
+          }
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000030",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 7971,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {
+              "stable": {
+                "version": "1.5.0"
+              }
+            }
+          },
+          "config": {
+            "device": {
+              "name": "Chaudiere",
+              "mac": "A8B0C1000030",
+              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 26
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": "192.0.2.30",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "bssid": "aa:bb:cc:dd:ee:ff",
+            "channel": 6,
+            "rssi": -52
+          },
+          "config": {}
+        },
+        {
+          "key": "mqtt",
+          "status": {
+            "connected": true
+          },
+          "config": {}
+        },
+        {
+          "key": "cloud",
+          "status": {
+            "connected": false
+          },
+          "config": {}
+        },
+        {
+          "key": "ble",
+          "status": {},
+          "config": {}
+        },
+        {
+          "key": "ws",
+          "status": {
+            "connected": false
+          },
+          "config": {}
+        }
+      ]
+    },
+    "plus2pm_volet": {
+      "prefixe": "shellyplus2pm-a8b0c1000031",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Volet salon",
+        "id": "shellyplus2pm-a8b0c1000031",
+        "mac": "A8B0C1000031",
+        "model": "SNSW-102P16EU",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "Plus2PM",
+        "auth_en": false,
+        "profile": "cover"
+      },
+      "composants": [
+        {
+          "key": "cover:0",
+          "status": {
+            "id": 0,
+            "source": "HTTP",
+            "state": "stopped",
+            "apower": 0.0,
+            "voltage": 231.4,
+            "current": 0.0,
+            "pf": 0.0,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 1234.567,
+              "by_minute": [
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 34.2,
+              "tF": 93.6
+            },
+            "current_pos": 63,
+            "pos_control": true
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "maxtime_open": 60,
+            "maxtime_close": 60,
+            "swap_inputs": false
+          }
+        },
+        {
+          "key": "input:0",
+          "status": {
+            "id": 0,
+            "state": null
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "type": "button",
+            "enable": true
+          }
+        },
+        {
+          "key": "input:1",
+          "status": {
+            "id": 1,
+            "state": true
+          },
+          "config": {
+            "id": 1,
+            "name": null,
+            "type": "switch",
+            "enable": true
+          }
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000031",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 7971,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "config": {
+            "device": {
+              "name": "Volet salon",
+              "mac": "A8B0C1000031",
+              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true,
+              "profile": "cover"
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 26
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": "192.0.2.31",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "bssid": "aa:bb:cc:dd:ee:ff",
+            "channel": 6,
+            "rssi": -58
+          },
+          "config": {}
+        }
+      ]
+    },
+    "pro4pm": {
+      "prefixe": "shellypro4pm-a8b0c1000032",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Tableau",
+        "id": "shellypro4pm-a8b0c1000032",
+        "mac": "A8B0C1000032",
+        "model": "SPSW-004PE16EU",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "Pro4PM",
+        "auth_en": false
+      },
+      "composants": [
+        {
+          "key": "switch:0",
+          "status": {
+            "id": 0,
+            "source": "MQTT",
+            "output": true,
+            "apower": 12.4,
+            "voltage": 230.1,
+            "current": 0.05,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 1000.0,
+              "by_minute": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 38.0,
+              "tF": 100.4
+            }
+          },
+          "config": {
+            "id": 0,
+            "name": "Prise bureau",
+            "in_mode": "follow",
+            "initial_state": "off"
+          }
+        },
+        {
+          "key": "switch:1",
+          "status": {
+            "id": 1,
+            "source": "MQTT",
+            "output": true,
+            "apower": 13.4,
+            "voltage": 230.1,
+            "current": 0.1,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 2000.0,
+              "by_minute": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 39.0,
+              "tF": 102.2
+            }
+          },
+          "config": {
+            "id": 1,
+            "name": "Lampe couloir",
+            "in_mode": "follow",
+            "initial_state": "off"
+          }
+        },
+        {
+          "key": "switch:2",
+          "status": {
+            "id": 2,
+            "source": "MQTT",
+            "output": true,
+            "apower": 14.4,
+            "voltage": 230.1,
+            "current": 0.15000000000000002,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 3000.0,
+              "by_minute": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 40.0,
+              "tF": 104.0
+            }
+          },
+          "config": {
+            "id": 2,
+            "name": null,
+            "in_mode": "follow",
+            "initial_state": "off"
+          }
+        },
+        {
+          "key": "switch:3",
+          "status": {
+            "id": 3,
+            "source": "MQTT",
+            "output": true,
+            "apower": 15.4,
+            "voltage": 230.1,
+            "current": 0.2,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 4000.0,
+              "by_minute": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 41.0,
+              "tF": 105.8
+            }
+          },
+          "config": {
+            "id": 3,
+            "name": "Chargeur",
+            "in_mode": "follow",
+            "initial_state": "off"
+          }
+        },
+        {
+          "key": "input:0",
+          "status": {
+            "id": 0,
+            "state": false
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "type": "button",
+            "enable": true
+          }
+        },
+        {
+          "key": "input:1",
+          "status": {
+            "id": 1,
+            "state": false
+          },
+          "config": {
+            "id": 1,
+            "name": null,
+            "type": "button",
+            "enable": true
+          }
+        },
+        {
+          "key": "input:2",
+          "status": {
+            "id": 2,
+            "state": false
+          },
+          "config": {
+            "id": 2,
+            "name": null,
+            "type": "button",
+            "enable": true
+          }
+        },
+        {
+          "key": "input:3",
+          "status": {
+            "id": 3,
+            "state": false
+          },
+          "config": {
+            "id": 3,
+            "name": null,
+            "type": "button",
+            "enable": true
+          }
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000032",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 7971,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "config": {
+            "device": {
+              "name": "Tableau",
+              "mac": "A8B0C1000032",
+              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 26
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": null,
+            "status": "disconnected",
+            "ssid": null,
+            "rssi": 0
+          },
+          "config": {}
+        },
+        {
+          "key": "eth",
+          "status": {
+            "ip": "192.0.2.32"
+          },
+          "config": {
+            "enable": true,
+            "ipv4mode": "dhcp"
+          }
+        }
+      ],
+      "pages": 2
+    },
+    "plusht": {
+      "prefixe": "shellyplusht-a8b0c1000033",
+      "sur_pile": true,
+      "deviceinfo": {
+        "name": "Chambre",
+        "id": "shellyplusht-a8b0c1000033",
+        "mac": "A8B0C1000033",
+        "model": "SNSN-0013A",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "PlusHT",
+        "auth_en": false
+      },
+      "muet": true,
+      "notifyfullstatus": {
+        "src": "shellyplusht-a8b0c1000033",
+        "dst": "shellyplusht-a8b0c1000033/events",
+        "method": "NotifyFullStatus",
+        "params": {
+          "ts": 1789644518.04,
+          "ble": {},
+          "cloud": {
+            "connected": false
+          },
+          "mqtt": {
+            "connected": true
+          },
+          "sys": {
+            "mac": "A8B0C1000033",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 41,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "wifi": {
+            "sta_ip": "192.0.2.33",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "rssi": -71
+          },
+          "temperature:0": {
+            "id": 0,
+            "tC": 20.4,
+            "tF": 68.7
+          },
+          "humidity:0": {
+            "id": 0,
+            "rh": 54.2
+          },
+          "devicepower:0": {
+            "id": 0,
+            "battery": {
+              "V": 4.59,
+              "percent": 88
+            },
+            "external": {
+              "present": false
+            }
+          },
+          "ht_ui": {}
+        }
+      },
+      "composants": []
+    },
+    "pro3em": {
+      "prefixe": "shellypro3em-a8b0c1000034",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Compteur general",
+        "id": "shellypro3em-a8b0c1000034",
+        "mac": "A8B0C1000034",
+        "model": "SPEM-003CEBEU",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "Pro3EM",
+        "auth_en": false,
+        "profile": "triphase"
+      },
+      "composants": [
+        {
+          "key": "em:0",
+          "status": {
+            "id": 0,
+            "a_current": 5.1,
+            "a_voltage": 231.1,
+            "a_act_power": 970.6,
+            "a_aprt_power": 1016.8,
+            "a_pf": 0.95,
+            "a_freq": 50.0,
+            "b_current": 5.1,
+            "b_voltage": 230.4,
+            "b_act_power": 967.7,
+            "b_aprt_power": 1013.8,
+            "b_pf": 0.95,
+            "b_freq": 50.0,
+            "c_current": 5.1,
+            "c_voltage": 229.8,
+            "c_act_power": 965.2,
+            "c_aprt_power": 1011.1,
+            "c_pf": 0.95,
+            "c_freq": 50.0,
+            "n_current": null,
+            "total_current": 12.9,
+            "total_act_power": 2901.4,
+            "total_aprt_power": 3040.2,
+            "user_calibrated_phase": []
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "blink_mode_selector": "active_energy"
+          }
+        },
+        {
+          "key": "emdata:0",
+          "status": {
+            "id": 0,
+            "a_total_act_energy": 1234000.0,
+            "a_total_act_ret_energy": 12.0,
+            "b_total_act_energy": 987000.0,
+            "b_total_act_ret_energy": 0.0,
+            "c_total_act_energy": 456000.0,
+            "c_total_act_ret_energy": 0.0,
+            "total_act": 2677000.0,
+            "total_act_ret": 12.0
+          },
+          "config": {}
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000034",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 7971,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "config": {
+            "device": {
+              "name": "Compteur general",
+              "mac": "A8B0C1000034",
+              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true,
+              "profile": "triphase"
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 26
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": "192.0.2.34",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "bssid": "aa:bb:cc:dd:ee:ff",
+            "channel": 6,
+            "rssi": -64
+          },
+          "config": {}
+        },
+        {
+          "key": "eth",
+          "status": {
+            "ip": null
+          },
+          "config": {}
+        }
+      ]
+    },
+    "rgbw": {
+      "prefixe": "shellyplusrgbwpm-a8b0c1000035",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Bandeau",
+        "id": "shellyplusrgbwpm-a8b0c1000035",
+        "mac": "A8B0C1000035",
+        "model": "SNDC-0D4P10WW",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "PlusRGBWPM",
+        "auth_en": false,
+        "profile": "rgbw"
+      },
+      "composants": [
+        {
+          "key": "rgbw:0",
+          "status": {
+            "id": 0,
+            "source": "MQTT",
+            "output": true,
+            "brightness": 77.0,
+            "rgb": [
+              255,
+              128,
+              0
+            ],
+            "white": 180,
+            "apower": 14.2,
+            "voltage": 11.9,
+            "current": 1.19,
+            "aenergy": {
+              "total": 345.6,
+              "by_minute": [
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 36.1,
+              "tF": 97.0
+            }
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "default": {
+              "on": true,
+              "brightness": 100
+            }
+          }
+        },
+        {
+          "key": "input:0",
+          "status": {
+            "id": 0,
+            "state": false
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "type": "button",
+            "enable": true
+          }
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000035",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 7971,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "config": {
+            "device": {
+              "name": "Bandeau",
+              "mac": "A8B0C1000035",
+              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true,
+              "profile": "rgbw"
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 26
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": "192.0.2.35",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "bssid": "aa:bb:cc:dd:ee:ff",
+            "channel": 6,
+            "rssi": -58
+          },
+          "config": {}
+        }
+      ]
+    },
+    "mini1g3": {
+      "prefixe": "shelly1minig3-a8b0c1000036",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": null,
+        "id": "shelly1minig3-a8b0c1000036",
+        "mac": "A8B0C1000036",
+        "model": "S3SW-001X8EU",
+        "gen": 3,
+        "fw_id": "20240101-000000/1.0.3-g0e9a1b2",
+        "ver": "1.0.3",
+        "app": "Mini1G3",
+        "auth_en": false
+      },
+      "sans_getcomponents": true,
+      "status": {
+        "ble": {},
+        "cloud": {
+          "connected": false
+        },
+        "input:0": {
+          "id": 0,
+          "state": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "switch:0": {
+          "id": 0,
+          "source": "init",
+          "output": false
+        },
+        "sys": {
+          "mac": "A8B0C1000036",
+          "restart_required": false,
+          "time": "16:06",
+          "unixtime": 1789644518,
+          "last_sync_ts": 1789644518,
+          "uptime": 7971,
+          "ram_size": 254744,
+          "ram_free": 151560,
+          "fs_size": 458752,
+          "fs_free": 180224,
+          "cfg_rev": 26,
+          "kvs_rev": 0,
+          "schedule_rev": 0,
+          "webhook_rev": 0,
+          "available_updates": {}
+        },
+        "wifi": {
+          "sta_ip": "192.0.2.36",
+          "status": "got ip",
+          "ssid": "reseau-essai",
+          "rssi": -49
+        }
+      },
+      "config": {
+        "ble": {
+          "enable": false
+        },
+        "cloud": {
+          "enable": false
+        },
+        "input:0": {
+          "id": 0,
+          "name": null,
+          "type": "switch",
+          "enable": true
+        },
+        "mqtt": {
+          "enable": true
+        },
+        "switch:0": {
+          "id": 0,
+          "name": null,
+          "in_mode": "follow",
+          "initial_state": "restore_last"
+        },
+        "sys": {
+          "device": {
+            "name": null,
+            "mac": "A8B0C1000036",
+            "fw_id": "20260101-000000/1.4.4-g6d2a586",
+            "eco_mode": false,
+            "discoverable": true
+          },
+          "location": {
+            "tz": "Europe/Brussels",
+            "lat": 50.85,
+            "lon": 4.35
+          },
+          "sntp": {
+            "server": "time.google.com"
+          },
+          "cfg_rev": 26
+        },
+        "wifi": {}
+      },
+      "composants": []
+    },
+    "prefixe_personnalise": {
+      "prefixe": "maison/salon/prise",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Prise salon",
+        "id": "shellyplugsg3-a8b0c1000037",
+        "mac": "A8B0C1000037",
+        "model": "S3PL-00112EU",
+        "gen": 3,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "PlugSG3",
+        "auth_en": false
+      },
+      "composants": [
+        {
+          "key": "switch:0",
+          "status": {
+            "id": 0,
+            "source": "MQTT",
+            "output": true,
+            "apower": 42.7,
+            "voltage": 230.9,
+            "current": 0.19,
+            "freq": 50.0,
+            "aenergy": {
+              "total": 5678.9,
+              "by_minute": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "minute_ts": 1789644480
+            },
+            "temperature": {
+              "tC": 33.4,
+              "tF": 92.1
+            }
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "initial_state": "restore_last"
+          }
+        },
+        {
+          "key": "boolean:200",
+          "status": {
+            "id": 200,
+            "value": true,
+            "source": "script"
+          },
+          "config": {
+            "id": 200,
+            "name": "Mode nuit",
+            "default_value": false,
+            "meta": {
+              "ui": {
+                "view": "toggle",
+                "titles": [
+                  "Jour",
+                  "Nuit"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "key": "number:201",
+          "status": {
+            "id": 201,
+            "value": 21.5,
+            "source": "script"
+          },
+          "config": {
+            "id": 201,
+            "name": "Consigne",
+            "min": 5,
+            "max": 30,
+            "default_value": 20,
+            "meta": {
+              "ui": {
+                "view": "slider",
+                "unit": "°C",
+                "step": 0.5
+              }
+            }
+          }
+        },
+        {
+          "key": "text:202",
+          "status": {
+            "id": 202,
+            "value": "au repos",
+            "source": "script"
+          },
+          "config": {
+            "id": 202,
+            "name": "Etat du script",
+            "meta": {
+              "ui": {
+                "view": "field"
+              }
+            }
+          }
+        },
+        {
+          "key": "enum:203",
+          "status": {
+            "id": 203,
+            "value": "eco",
+            "source": "script"
+          },
+          "config": {
+            "id": 203,
+            "name": "Profil",
+            "options": [
+              "eco",
+              "confort",
+              "hors-gel"
+            ],
+            "meta": {
+              "ui": {
+                "view": "label"
+              }
+            }
+          }
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000037",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 7971,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "config": {
+            "device": {
+              "name": "Prise salon",
+              "mac": "A8B0C1000037",
+              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 26
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": "192.0.2.37",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "bssid": "aa:bb:cc:dd:ee:ff",
+            "channel": 6,
+            "rssi": -58
+          },
+          "config": {}
+        }
+      ]
+    },
+    "plussmoke": {
+      "prefixe": "shellyplussmoke-a8b0c1000038",
+      "sur_pile": true,
+      "deviceinfo": {
+        "name": "Detecteur cuisine",
+        "id": "shellyplussmoke-a8b0c1000038",
+        "mac": "A8B0C1000038",
+        "model": "SNSN-0031Z",
+        "gen": 2,
+        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "PlusSmoke",
+        "auth_en": false
+      },
+      "muet": true,
+      "notifyfullstatus": {
+        "src": "shellyplussmoke-a8b0c1000038",
+        "dst": "shellyplussmoke-a8b0c1000038/events",
+        "method": "NotifyFullStatus",
+        "params": {
+          "ts": 1789644518.04,
+          "ble": {},
+          "cloud": {
+            "connected": false
+          },
+          "mqtt": {
+            "connected": true
+          },
+          "sys": {
+            "mac": "A8B0C1000038",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "last_sync_ts": 1789644518,
+            "uptime": 12,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 26,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "wifi": {
+            "sta_ip": "192.0.2.38",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "rssi": -77
+          },
+          "smoke:0": {
+            "id": 0,
+            "alarm": false,
+            "mute": false
+          },
+          "devicepower:0": {
+            "id": 0,
+            "battery": {
+              "V": 2.98,
+              "percent": 74
+            },
+            "external": {
+              "present": false
+            }
+          }
+        }
+      },
+      "composants": []
+    }
+  }
+}

@@ -36,6 +36,30 @@ Cette lecture ne passe par aucun logiciel tiers. OpenMQTTGateway publie sur ses
 propres topics, le plugin les lit : un Home Assistant peut tourner à côté, ou
 pas du tout, cela ne change rien. C'est précisément l'intérêt de MQTT.
 
+**Les Shelly Gen2, Gen3 et Gen4 sont découverts aussi** — les gammes Plus, Pro
+et Mini. Ils ne fonctionnent pas comme la génération 1 : au lieu de publier
+chaque valeur sur son propre topic, ils tiennent une conversation. Le plugin
+leur demande ce qu'ils savent faire, ils répondent, et tout cela passe par le
+broker MQTT, sans qu'aucune requête ne parte vers l'appareil par un autre
+chemin.
+
+Trois conséquences pratiques, et il vaut mieux les connaître :
+
+- **il n'y a rien à régler sur l'appareil**, hormis activer MQTT — ce que vous
+  devez faire de toute façon. Les réglages « notifications RPC » et « contrôle
+  MQTT » sont actifs en sortie d'usine, et le plugin ne vous demandera pas d'y
+  toucher ;
+- **le nom que vous avez donné à l'appareil dans l'application Shelly est
+  repris**, ainsi que celui de chaque sortie s'il y en a plusieurs. Le plugin
+  n'a pas besoin d'aller le chercher sur l'appareil comme il le fait pour la
+  génération 1 : l'appareil le dit lui-même ;
+- **les capteurs sur pile ne sont pas interrogés.** Un Shelly H&T ou un
+  détecteur de fumée dort presque tout le temps ; le plugin attend qu'il se
+  réveille et pousse son état complet, ce qu'il fait de lui-même. En
+  contrepartie, ces appareils-là n'ont pas d'indicateur « connecté » : leur
+  liaison est coupée à chaque sommeil, et l'afficher reviendrait à les déclarer
+  en panne vingt-trois heures sur vingt-quatre.
+
 **Tout le reste se crée à la main**, et le plugin s'y prête : n'importe quel
 appareil qui publie sur MQTT peut devenir un équipement Jeedom complet, à
 condition d'indiquer soi-même les topics. La marche à suivre est décrite plus
@@ -43,14 +67,28 @@ bas.
 
 ## Ce qui n'est pas encore là
 
-Autant le dire tout de suite, pour que personne n'attende en vain des
-équipements qui ne viendront pas :
+Autant le dire tout de suite, pour que personne n'attende en vain :
 
-- **les Shelly Gen2, Gen3 et Gen4** (les gammes Plus, Pro et Mini) ne seront pas
-  découverts. C'est prévu, l'essentiel du travail est fait autour, mais la
-  découverte de ces appareils repose sur un dialogue avec eux, et il faut du
-  matériel sous tension pour la valider : tant que ce n'est pas vérifié en
-  conditions réelles, elle n'est pas livrée ;
+- **la découverte des Gen2+ n'a pas encore été éprouvée sur du matériel réel.**
+  Elle est écrite d'après la documentation officielle du constructeur et
+  vérifiée sur des conversations reconstituées, faute d'appareil disponible au
+  moment de l'écrire. Cela veut dire quelque chose de précis : les contrôles
+  prouvent que le plugin fait ce qu'on a voulu, pas qu'un Shelly réel répond
+  ainsi. Si un appareil ne se présente pas comme il le devrait, c'est un défaut
+  attendu et non une surprise — signalez-le, il sera corrigé ;
+- **les valeurs d'un Gen2 ne sont pas rafraîchies au redémarrage de Jeedom.**
+  Un Gen2 n'annonce ses mesures qu'au moment où elles changent, et rien de ce
+  qu'il publie n'est conservé par le broker. Les commandes gardent donc la
+  dernière valeur connue jusqu'à ce que l'appareil reparle — immédiatement pour
+  un compteur d'énergie, au premier changement d'état pour un interrupteur. Il
+  n'existe aucun moyen de faire mieux sans modifier la configuration de
+  l'appareil, ce que le plugin s'interdit ;
+- **les appuis sur les boutons d'un Gen2 ne sont pas séparés entrée par
+  entrée.** L'appareil annonce l'événement et le composant concerné dans un
+  même message ; le plugin en fait deux commandes, *Dernier événement* et
+  *Composant de l'événement*. Un scénario qui veut réagir au double appui de la
+  deuxième entrée teste les deux. C'est moins direct qu'une commande par
+  entrée, et tout aussi exact ;
 - **Tasmota**, **Zigbee2MQTT** et le protocole d'annonce de **Home Assistant**
   viendront ensuite.
 
@@ -80,7 +118,7 @@ manuelle : ils ne se créeront simplement pas tout seuls.
    démon est aussi relancé tout seul dans la minute qui suit par la tâche de
    surveillance du plugin.
 6. **Revenez sur la page du plugin.** La pastille *Démon* passe à « En marche »,
-   la pastille *Broker* à « Connecté », et les Shelly Gen1 apparaissent dans les
+   la pastille *Broker* à « Connecté », et les Shelly apparaissent dans les
    secondes qui suivent — au démarrage, le plugin demande à toute la génération 1
    de se présenter. Les équipements se créent sans qu'il soit nécessaire de
    recharger la page ; un bandeau vert vous dit combien en sont arrivés.
@@ -253,7 +291,7 @@ domestique, pas pour se débarrasser d'une erreur que l'on n'a pas lue.
 ## Créer un équipement à la main
 
 C'est le moyen de faire entrer dans Jeedom un appareil que la découverte ne sait
-pas encore reconnaître : un Shelly Gen2, un Tasmota, un capteur fait maison, tout
+pas encore reconnaître : un Tasmota, un capteur fait maison, tout
 ce qui publie sur MQTT.
 
 1. Sur la page du plugin, cliquez sur **« Ajouter un équipement »** et donnez-lui
