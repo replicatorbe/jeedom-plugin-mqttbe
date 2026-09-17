@@ -1,0 +1,7 @@
+# Exclusions propres au plugin mqttbe, ajoutées à celles de deploy-plugin.sh.
+# Un motif rsync par ligne ; les lignes vides et celles commençant par # sont
+# ignorées par --exclude-from.
+
+# Le jeu de contrôles ne sert qu'au développement : il interroge le coeur par
+# réflexion depuis le dépôt et n'a rien à faire dans la racine web.
+tests/
