@@ -336,6 +336,19 @@ function mqttbeParcOmg($_reglages = null) {
  * Les contrôles
  * ======================================================================= */
 
+/* Le topic d'état de cette balise a-t-il été EFFACÉ — charge utile vide et
+ * drapeau retenu ? C'est la seule opération qui retire un message retenu du
+ * broker ; republier autre chose ne fait qu'en déposer un de plus. */
+function mqttbeOmgEfface($_ctx, $_mac) {
+    foreach ($_ctx->publications as $publication) {
+        if ($publication['topic'] === 'mqttbe/omg/ble/' . $_mac . '/state'
+            && $publication['payload'] === '' && $publication['retain']) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function mqttbeControlesOmg() {
     $resultats = array();
     $fichier = mqttbeCheminAdapterOmg();
@@ -1470,72 +1483,105 @@ function mqttbeControlesOmg() {
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
     /* ----------------------------------------------------------------- 26 ---
-     * L'ÉTAT RETENU NE SURVIT PAS AU DÉMON POUR MENTIR.
+     * L'ÉTAT RETENU NE SURVIT PAS AU DÉMON POUR MENTIR — NI POUR S'ACCUMULER.
      *
      * Le démon s'arrête, l'objet part, le démon repart : le message retenu dit
      * toujours « présent, au salon », et comme l'inventaire est vide au
      * redémarrage, plus personne ne le corrige. Les scénarios bâtis sur la
-     * présence ne se déclenchent plus jamais — et rien, dans Jeedom, ne le
-     * laisse voir. */
-    $titre = 'au démarrage, l\'état retenu périmé est démenti ou effacé';
+     * présence ne se déclenchent plus jamais.
+     *
+     * La première réponse à ce défaut fut de DÉMENTIR — republier
+     * `{"presence":0}` par-dessus. Elle était fausse, et le contrôle qui la
+     * vérifiait l'a laissée passer : un démenti est lui aussi un message
+     * RETENU, donc éternel. Le broker de l'utilisateur est passé de trente et
+     * un états orphelins à cent quatre-vingt-douze, chaque démarrage en
+     * ajoutant, et la version fautive ignorait d'emblée tout état déjà à
+     * `presence:0` — c'est-à-dire, précisément, tous ceux qu'elle venait
+     * d'écrire. Le compte ne pouvait que croître.
+     *
+     * Seule une charge utile VIDE retire un message retenu (MQTT 3.1.1
+     * §3.3.1.3). C'est le contrat que ce contrôle vérifie désormais. */
+    $titre = 'au démarrage, les états retenus orphelins sont effacés du broker';
     $fautes = array();
+
+    /* 1. Une balise INCONNUE de l'inventaire : le téléphone d'un passant, dont
+     *    l'état ne sera jamais recalculé. Son topic doit DISPARAÎTRE. */
     $adapterE = new MqttbeOpenMqttGateway();
     $ctxE = new MqttbeContexteEssaiOmg();
-    /* 1. Une balise INCONNUE de l'inventaire : le téléphone d'un passant, dont
-     *    l'état ne sera jamais recalculé. Son message s'efface. */
     $vieux = date('Y-m-d H:i:s', (int) $ctxE->now() - 7200);
     $adapterE->onMessage('mqttbe/omg/ble/a8b0c1009999/state',
         json_encode(array('presence' => 1, 'nearest' => 'OMG_ESP32_BLE_SALON', 'seen' => $vieux)),
         true, $ctxE);
-    $efface = false;
-    foreach ($ctxE->publications as $publication) {
-        if ($publication['topic'] === 'mqttbe/omg/ble/a8b0c1009999/state'
-            && $publication['payload'] === '' && $publication['retain']) {
-            $efface = true;
-        }
+    /* Rien ne doit partir tant que le broker rejoue ses messages retenus :
+     * l'inventaire est encore incomplet, et décider maintenant, c'est décider
+     * selon l'ordre d'arrivée. */
+    $adapterE->onTick($ctxE);
+    if (!empty($ctxE->publications)) {
+        $fautes[] = 'une décision a été prise pendant que le broker rejouait encore ses messages '
+                  . 'retenus : selon l\'ordre d\'arrivée, la même balise serait tantôt effacée, '
+                  . 'tantôt conservée.';
     }
-    if (!$efface) {
+    $ctxE->avance(30);
+    $adapterE->onTick($ctxE);
+    if (mqttbeOmgEfface($ctxE, 'a8b0c1009999') === false) {
         $fautes[] = 'l\'état retenu d\'une balise inconnue n\'est pas effacé : le broker garde '
-                  . 'une présence que plus personne ne recalcule, et Jeedom la relit à chaque '
-                  . 'démarrage.';
+                  . 'une présence que plus personne ne recalcule, indéfiniment.';
     }
-    /* 2. Une balise CONNUE, vue il y a deux heures : présence démentie tout de
-     *    suite, sans attendre le battement. */
+
+    /* 2. LE CAS QUI MANQUAIT : un état déjà à `presence:0`, sans équipement en
+     *    face. C'est le démenti d'une version antérieure. Personne ne le lit,
+     *    et l'ancienne version le laissait à demeure. */
+    $adapterZ = new MqttbeOpenMqttGateway();
+    $ctxZ = new MqttbeContexteEssaiOmg();
+    $adapterZ->onMessage('mqttbe/omg/ble/a8b0c100aaaa/state',
+        json_encode(array('presence' => 0, 'nearest' => '', 'seen' => $vieux)), true, $ctxZ);
+    $ctxZ->avance(30);
+    $adapterZ->onTick($ctxZ);
+    if (mqttbeOmgEfface($ctxZ, 'a8b0c100aaaa') === false) {
+        $fautes[] = 'un état à « presence:0 » sans équipement n\'est pas effacé : ce sont les '
+                  . 'démentis de la version précédente, et ils s\'accumulent sans fin — cent '
+                  . 'quatre-vingt-douze sur l\'installation réelle.';
+    }
+
+    /* 3. Une balise ADOPTÉE, elle, garde son état : il a un lecteur en face. */
     $adapterE2 = new MqttbeOpenMqttGateway();
     $ctxE2 = new MqttbeContexteEssaiOmg();
     $adapterE2->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C1003001',
         '{"id":"A8:B0:C1:00:30:01","mac_type":0,"tempc":21.4,"rssi":-60}', false, $ctxE2);
     $adapterE2->onTick($ctxE2);
     $ancienEtat = $ctxE2->derniereEtat('a8b0c1003001');
-    $ctxE2->avance(7200);
+    if ($ancienEtat === null || (int) $ancienEtat['presence'] !== 1) {
+        $fautes[] = 'la balise décodée n\'a même pas été déclarée présente au départ.';
+    }
     $adapterE2->onMessage('mqttbe/omg/ble/a8b0c1003001/state',
         json_encode($ancienEtat), true, $ctxE2);
-    $etat = $ctxE2->derniereEtat('a8b0c1003001');
-    if ($ancienEtat === null || (int) $ancienEtat['presence'] !== 1) {
-        $fautes[] = 'la balise n\'a même pas été déclarée présente au départ.';
-    } elseif ($etat === null || (int) $etat['presence'] !== 0 || $etat['nearest'] !== '') {
-        $fautes[] = 'l\'état retenu vieux de deux heures n\'est pas démenti : Jeedom affiche « '
-                  . 'présent, ' . $ancienEtat['nearest'] . ' » pour un objet parti, et le scénario '
-                  . 'd\'absence ne se déclenche jamais.';
+    $ctxE2->avance(30);
+    $adapterE2->onTick($ctxE2);
+    if (mqttbeOmgEfface($ctxE2, 'a8b0c1003001') === true) {
+        $fautes[] = 'l\'état d\'une balise adoptée a été effacé : son équipement existe dans '
+                  . 'Jeedom, et sa présence deviendrait muette.';
     }
-    /* 3. Mais un état ENCORE FRAIS n'est pas touché : un démon qui redémarre en
-     *    quinze secondes ne doit pas faire clignoter la présence de la maison. */
-    $adapterE3 = new MqttbeOpenMqttGateway();
-    $ctxE3 = new MqttbeContexteEssaiOmg();
-    $frais = date('Y-m-d H:i:s', (int) $ctxE3->now() - 15);
-    $adapterE3->onMessage('mqttbe/omg/ble/a8b0c1003001/state',
-        json_encode(array('presence' => 1, 'nearest' => 'OMG_ESP32_BLE_SAM', 'seen' => $frais)),
-        true, $ctxE3);
-    if (!empty($ctxE3->publications)) {
-        $fautes[] = 'un état vieux de quinze secondes a été corrigé : le redémarrage du démon ne '
-                  . 'doit pas faire clignoter la présence.';
+
+    /* 4. Et l'absence continue d'être dite, ce qui reste l'information
+     *    principale d'un traceur : la balise adoptée qui se tait finit à
+     *    « presence:0 », sur son propre topic, pour son équipement. */
+    $ctxE2->avance(4000);
+    $adapterE2->onTick($ctxE2);
+    $apres = $ctxE2->derniereEtat('a8b0c1003001');
+    if ($apres === null || (int) $apres['presence'] !== 0 || $apres['nearest'] !== '') {
+        $fautes[] = 'la balise adoptée qui ne s\'annonce plus n\'est pas déclarée absente : '
+                  . 'Jeedom affiche « présent » pour un objet parti, et le scénario d\'absence '
+                  . 'ne se déclenche jamais.';
     }
-    /* 4. Et un message qui n'est PAS retenu est notre propre écho : l'ignorer
-     *    est la seule façon de ne pas se répondre à soi-même sans fin. */
+
+    /* 5. Un message qui n'est PAS retenu est notre propre écho : l'ignorer est
+     *    la seule façon de ne pas se répondre à soi-même sans fin. */
     $adapterE4 = new MqttbeOpenMqttGateway();
     $ctxE4 = new MqttbeContexteEssaiOmg();
     $adapterE4->onMessage('mqttbe/omg/ble/a8b0c1009999/state',
         json_encode(array('presence' => 1, 'nearest' => 'X', 'seen' => $vieux)), false, $ctxE4);
+    $ctxE4->avance(30);
+    $adapterE4->onTick($ctxE4);
     if (!empty($ctxE4->publications)) {
         $fautes[] = 'un message non retenu a déclenché une correction : c\'est notre propre écho, '
                   . 'et l\'adapter se répondrait à lui-même indéfiniment.';

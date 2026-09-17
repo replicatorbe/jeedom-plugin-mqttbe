@@ -467,6 +467,30 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * un sous-objet qui n'existe pas. */
     const CHAMP_VALIDE = '/^[A-Za-z0-9_]{1,40}$/';
 
+    /*
+     * Le temps laissé au broker pour rejouer ce qu'il retient.
+     *
+     * À l'abonnement, le broker déverse d'un coup tous ses messages retenus :
+     * les trames BLE et les états que le démon précédent a laissés, dans un
+     * ordre qui n'est garanti nulle part. Décider du sort d'un état à la
+     * seconde où il arrive, c'est décider sans savoir si la balise concernée
+     * est déjà connue — et se tromper une fois sur deux selon l'ordre d'arrivée.
+     * On attend donc que le déluge soit retombé, et on tranche alors sur un
+     * inventaire complet.
+     */
+    const RESORPTION_ETATS = 25;
+
+    /*
+     * Les états retenus trouvés au démarrage, en attente d'arbitrage.
+     *
+     * Transitoire par nature : ce registre décrit ce qu'on a trouvé sur le
+     * broker à cette exécution-ci, et n'a aucun sens à survivre au processus.
+     * D'où une propriété d'instance plutôt qu'un dossier du contexte.
+     */
+    private $etatsTrouves = array();
+    private $etatsDepuis  = 0;
+    private $etatsRegles  = false;
+
     /* --------------------------------------------------------------------- */
     /* Interface MqttbeAdapter                                               */
     /* --------------------------------------------------------------------- */
@@ -575,48 +599,101 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * Et un état encore frais n'est pas touché : le démon qui redémarre en
      * quinze secondes ne doit pas faire clignoter la présence de la maison.
      */
+    /**
+     * Un état que le démon précédent a laissé sur le broker.
+     *
+     * RIEN N'EST DÉCIDÉ ICI, et c'est tout l'objet de la correction. Ce message
+     * arrive au milieu du déluge de messages retenus que le broker rejoue à
+     * l'abonnement, avant, pendant ou après les trames BLE qui, elles, disent
+     * quelles balises existent encore. Trancher maintenant revenait à trancher
+     * sur un inventaire à moitié rempli.
+     *
+     * On se contente donc de noter que ce topic existe. resoutEtatsRetenus(),
+     * au battement d'horloge suivant la résorption, décidera sur un inventaire
+     * complet.
+     */
     private function recoitEtatRetenu($_ctx, $_mac, $_payload) {
         $mac = self::normaliseMac($_mac);
         if ($mac === '') {
             return;
         }
-        $etat = $this->json($_payload);
-        if ($etat === null) {
+        if ($this->json($_payload) === null) {
             /* Charge utile vide : c'est un effacement, le nôtre ou celui d'un
-             * démon précédent. Il n'y a plus rien à corriger. */
+             * démon précédent. Le topic n'existe déjà plus. */
             return;
         }
-        if (isset($etat['presence']) && (int) $etat['presence'] === 0) {
+        /* Borné comme le reste : un broker sur lequel traînent des milliers
+         * d'états — c'est précisément le symptôme qu'on vient corriger — ne
+         * doit pas faire enfler la mémoire du démon avant d'être nettoyé. */
+        if (!isset($this->etatsTrouves[$mac]) && count($this->etatsTrouves) >= self::MAX_BALISES) {
             return;
         }
+        $this->etatsTrouves[$mac] = true;
+        if ($this->etatsDepuis === 0) {
+            $this->etatsDepuis = $this->maintenant($_ctx);
+        }
+    }
 
-        $maintenant = $this->maintenant($_ctx);
-        $reglages   = $this->reglages($_ctx);
-        $vue        = $this->horodate(isset($etat['seen']) ? $etat['seen'] : '');
-        if ($vue > 0 && ($maintenant - $vue) < $reglages['away']) {
+    /**
+     * Le sort des états retenus trouvés au démarrage, tranché une fois.
+     *
+     * UN DÉMENTI N'EFFACE RIEN. C'est l'erreur que corrige cette méthode :
+     * republier `{"presence":0}` par-dessus un état périmé laisse un message
+     * RETENU de plus sur le broker de l'utilisateur, c'est-à-dire éternel. Mesuré
+     * sur l'installation : trente et un états orphelins au premier constat, cent
+     * quatre-vingt-douze après que le démenti s'est mis à en produire à chaque
+     * démarrage. Le compte ne pouvait que croître, puisque la version précédente
+     * ignorait d'emblée tout état déjà à `presence:0` — donc tous ceux qu'elle
+     * venait elle-même d'écrire.
+     *
+     * Seule la charge utile vide retire un message retenu du broker (MQTT
+     * 3.1.1 §3.3.1.3). C'est donc ce qu'on publie, pour tout ce qui n'a pas
+     * d'équipement chez l'utilisateur — et ce sont ces états-là, et eux seuls,
+     * qui n'avaient aucun lecteur.
+     *
+     * Une balise `certain`, elle, garde son état : il a un équipement en face,
+     * et suitBalise() le tiendra à jour. On le lui rattache au passage, pour que
+     * la comparaison « a-t-il changé ? » reparte de ce que le broker porte
+     * vraiment, et non d'une mémoire vide qui republierait tout.
+     */
+    private function resoutEtatsRetenus($_ctx, $_maintenant) {
+        if ($this->etatsRegles || $this->etatsDepuis === 0) {
             return;
         }
-
-        $cle     = 'ble:' . $mac;
-        $dossier = $this->dossier($_ctx, $cle);
-        if (empty($dossier)) {
-            $_ctx->publish($this->topicEtat($mac), '', 0, true);
-            $_ctx->log('debug', 'OpenMQTTGateway : état retenu périmé effacé pour une balise '
-                . 'inconnue (' . $cle . ') — le broker gardait une présence que plus personne '
-                . 'ne recalculait.');
+        if (($_maintenant - $this->etatsDepuis) < self::RESORPTION_ETATS) {
             return;
         }
+        $this->etatsRegles = true;
 
-        $etat['presence'] = 0;
-        $etat['nearest']  = '';
-        $texte = json_encode($etat, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        if ($_ctx->publish($this->topicEtat($mac), $texte, 0, true) === true) {
-            $dossier['etat']      = $texte;
-            $dossier['etatQuand'] = $maintenant;
-            $dossier['proche']    = '';
-            $this->range($_ctx, $cle, $dossier);
-            $_ctx->log('info', 'OpenMQTTGateway : ' . $cle . ' — l\'état retenu annonçait une '
-                . 'présence vieille de plus que le délai d\'absence : démentie au démarrage.');
+        $efface = $garde = 0;
+        foreach (array_keys($this->etatsTrouves) as $mac) {
+            $cle     = 'ble:' . $mac;
+            $dossier = $this->dossier($_ctx, $cle);
+            $connue  = !empty($dossier)
+                    && $this->texte($dossier, 'confiance') === 'certain';
+            if ($connue) {
+                $garde++;
+                continue;
+            }
+            if ($_ctx->publish($this->topicEtat($mac), '', 0, true) === true) {
+                $efface++;
+                /* Et la mémoire suit : sans cela, la balise qui redeviendrait
+                 * `certain` croirait avoir déjà publié cet état. */
+                if (!empty($dossier)) {
+                    unset($dossier['etat'], $dossier['etatQuand'], $dossier['etatEchec']);
+                    $dossier['proche'] = '';
+                    $this->range($_ctx, $cle, $dossier);
+                }
+            }
+        }
+        $this->etatsTrouves = array();
+
+        if ($efface > 0 || $garde > 0) {
+            $_ctx->log($efface > 0 ? 'info' : 'debug',
+                'OpenMQTTGateway : états retenus du démarrage arbitrés — ' . $efface
+                . ' effacé(s) du broker (aucun équipement en face), ' . $garde
+                . ' conservé(s). Un état sans équipement n\'a aucun lecteur et '
+                . 'resterait indéfiniment sur le broker.');
         }
     }
 
@@ -661,6 +738,10 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         if ($relance) {
             $this->oublieEmissions($_ctx);
         }
+
+        /* Avant la purge : ce que le broker retenait est arbitré une fois, une
+         * fois le déluge de messages retenus retombé. */
+        $this->resoutEtatsRetenus($_ctx, $maintenant);
 
         $this->purge($_ctx, $maintenant, $reglages);
 
