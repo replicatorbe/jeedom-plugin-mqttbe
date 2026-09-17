@@ -1594,6 +1594,70 @@ function mqttbeControlesShellyGen1() {
         "l'adapter décrit la sonde sans savoir comment elle sera exécutée ; le moteur l'exécute "
         . "sans rien savoir de Shelly.\n" . implode("\n", $fautes));
 
+    /* ---------------------------------------------------------------------
+     * 22. Une annonce de génération 2 ou plus n'est pas à cet adapter
+     *
+     * `shellies/command` et `shellies/announce` ne sont pas des topics de la
+     * génération 1 : ce sont des topics fixes, que les générations suivantes
+     * écoutent et alimentent aussi, leur réglage `enable_control` étant vrai en
+     * sortie d'usine. La demande d'annonce que cet adapter publie au démarrage
+     * fait donc répondre TOUT le parc Shelly, et la réponse d'un Gen2 porte un
+     * `id`, une `mac` et un `model` : assez pour franchir tous les contrôles.
+     *
+     * L'équipement qui en sortait était muet pour toujours — des topics
+     * `shellies/<id>/relay/0` qu'un Gen2 ne publie ni n'écoute — et il occupait
+     * l'uid que l'adapter Gen2, qui sait lui parler, allait revendiquer.
+     * ------------------------------------------------------------------- */
+    $titre = 'une annonce Gen2+ est laissée à l\'adapter qui la comprend';
+    $fautes = array();
+    /* La charge utile est celle d'un `Shelly.GetDeviceInfo`, telle qu'un Gen2
+     * la publie sur `shellies/announce` en réponse à `announce`. */
+    $annonceGen2 = array(
+        'name'  => null,
+        'id'    => 'shellyplus1pm-a8b0c1000030',
+        'mac'   => 'A8B0C1000030',
+        'model' => 'SNSW-001P16EU',
+        'gen'   => 2,
+        'fw_id' => '20260101-000000/1.4.4-g6d2a586',
+        'ver'   => '1.4.4',
+        'app'   => 'Plus1PM',
+        'auth_en' => false,
+    );
+    foreach (array(2, 3, 4) as $generation) {
+        $ctxGen2 = new MqttbeContexteEssaiGen1();
+        $adapterGen2 = new MqttbeShellyGen1($catalogue);
+        $charge = $annonceGen2;
+        $charge['gen'] = $generation;
+        $adapterGen2->onMessage('shellies/announce', json_encode($charge), true, $ctxGen2);
+        $adapterGen2->onTick($ctxGen2);
+        /* Le délai d'expiration d'une annonce sans info : c'est lui qui, sans
+         * le garde-fou, finissait par émettre le modèle fautif. */
+        $ctxGen2->avance(60);
+        $adapterGen2->onTick($ctxGen2);
+        if (!empty($ctxGen2->modeles)) {
+            $modeleFautif = $ctxGen2->modeles[0];
+            $fautes[] = 'génération ' . $generation . ' : l\'adapter Gen1 en a fait un modèle ('
+                . $modeleFautif->uid() . ', ' . $modeleFautif->countChannels() . ' canaux), '
+                . 'avec des topics que cet appareil ne publie pas.';
+        }
+    }
+    /* Et l'inverse, qui est le vrai risque de cette correction : une annonce
+     * Gen1 n'a pas de champ `gen`, et rien ne doit changer pour elle. */
+    $ctxGen1 = new MqttbeContexteEssaiGen1();
+    $adapterGen1 = new MqttbeShellyGen1($catalogue);
+    $adapterGen1->onMessage('shellies/announce',
+        json_encode($annonces[$reperes['SHSW-1']]), true, $ctxGen1);
+    $adapterGen1->onMessage('shellies/' . $reperes['SHSW-1'] . '/info',
+        json_encode($infos[$reperes['SHSW-1']]), true, $ctxGen1);
+    if (empty($ctxGen1->modeles)) {
+        $fautes[] = 'une annonce Gen1 ordinaire ne donne plus de modèle : le garde-fou '
+            . 'refuse ce qu\'il devait laisser passer.';
+    }
+
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre,
+        "le champ « gen » tranche : la génération 1 ne le publie nulle part, les suivantes le "
+        . "portent toujours.\n" . implode("\n", $fautes));
+
     return $resultats;
 }
 

@@ -327,6 +327,32 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
         if ($annonce === null) {
             return;
         }
+        /*
+         * CE QUI ARRIVE ICI N'EST PAS FORCÉMENT UN GEN1.
+         *
+         * `shellies/command` et `shellies/announce` ne sont pas des topics de
+         * la génération 1 : ce sont des topics FIXES, que les générations
+         * suivantes écoutent et alimentent elles aussi — leur réglage
+         * `enable_control` est vrai en sortie d'usine. La demande d'annonce
+         * publiée au démarrage par cet adapter fait donc répondre tout le parc,
+         * Gen2, Gen3 et Gen4 compris, et leur réponse porte assez de champs
+         * communs (`id`, `mac`, `model`) pour franchir tous les contrôles qui
+         * suivent.
+         *
+         * Sans ce garde-fou, un Shelly moderne devenait un équipement Gen1 :
+         * mêmes uid — `shelly:<mac>` est commun aux deux générations, et c'est
+         * voulu — mais des topics `shellies/<id>/relay/0` qu'un Gen2 ne publie
+         * ni n'écoute. Un équipement définitivement muet, que l'adapter Gen2
+         * ne pouvait plus reprendre qu'en écrasant celui-ci.
+         *
+         * Le champ `gen` tranche sans ambiguïté : la génération 1 ne le publie
+         * nulle part, les suivantes le portent toujours.
+         */
+        if (isset($annonce['gen']) && (int) $annonce['gen'] >= 2) {
+            $_ctx->log('debug', 'Shelly Gen1 : annonce de génération ' . (int) $annonce['gen']
+                . ' laissée à l\'adapter qui la comprend.');
+            return;
+        }
         $identifiant = $this->texte($annonce, 'id');
         if ($identifiant === '') {
             $identifiant = (string) $_identifiantTopic;
