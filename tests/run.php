@@ -23,12 +23,16 @@ require_once __DIR__ . '/check-classes.php';
 require_once __DIR__ . '/check-protocol.php';
 require_once __DIR__ . '/check-config.php';
 require_once __DIR__ . '/check-capabilities.php';
+require_once __DIR__ . '/check-discovery.php';
+require_once __DIR__ . '/check-shelly-gen1.php';
 
 $sections = array(
     'Conformité aux conventions du cœur Jeedom' => mqttbeControlesClasses(),
     'Contrat démon ↔ Jeedom'                    => mqttbeControlesProtocole(),
     'Clés de configuration'                     => mqttbeControlesConfig(),
     'Vocabulaire des capacités'                 => mqttbeControlesCapacites(),
+    'Moteur de découverte'                      => mqttbeControlesDecouverte(),
+    'Découverte Shelly Gen1'                    => mqttbeControlesShellyGen1(),
 );
 
 $tous = array();

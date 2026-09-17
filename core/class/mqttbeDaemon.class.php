@@ -271,6 +271,7 @@ class mqttbeDaemon {
                  * L'envoi est forcé, sinon la comparaison d'empreinte conclurait
                  * à tort que la table est déjà en place. */
                 mqttbeRouting::push(true);
+                self::sendDiscoveryConfig();
                 return true;
             }
             usleep(500000);
@@ -388,6 +389,23 @@ class mqttbeDaemon {
         }
         cache::set(self::CACHE_LAST_SND, time());
         return true;
+    }
+
+    /**
+     * Réglages de découverte envoyés au démon.
+     *
+     * `rescan` redemande à tout le parc de se présenter. C'est indispensable
+     * pour un appareil connecté depuis des semaines : il ne s'annonce plus de
+     * lui-même, et sans cette relance il resterait invisible alors qu'il parle.
+     */
+    public static function sendDiscoveryConfig($_rescan = false) {
+        $adapters = trim(config::byKey('discovery::adapters', 'mqttbe', 'shelly.gen1'));
+        return self::send(array(
+            'cmd'      => 'discovery',
+            'enabled'  => config::byKey('discovery::enabled', 'mqttbe', 1) == 1,
+            'adapters' => $adapters === '' ? array() : array_map('trim', explode(',', $adapters)),
+            'rescan'   => (bool) $_rescan,
+        ), false);
     }
 
     public static function sendBrokerConfig() {
@@ -565,6 +583,88 @@ class mqttbeDaemon {
             round($mediane, 1), end($mesures), $n
         ));
         cache::set('mqttbe::latency', array('t' => 0, 'v' => array()));
+    }
+
+    /**
+     * Modèles de périphériques remontés par les adapters du démon.
+     *
+     * Le démon a déjà écarté les modèles inchangés : ce qui arrive ici mérite
+     * au moins d'être examiné. La fabrique, elle, décidera si quelque chose doit
+     * réellement être écrit en base.
+     */
+    public static function onDiscovered($_models) {
+        cache::set(self::CACHE_LAST_RCV, time());
+        if (config::byKey('discovery::enabled', 'mqttbe', 1) != 1) {
+            return;
+        }
+        mqttbeFactory::loadDiscovery();
+        $auto = config::byKey('discovery::autoCreate', 'mqttbe', 1) == 1;
+
+        foreach ($_models as $donnees) {
+            try {
+                $modele = MqttbeDeviceModel::fromArray($donnees);
+                $motifs = $modele->validate();
+                if (!empty($motifs)) {
+                    mqttbe::logger('warning', sprintf(
+                        __('Découverte : modèle refusé (%1$s) — %2$s', __FILE__),
+                        isset($donnees['identity']['uid']) ? $donnees['identity']['uid'] : '?',
+                        implode(' ; ', $motifs)
+                    ));
+                    continue;
+                }
+                if (!$auto) {
+                    self::rememberPending($modele);
+                    continue;
+                }
+                $compte = mqttbeFactory::apply($modele);
+                if ($compte['status'] !== 'unchanged') {
+                    mqttbe::logger('info', sprintf(
+                        __('Découverte : %1$s — %2$s (%3$s commande(s))', __FILE__),
+                        $compte['name'], $compte['status'], $compte['touched']
+                    ));
+                    event::add('mqttbe::discovered', array(
+                        'uid'    => $modele->uid(),
+                        'name'   => $compte['name'],
+                        'status' => $compte['status'],
+                    ));
+                }
+            } catch (Throwable $e) {
+                /* Un modèle fautif ne doit jamais emporter les autres : sur un
+                 * parc de vingt appareils, un seul mal formé rendrait la
+                 * découverte inutilisable. */
+                mqttbe::logger('error', sprintf(
+                    __('Découverte : %s', __FILE__), $e->getMessage()
+                ));
+            }
+        }
+    }
+
+    /**
+     * Met de côté un modèle en attente d'adoption.
+     *
+     * La liste est bornée et vit dans le cache : ce sont des candidats, pas des
+     * données à conserver. Une file qui grossirait sans limite sur un broker
+     * partagé finirait par peser plus lourd que les équipements eux-mêmes.
+     */
+    private static function rememberPending($_modele) {
+        try {
+            $attente = cache::byKey('mqttbe::pending')->getValue(array());
+            if (!is_array($attente)) {
+                $attente = array();
+            }
+            $attente[$_modele->uid()] = array(
+                'name'    => $_modele->name(),
+                'adapter' => $_modele->adapter(),
+                'model'   => $_modele->toArray(),
+                'seen'    => time(),
+            );
+            if (count($attente) > 50) {
+                $attente = array_slice($attente, -50, null, true);
+            }
+            cache::set('mqttbe::pending', $attente);
+        } catch (Throwable $e) {
+            mqttbe::logger('debug', __("File d'adoption non enregistrée : ", __FILE__) . $e->getMessage());
+        }
     }
 
     public static function sendDaemonStateEvent($_state) {

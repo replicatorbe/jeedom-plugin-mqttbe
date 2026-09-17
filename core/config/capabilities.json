@@ -1,298 +1,618 @@
 {
-  "schema": 1,
-  "capabilities": {
-    "switch.state": {
-      "name": "État", "type": "info", "subType": "binary",
-      "generic_type": "ENERGY_STATE", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 10,
-      "template": {"dashboard": "core::prise", "mobile": "core::prise"}
-    },
-    "switch.on": {
-      "name": "On", "type": "action", "subType": "other",
-      "generic_type": "ENERGY_ON", "links": "switch.state",
-      "isVisible": 1, "order": 11,
-      "template": {"dashboard": "core::prise", "mobile": "core::prise"}
-    },
-    "switch.off": {
-      "name": "Off", "type": "action", "subType": "other",
-      "generic_type": "ENERGY_OFF", "links": "switch.state",
-      "isVisible": 1, "order": 12,
-      "template": {"dashboard": "core::prise", "mobile": "core::prise"}
-    },
-    "switch.toggle": {
-      "name": "Basculer", "type": "action", "subType": "other",
-      "generic_type": "TOGGLE", "links": "switch.state",
-      "isVisible": 1, "order": 13,
-      "template": {"dashboard": "core::toggle", "mobile": "core::toggle"}
-    },
-
-    "light.state": {
-      "name": "État", "type": "info", "subType": "binary",
-      "generic_type": "LIGHT_STATE", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 20,
-      "template": {"dashboard": "core::light", "mobile": "core::light"}
-    },
-    "light.on": {
-      "name": "On", "type": "action", "subType": "other",
-      "generic_type": "LIGHT_ON", "links": "light.state",
-      "isVisible": 1, "order": 21,
-      "template": {"dashboard": "core::light", "mobile": "core::light"}
-    },
-    "light.off": {
-      "name": "Off", "type": "action", "subType": "other",
-      "generic_type": "LIGHT_OFF", "links": "light.state",
-      "isVisible": 1, "order": 22,
-      "template": {"dashboard": "core::light", "mobile": "core::light"}
-    },
-    "light.brightness": {
-      "name": "Luminosité", "type": "action", "subType": "slider",
-      "generic_type": "LIGHT_SLIDER", "unit": "%", "links": "light.brightness_state",
-      "isVisible": 1, "order": 23,
-      "template": {"dashboard": "core::light", "mobile": "core::light"}
-    },
-    "light.brightness_state": {
-      "name": "Niveau", "type": "info", "subType": "numeric",
-      "generic_type": "LIGHT_BRIGHTNESS", "unit": "%",
-      "isVisible": 0, "isHistorized": 0, "order": 24
-    },
-    "light.color": {
-      "name": "Couleur", "type": "action", "subType": "color",
-      "generic_type": "LIGHT_SET_COLOR", "unit": "", "links": "light.color_state",
-      "isVisible": 1, "order": 25
-    },
-    "light.color_state": {
-      "name": "Couleur (état)", "type": "info", "subType": "string",
-      "generic_type": "LIGHT_COLOR", "unit": "",
-      "isVisible": 0, "isHistorized": 0, "order": 26
-    },
-    "light.color_temp": {
-      "name": "Température de couleur", "type": "action", "subType": "slider",
-      "generic_type": "LIGHT_SET_COLOR_TEMP", "unit": "K", "links": "light.color_temp_state",
-      "isVisible": 1, "order": 27
-    },
-    "light.color_temp_state": {
-      "name": "Température de couleur (état)", "type": "info", "subType": "numeric",
-      "generic_type": "LIGHT_COLOR_TEMP", "unit": "K",
-      "isVisible": 0, "isHistorized": 0, "order": 28
-    },
-
-    "cover.state": {
-      "name": "État", "type": "info", "subType": "numeric",
-      "generic_type": "FLAP_STATE", "unit": "%",
-      "isVisible": 1, "isHistorized": 0, "order": 30,
-      "template": {"dashboard": "core::shutter", "mobile": "core::shutter"}
-    },
-    "cover.open": {
-      "name": "Ouvrir", "type": "action", "subType": "other",
-      "generic_type": "FLAP_UP", "links": "cover.state",
-      "isVisible": 1, "order": 31
-    },
-    "cover.close": {
-      "name": "Fermer", "type": "action", "subType": "other",
-      "generic_type": "FLAP_DOWN", "links": "cover.state",
-      "isVisible": 1, "order": 32
-    },
-    "cover.stop": {
-      "name": "Stop", "type": "action", "subType": "other",
-      "generic_type": "FLAP_STOP", "links": "cover.state",
-      "isVisible": 1, "order": 33
-    },
-    "cover.position": {
-      "name": "Position", "type": "action", "subType": "slider",
-      "generic_type": "FLAP_SLIDER", "unit": "%", "links": "cover.state",
-      "isVisible": 1, "order": 34,
-      "template": {"dashboard": "core::shutter", "mobile": "core::shutter"}
-    },
-
-    "sensor.temperature": {
-      "name": "Température", "type": "info", "subType": "numeric",
-      "generic_type": "TEMPERATURE", "unit": "°C",
-      "isVisible": 1, "isHistorized": 1, "order": 40
-    },
-    "sensor.humidity": {
-      "name": "Humidité", "type": "info", "subType": "numeric",
-      "generic_type": "HUMIDITY", "unit": "%",
-      "isVisible": 1, "isHistorized": 1, "order": 41
-    },
-    "sensor.pressure": {
-      "name": "Pression", "type": "info", "subType": "numeric",
-      "generic_type": "PRESSURE", "unit": "hPa",
-      "isVisible": 1, "isHistorized": 1, "order": 42
-    },
-    "sensor.luminosity": {
-      "name": "Luminosité", "type": "info", "subType": "numeric",
-      "generic_type": "BRIGHTNESS", "unit": "lx",
-      "isVisible": 1, "isHistorized": 1, "order": 43
-    },
-    "sensor.co2": {
-      "name": "CO2", "type": "info", "subType": "numeric",
-      "generic_type": "CO2", "unit": "ppm",
-      "isVisible": 1, "isHistorized": 1, "order": 44
-    },
-    "sensor.noise": {
-      "name": "Bruit", "type": "info", "subType": "numeric",
-      "generic_type": "NOISE", "unit": "dB",
-      "isVisible": 1, "isHistorized": 1, "order": 45
-    },
-    "sensor.uv": {
-      "name": "Indice UV", "type": "info", "subType": "numeric",
-      "generic_type": "UV", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 46
-    },
-
-    "power.active": {
-      "name": "Puissance", "type": "info", "subType": "numeric",
-      "generic_type": "POWER", "unit": "W",
-      "isVisible": 1, "isHistorized": 1, "order": 50
-    },
-    "power.voltage": {
-      "name": "Tension", "type": "info", "subType": "numeric",
-      "generic_type": "VOLTAGE", "unit": "V",
-      "isVisible": 1, "isHistorized": 0, "order": 51
-    },
-    "power.current": {
-      "name": "Courant", "type": "info", "subType": "numeric",
-      "generic_type": "GENERIC_INFO", "unit": "A",
-      "isVisible": 1, "isHistorized": 0, "order": 52
-    },
-
-    "energy.total": {
-      "name": "Consommation totale", "type": "info", "subType": "numeric",
-      "generic_type": "CONSUMPTION", "unit": "kWh",
-      "isVisible": 1, "isHistorized": 1, "order": 60
-    },
-    "energy.daily": {
-      "name": "Consommation du jour", "type": "info", "subType": "numeric",
-      "generic_type": "DAILY_CONSUMPTION", "unit": "kWh",
-      "isVisible": 1, "isHistorized": 1, "order": 61
-    },
-
-    "contact.open": {
-      "name": "Ouverture", "type": "info", "subType": "binary",
-      "generic_type": "OPENING", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 70,
-      "template": {"dashboard": "core::door", "mobile": "core::door"}
-    },
-    "presence.detected": {
-      "name": "Présence", "type": "info", "subType": "binary",
-      "generic_type": "PRESENCE", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 71,
-      "template": {"dashboard": "core::presence", "mobile": "core::presence"}
-    },
-
-    "alarm.smoke": {
-      "name": "Fumée", "type": "info", "subType": "binary",
-      "generic_type": "SMOKE", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 80,
-      "template": {"dashboard": "core::alert", "mobile": "core::alert"}
-    },
-    "alarm.water_leak": {
-      "name": "Fuite d'eau", "type": "info", "subType": "binary",
-      "generic_type": "WATER_LEAK", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 81,
-      "template": {"dashboard": "core::flood", "mobile": "core::flood"}
-    },
-    "alarm.gas": {
-      "name": "Gaz", "type": "info", "subType": "binary",
-      "generic_type": "GENERIC_INFO", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 82,
-      "template": {"dashboard": "core::alert", "mobile": "core::alert"}
-    },
-    "alarm.sabotage": {
-      "name": "Sabotage", "type": "info", "subType": "binary",
-      "generic_type": "SABOTAGE", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 83,
-      "template": {"dashboard": "core::alert", "mobile": "core::alert"}
-    },
-
-    "battery.level": {
-      "name": "Batterie", "type": "info", "subType": "numeric",
-      "generic_type": "BATTERY", "unit": "%",
-      "isVisible": 1, "isHistorized": 1, "order": 90
-    },
-
-    "button.event": {
-      "name": "Bouton", "type": "info", "subType": "string",
-      "generic_type": "GENERIC_INFO", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 100
-    },
-    "button.pressed": {
-      "name": "Appui", "type": "info", "subType": "binary",
-      "generic_type": "BUTTON", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 101
-    },
-
-    "connectivity.online": {
-      "name": "Connecté", "type": "info", "subType": "binary",
-      "generic_type": "ONLINE", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 110
-    },
-
-    "lock.state": {
-      "name": "État", "type": "info", "subType": "binary",
-      "generic_type": "LOCK_STATE", "unit": "",
-      "isVisible": 1, "isHistorized": 1, "order": 120,
-      "template": {"dashboard": "core::lock", "mobile": "core::lock"}
-    },
-    "lock.open": {
-      "name": "Ouvrir", "type": "action", "subType": "other",
-      "generic_type": "LOCK_OPEN", "links": "lock.state",
-      "isVisible": 1, "order": 121,
-      "template": {"dashboard": "core::lock", "mobile": "core::lock"}
-    },
-    "lock.close": {
-      "name": "Fermer", "type": "action", "subType": "other",
-      "generic_type": "LOCK_CLOSE", "links": "lock.state",
-      "isVisible": 1, "order": 122,
-      "template": {"dashboard": "core::lock", "mobile": "core::lock"}
-    },
-
-    "thermostat.temperature": {
-      "name": "Température", "type": "info", "subType": "numeric",
-      "generic_type": "THERMOSTAT_TEMPERATURE", "unit": "°C",
-      "isVisible": 1, "isHistorized": 1, "order": 130
-    },
-    "thermostat.setpoint": {
-      "name": "Consigne", "type": "info", "subType": "numeric",
-      "generic_type": "THERMOSTAT_SETPOINT", "unit": "°C",
-      "isVisible": 1, "isHistorized": 1, "order": 131
-    },
-    "thermostat.set_setpoint": {
-      "name": "Régler la consigne", "type": "action", "subType": "slider",
-      "generic_type": "THERMOSTAT_SET_SETPOINT", "unit": "°C", "links": "thermostat.setpoint",
-      "isVisible": 1, "order": 132
-    },
-    "thermostat.mode": {
-      "name": "Mode", "type": "info", "subType": "string",
-      "generic_type": "THERMOSTAT_MODE", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 133
-    },
-    "thermostat.set_mode": {
-      "name": "Régler le mode", "type": "action", "subType": "select",
-      "generic_type": "THERMOSTAT_SET_MODE", "links": "thermostat.mode",
-      "isVisible": 1, "order": 134
-    },
-
-    "fan.speed": {
-      "name": "Vitesse", "type": "action", "subType": "slider",
-      "generic_type": "FAN_SPEED", "unit": "%", "links": "fan.speed_state",
-      "isVisible": 1, "order": 140
-    },
-    "fan.speed_state": {
-      "name": "Vitesse (état)", "type": "info", "subType": "numeric",
-      "generic_type": "FAN_SPEED_STATE", "unit": "%",
-      "isVisible": 1, "isHistorized": 0, "order": 141
-    },
-
-    "generic.value": {
-      "name": "Valeur", "type": "info", "subType": "string",
-      "generic_type": "GENERIC_INFO", "unit": "",
-      "isVisible": 1, "isHistorized": 0, "order": 900
-    },
-    "generic.action": {
-      "name": "Action", "type": "action", "subType": "other",
-      "generic_type": "GENERIC_ACTION",
-      "isVisible": 1, "order": 901
+    "schema": 1,
+    "capabilities": {
+        "alarm.gas": {
+            "name": "Gaz",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "GENERIC_INFO",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 82,
+            "template": {
+                "dashboard": "core::alert",
+                "mobile": "core::alert"
+            }
+        },
+        "alarm.sabotage": {
+            "name": "Sabotage",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "SABOTAGE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 83,
+            "template": {
+                "dashboard": "core::alert",
+                "mobile": "core::alert"
+            }
+        },
+        "alarm.smoke": {
+            "name": "Fumée",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "SMOKE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 80,
+            "template": {
+                "dashboard": "core::alert",
+                "mobile": "core::alert"
+            }
+        },
+        "alarm.water_leak": {
+            "name": "Fuite d'eau",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "WATER_LEAK",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 81,
+            "template": {
+                "dashboard": "core::flood",
+                "mobile": "core::flood"
+            }
+        },
+        "battery.level": {
+            "name": "Batterie",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "BATTERY",
+            "unit": "%",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 90
+        },
+        "button.event": {
+            "name": "Bouton",
+            "type": "info",
+            "subType": "string",
+            "generic_type": "GENERIC_INFO",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 100
+        },
+        "button.pressed": {
+            "name": "Appui",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "BUTTON",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 101
+        },
+        "connectivity.online": {
+            "name": "Connecté",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "ONLINE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 110
+        },
+        "contact.open": {
+            "name": "Ouverture",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "OPENING",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 70,
+            "template": {
+                "dashboard": "core::door",
+                "mobile": "core::door"
+            }
+        },
+        "cover.close": {
+            "name": "Fermer",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "FLAP_DOWN",
+            "links": "cover.state",
+            "isVisible": 1,
+            "order": 32
+        },
+        "cover.open": {
+            "name": "Ouvrir",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "FLAP_UP",
+            "links": "cover.state",
+            "isVisible": 1,
+            "order": 31
+        },
+        "cover.position": {
+            "name": "Position",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "FLAP_SLIDER",
+            "unit": "%",
+            "links": "cover.state",
+            "isVisible": 1,
+            "order": 34,
+            "template": {
+                "dashboard": "core::shutter",
+                "mobile": "core::shutter"
+            }
+        },
+        "cover.state": {
+            "name": "État",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "FLAP_STATE",
+            "unit": "%",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 30,
+            "template": {
+                "dashboard": "core::shutter",
+                "mobile": "core::shutter"
+            }
+        },
+        "cover.stop": {
+            "name": "Stop",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "FLAP_STOP",
+            "links": "cover.state",
+            "isVisible": 1,
+            "order": 33
+        },
+        "energy.daily": {
+            "name": "Consommation du jour",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "DAILY_CONSUMPTION",
+            "unit": "kWh",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 61
+        },
+        "energy.returned": {
+            "name": "Énergie réinjectée",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "PRODUCTION",
+            "unit": "kWh",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 61
+        },
+        "energy.total": {
+            "name": "Consommation totale",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "CONSUMPTION",
+            "unit": "kWh",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 60
+        },
+        "fan.speed": {
+            "name": "Vitesse",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "FAN_SPEED",
+            "unit": "%",
+            "links": "fan.speed_state",
+            "isVisible": 1,
+            "order": 140
+        },
+        "fan.speed_state": {
+            "name": "Vitesse (état)",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "FAN_SPEED_STATE",
+            "unit": "%",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 141
+        },
+        "generic.action": {
+            "name": "Action",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "GENERIC_ACTION",
+            "isVisible": 1,
+            "order": 901
+        },
+        "generic.value": {
+            "name": "Valeur",
+            "type": "info",
+            "subType": "string",
+            "generic_type": "GENERIC_INFO",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 900
+        },
+        "light.brightness": {
+            "name": "Luminosité",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "LIGHT_SLIDER",
+            "unit": "%",
+            "links": "light.brightness_state",
+            "isVisible": 1,
+            "order": 23,
+            "template": {
+                "dashboard": "core::light",
+                "mobile": "core::light"
+            }
+        },
+        "light.brightness_state": {
+            "name": "Niveau",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "LIGHT_BRIGHTNESS",
+            "unit": "%",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 24
+        },
+        "light.color": {
+            "name": "Couleur",
+            "type": "action",
+            "subType": "color",
+            "generic_type": "LIGHT_SET_COLOR",
+            "unit": "",
+            "links": "light.color_state",
+            "isVisible": 1,
+            "order": 25
+        },
+        "light.color_state": {
+            "name": "Couleur (état)",
+            "type": "info",
+            "subType": "string",
+            "generic_type": "LIGHT_COLOR",
+            "unit": "",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 26
+        },
+        "light.color_temp": {
+            "name": "Température de couleur",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "LIGHT_SET_COLOR_TEMP",
+            "unit": "K",
+            "links": "light.color_temp_state",
+            "isVisible": 1,
+            "order": 27
+        },
+        "light.color_temp_state": {
+            "name": "Température de couleur (état)",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "LIGHT_COLOR_TEMP",
+            "unit": "K",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 28
+        },
+        "light.off": {
+            "name": "Off",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "LIGHT_OFF",
+            "links": "light.state",
+            "isVisible": 1,
+            "order": 22,
+            "template": {
+                "dashboard": "core::light",
+                "mobile": "core::light"
+            }
+        },
+        "light.on": {
+            "name": "On",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "LIGHT_ON",
+            "links": "light.state",
+            "isVisible": 1,
+            "order": 21,
+            "template": {
+                "dashboard": "core::light",
+                "mobile": "core::light"
+            }
+        },
+        "light.state": {
+            "name": "État",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "LIGHT_STATE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 20,
+            "template": {
+                "dashboard": "core::light",
+                "mobile": "core::light"
+            }
+        },
+        "lock.close": {
+            "name": "Fermer",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "LOCK_CLOSE",
+            "links": "lock.state",
+            "isVisible": 1,
+            "order": 122,
+            "template": {
+                "dashboard": "core::lock",
+                "mobile": "core::lock"
+            }
+        },
+        "lock.open": {
+            "name": "Ouvrir",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "LOCK_OPEN",
+            "links": "lock.state",
+            "isVisible": 1,
+            "order": 121,
+            "template": {
+                "dashboard": "core::lock",
+                "mobile": "core::lock"
+            }
+        },
+        "lock.state": {
+            "name": "État",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "LOCK_STATE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 120,
+            "template": {
+                "dashboard": "core::lock",
+                "mobile": "core::lock"
+            }
+        },
+        "power.active": {
+            "name": "Puissance",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "POWER",
+            "unit": "W",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 50
+        },
+        "power.current": {
+            "name": "Courant",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "A",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 52
+        },
+        "power.factor": {
+            "name": "Facteur de puissance",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 54
+        },
+        "power.reactive": {
+            "name": "Puissance réactive",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "var",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 53
+        },
+        "power.voltage": {
+            "name": "Tension",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "VOLTAGE",
+            "unit": "V",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 51
+        },
+        "presence.detected": {
+            "name": "Présence",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "PRESENCE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 71,
+            "template": {
+                "dashboard": "core::presence",
+                "mobile": "core::presence"
+            }
+        },
+        "sensor.co2": {
+            "name": "CO2",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "CO2",
+            "unit": "ppm",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 44
+        },
+        "sensor.humidity": {
+            "name": "Humidité",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "HUMIDITY",
+            "unit": "%",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 41
+        },
+        "sensor.luminosity": {
+            "name": "Luminosité",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "BRIGHTNESS",
+            "unit": "lx",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 43
+        },
+        "sensor.noise": {
+            "name": "Bruit",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "NOISE",
+            "unit": "dB",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 45
+        },
+        "sensor.pressure": {
+            "name": "Pression",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "PRESSURE",
+            "unit": "hPa",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 42
+        },
+        "sensor.temperature": {
+            "name": "Température",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "TEMPERATURE",
+            "unit": "°C",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 40
+        },
+        "sensor.uv": {
+            "name": "Indice UV",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "UV",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 46
+        },
+        "switch.off": {
+            "name": "Off",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "ENERGY_OFF",
+            "links": "switch.state",
+            "isVisible": 1,
+            "order": 12,
+            "template": {
+                "dashboard": "core::prise",
+                "mobile": "core::prise"
+            }
+        },
+        "switch.on": {
+            "name": "On",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "ENERGY_ON",
+            "links": "switch.state",
+            "isVisible": 1,
+            "order": 11,
+            "template": {
+                "dashboard": "core::prise",
+                "mobile": "core::prise"
+            }
+        },
+        "switch.state": {
+            "name": "État",
+            "type": "info",
+            "subType": "binary",
+            "generic_type": "ENERGY_STATE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 10,
+            "template": {
+                "dashboard": "core::prise",
+                "mobile": "core::prise"
+            }
+        },
+        "switch.toggle": {
+            "name": "Basculer",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "TOGGLE",
+            "links": "switch.state",
+            "isVisible": 1,
+            "order": 13,
+            "template": {
+                "dashboard": "core::toggle",
+                "mobile": "core::toggle"
+            }
+        },
+        "thermostat.mode": {
+            "name": "Mode",
+            "type": "info",
+            "subType": "string",
+            "generic_type": "THERMOSTAT_MODE",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 133
+        },
+        "thermostat.set_mode": {
+            "name": "Régler le mode",
+            "type": "action",
+            "subType": "select",
+            "generic_type": "THERMOSTAT_SET_MODE",
+            "links": "thermostat.mode",
+            "isVisible": 1,
+            "order": 134
+        },
+        "thermostat.set_setpoint": {
+            "name": "Régler la consigne",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "THERMOSTAT_SET_SETPOINT",
+            "unit": "°C",
+            "links": "thermostat.setpoint",
+            "isVisible": 1,
+            "order": 132
+        },
+        "thermostat.setpoint": {
+            "name": "Consigne",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "THERMOSTAT_SETPOINT",
+            "unit": "°C",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 131
+        },
+        "thermostat.temperature": {
+            "name": "Température",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "THERMOSTAT_TEMPERATURE",
+            "unit": "°C",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 130
+        }
     }
-  }
 }

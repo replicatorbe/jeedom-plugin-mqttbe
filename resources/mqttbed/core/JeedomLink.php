@@ -47,6 +47,12 @@ class MqttbeJeedomLink {
 
     const QUEUE_MAX         = 1000;   // messages en attente, au-delà on jette les plus vieux
     const VALUES_MAX        = 500;    // valeurs groupées dans un même message `values`
+    /* Modèles groupés dans un même message `discovered`. Bien plus bas que
+     * VALUES_MAX : une valeur pèse trois clés, un modèle de périphérique pèse
+     * plusieurs kilo-octets — vingt-cinq suffisent à remettre un parc entier en
+     * une poignée de POST, là où cinq cents feraient un corps de plusieurs
+     * mégaoctets que Jeedom refuserait en bloc. */
+    const MODELS_MAX        = 25;
     const HEARTBEAT_PERIOD  = 45;     // silence maximal toléré par Jeedom
     const DEAD_AFTER        = 300;    // Jeedom injoignable au-delà : le démon s'arrête
     const CONNECT_TIMEOUT   = 2;
@@ -62,6 +68,7 @@ class MqttbeJeedomLink {
 
     private $queue    = array();
     private $values   = array();      // valeurs routées en cours de groupement
+    private $models   = array();      // modèles découverts en cours de groupement
     private $inFlight = array();      // lot confié à curl, gardé jusqu'à l'acquittement
     private $multi    = null;
     private $handle   = null;
@@ -135,6 +142,36 @@ class MqttbeJeedomLink {
     }
 
     /*
+     * Un modèle de périphérique découvert, déjà réduit en tableau par le
+     * moteur : cette classe n'a pas à connaître les classes de découverte,
+     * elle transporte.
+     *
+     * Groupé comme les valeurs, et pour la même raison, en plus marquée : au
+     * démarrage du démon, le broker rejoue d'un coup tous les messages de
+     * découverte retenus, et un parc de vingt-deux appareils part alors en
+     * une seconde. Un POST par appareil, c'est vingt-deux allers-retours HTTP
+     * et vingt-deux réveils du cœur de Jeedom là où un seul suffit.
+     */
+    public function pushDiscovered($_model) {
+        if (!is_array($_model)) {
+            return;
+        }
+        $this->models[] = $_model;
+        if (count($this->models) >= self::MODELS_MAX) {
+            $this->sealModels();
+        }
+    }
+
+    private function sealModels() {
+        if (empty($this->models)) {
+            return;
+        }
+        $this->queue[] = array('cmd' => 'discovered', 'models' => $this->models);
+        $this->models  = array();
+        $this->enforceQueueLimit();
+    }
+
+    /*
      * Envoi synchrone, réservé aux deux messages qui encadrent la vie du démon.
      *
      * `daemonUp` conditionne la suite : tant qu'il n'est pas passé, rien ne
@@ -182,7 +219,8 @@ class MqttbeJeedomLink {
         $this->poll();
         $this->heartbeat();
 
-        if ($this->handle !== null || (empty($this->queue) && empty($this->values))) {
+        if ($this->handle !== null
+            || (empty($this->queue) && empty($this->values) && empty($this->models))) {
             return;
         }
         if ((microtime(true) - $this->lastFlush) < $this->batchDelay) {
@@ -201,6 +239,7 @@ class MqttbeJeedomLink {
          * arrivé pendant l'attente du délai de groupement part dans le même
          * message. */
         $this->sealValues();
+        $this->sealModels();
         $this->start();
     }
 
@@ -212,7 +251,8 @@ class MqttbeJeedomLink {
         }
         /* Rien à ajouter si quelque chose attend déjà de partir : ce lot-là
          * vaut battement, et lastSend sera repoussé par son envoi. */
-        if (!empty($this->queue) || !empty($this->values) || $this->handle !== null) {
+        if (!empty($this->queue) || !empty($this->values) || !empty($this->models)
+            || $this->handle !== null) {
             return;
         }
         $this->push(array('cmd' => 'hb'));
@@ -338,7 +378,8 @@ class MqttbeJeedomLink {
     /* Le lot de valeurs en cours de groupement compte pour un message : il
      * n'est pas encore dans la file, mais il en partira. */
     public function pending()    { return count($this->queue) + count($this->inFlight)
-                                        + (empty($this->values) ? 0 : 1); }
+                                        + (empty($this->values) ? 0 : 1)
+                                        + (empty($this->models) ? 0 : 1); }
     public function dropped()    { return $this->dropped; }
     public function silentFor()  { return time() - $this->lastSuccess; }
 

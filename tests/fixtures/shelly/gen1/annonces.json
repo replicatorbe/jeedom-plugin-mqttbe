@@ -1,0 +1,178 @@
+{
+    "shelly1-A8B0C1000006": {
+        "id": "shelly1-A8B0C1000006",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000006",
+        "ip": "192.0.2.16",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C100000B": {
+        "id": "shelly1-A8B0C100000B",
+        "model": "SHSW-1",
+        "mac": "A8B0C100000B",
+        "ip": "192.0.2.21",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000002": {
+        "id": "shelly1-A8B0C1000002",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000002",
+        "ip": "192.0.2.12",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000010": {
+        "id": "shelly1-A8B0C1000010",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000010",
+        "ip": "192.0.2.26",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C100000C": {
+        "id": "shelly1-A8B0C100000C",
+        "model": "SHSW-1",
+        "mac": "A8B0C100000C",
+        "ip": "192.0.2.22",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000007": {
+        "id": "shelly1-A8B0C1000007",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000007",
+        "ip": "192.0.2.17",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shellyplug-s-A8B0C1000015": {
+        "id": "shellyplug-s-A8B0C1000015",
+        "model": "SHPLG-S",
+        "mac": "A8B0C1000015",
+        "ip": "192.0.2.31",
+        "new_fw": false,
+        "fw_ver": "20230913-113421/v1.14.0-gcb84623"
+    },
+    "shellyem-A8B0C1000013": {
+        "id": "shellyem-A8B0C1000013",
+        "model": "SHEM",
+        "mac": "A8B0C1000013",
+        "ip": "192.0.2.29",
+        "new_fw": false,
+        "fw_ver": "20230913-114150/v1.14.0-gcb84623"
+    },
+    "shellyplug-s-A8B0C1000016": {
+        "id": "shellyplug-s-A8B0C1000016",
+        "model": "SHPLG-S",
+        "mac": "A8B0C1000016",
+        "ip": "192.0.2.32",
+        "new_fw": false,
+        "fw_ver": "20230913-113421/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000009": {
+        "id": "shelly1-A8B0C1000009",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000009",
+        "ip": "192.0.2.19",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shellyplug-s-A8B0C1000014": {
+        "id": "shellyplug-s-A8B0C1000014",
+        "model": "SHPLG-S",
+        "mac": "A8B0C1000014",
+        "ip": "192.0.2.30",
+        "new_fw": false,
+        "fw_ver": "20230913-113421/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C100000A": {
+        "id": "shelly1-A8B0C100000A",
+        "model": "SHSW-1",
+        "mac": "A8B0C100000A",
+        "ip": "192.0.2.20",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C100000D": {
+        "id": "shelly1-A8B0C100000D",
+        "model": "SHSW-1",
+        "mac": "A8B0C100000D",
+        "ip": "192.0.2.23",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000008": {
+        "id": "shelly1-A8B0C1000008",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000008",
+        "ip": "192.0.2.18",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000004": {
+        "id": "shelly1-A8B0C1000004",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000004",
+        "ip": "192.0.2.14",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000003": {
+        "id": "shelly1-A8B0C1000003",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000003",
+        "ip": "192.0.2.13",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000001": {
+        "id": "shelly1-A8B0C1000001",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000001",
+        "ip": "192.0.2.11",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1pm-A8B0C1000012": {
+        "id": "shelly1pm-A8B0C1000012",
+        "model": "SHSW-PM",
+        "mac": "A8B0C1000012",
+        "ip": "192.0.2.28",
+        "new_fw": false,
+        "fw_ver": "20230913-113709/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000011": {
+        "id": "shelly1-A8B0C1000011",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000011",
+        "ip": "192.0.2.27",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C100000E": {
+        "id": "shelly1-A8B0C100000E",
+        "model": "SHSW-1",
+        "mac": "A8B0C100000E",
+        "ip": "192.0.2.24",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C1000005": {
+        "id": "shelly1-A8B0C1000005",
+        "model": "SHSW-1",
+        "mac": "A8B0C1000005",
+        "ip": "192.0.2.15",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    },
+    "shelly1-A8B0C100000F": {
+        "id": "shelly1-A8B0C100000F",
+        "model": "SHSW-1",
+        "mac": "A8B0C100000F",
+        "ip": "192.0.2.25",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+    }
+}

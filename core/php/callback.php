@@ -88,6 +88,12 @@ foreach ($messages as $message) {
                 }
                 break;
 
+            case 'discovered':
+                if (isset($message['models']) && is_array($message['models'])) {
+                    mqttbeDaemon::onDiscovered($message['models']);
+                }
+                break;
+
             case 'hb':
                 mqttbeDaemon::onHeartbeat();
                 break;

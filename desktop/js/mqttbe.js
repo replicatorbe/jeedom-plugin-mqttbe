@@ -93,6 +93,33 @@ function mqttbeBaseTopic() {
   return (value.charAt(value.length - 1) === '/') ? value : value + '/'
 }
 
+/* ============================================================== DÉCOUVERTE */
+
+/*
+ * Nom lisible d'un adapter.
+ *
+ * La table vient de la page, par sendVarToJS : elle est la même que celle des
+ * vignettes, pour qu'un équipement ne s'appelle pas « Shelly Gen1 » d'un côté
+ * et « shelly.gen1 » de l'autre. Un adapter inconnu de la table garde son
+ * identifiant plutôt que de n'afficher rien.
+ */
+function mqttbeAdapterLabel(_id) {
+  var id = String(init(_id, '')).trim()
+  if (id === '') { return '' }
+  if (typeof mqttbeAdapters !== 'undefined' && mqttbeAdapters !== null && isset(mqttbeAdapters[id])) {
+    return String(mqttbeAdapters[id])
+  }
+  return id
+}
+
+/* Texte, jamais balisage : ces valeurs viennent de l'appareil, donc du réseau.
+   Un modèle nommé <img onerror=…> écrirait dans la page. */
+function mqttbeSetText(_id, _value) {
+  var element = mqttbeEl(_id)
+  if (element === null) { return }
+  element.textContent = String(init(_value, ''))
+}
+
 /* Rappel appelé par plugin.template.js une fois l'équipement chargé, avant que
    les lignes de commandes ne soient reconstruites. */
 function printEqLogic(_eqLogic) {
@@ -103,17 +130,50 @@ function printEqLogic(_eqLogic) {
      la main ils sont tous vides : quatre lignes vides ne renseignent personne,
      le bloc entier reste alors caché. */
   var configuration = init(_eqLogic.configuration, {})
-  var keys = ['mqttbe::uid', 'mqttbe::adapter', 'mqttbe::manufacturer', 'mqttbe::model']
-  var known = false
-  for (var i = 0; i < keys.length; i++) {
-    if (init(configuration[keys[i]], '') !== '') { known = true }
-  }
+  var uid = String(init(configuration['mqttbe::uid'], ''))
+  var adapter = String(init(configuration['mqttbe::adapter'], ''))
+  var manufacturer = String(init(configuration['mqttbe::manufacturer'], ''))
+  var model = String(init(configuration['mqttbe::model'], ''))
+  var known = (uid !== '' || adapter !== '' || manufacturer !== '' || model !== '')
+
+  /* Un tiret plutôt qu'un vide : sur un appareil dont l'annonce seule est
+     arrivée, la marque peut manquer, et une ligne vide se lirait comme une
+     page mal chargée. */
+  var label = mqttbeAdapterLabel(adapter)
+  mqttbeSetText('span_mqttbeUid', uid === '' ? '—' : uid)
+  mqttbeSetText('span_mqttbeAdapter', adapter === '' ? '—' : (label === adapter ? adapter : label + ' (' + adapter + ')'))
+  mqttbeSetText('span_mqttbeManufacturer', manufacturer === '' ? '—' : manufacturer)
+  mqttbeSetText('span_mqttbeModel', model === '' ? '—' : model)
+
   if (known) {
     identity.classList.remove('hidden')
     identity.style.display = ''
   } else {
     identity.classList.add('hidden')
+    identity.style.display = 'none'
   }
+}
+
+/*
+ * Ce que la découverte fait pendant qu'on regarde la page.
+ *
+ * Les vignettes datent du chargement : un équipement créé dix secondes plus
+ * tard n'apparaîtrait qu'au prochain passage, et la relance de la découverte
+ * semblerait n'avoir rien fait. Un compteur discret le dit, sans empiler une
+ * alerte par appareil — un parc de vingt Shelly en produirait vingt d'un coup.
+ */
+var mqttbeDiscoveredCount = 0
+
+function mqttbeNoteDiscovered(_name) {
+  var zone = mqttbeEl('div_mqttbeDiscoveryLive')
+  if (zone === null) { return }
+  mqttbeDiscoveredCount++
+  var name = String(init(_name, '')).trim()
+  var texte = mqttbeDiscoveredCount + ' {{équipement(s) découvert(s) ou mis à jour depuis l\'ouverture de cette page.}}'
+  if (name !== '') { texte += ' {{Dernier :}} ' + name + '.' }
+  texte += ' {{Rechargez la page pour les voir apparaître.}}'
+  zone.textContent = texte
+  zone.classList.remove('hidden')
 }
 
 /* ============================================================== COMMANDES */
@@ -500,6 +560,14 @@ $('body').off('mqttbe::daemonState').on('mqttbe::daemonState', function (_event,
 $('body').off('mqttbe::brokerState').on('mqttbe::brokerState', function (_event, _option) {
   var option = mqttbeEventOption(_event, _option)
   mqttbeBrokerState(init(option.state, 'nok'), init(option.message, ''))
+})
+
+/* Émis par mqttbeDaemon::onDiscovered pour chaque modèle qui a réellement
+   changé quelque chose : les modèles identiques, eux, ne coûtent rien et ne
+   disent rien. */
+$('body').off('mqttbe::discovered').on('mqttbe::discovered', function (_event, _option) {
+  var option = mqttbeEventOption(_event, _option)
+  mqttbeNoteDiscovered(init(option.name, ''))
 })
 
 var mqttbeContainer = mqttbeEl('div_pageContainer') || document.body

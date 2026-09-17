@@ -9,8 +9,24 @@ Chaque jalon a un critère d'acceptation vérifiable. Un jalon n'est pas termin�
 tant que son critère ne passe pas sur du vrai matériel et un vrai broker.
 
 **État au 17 septembre 2026 : jalons 0, 1 et 2 terminés et éprouvés** sur un
-Mosquitto 1.5.7 et un parc Shelly réel. Le jalon 3 (découverte Shelly Gen2+ par
-RPC) est le prochain.
+Mosquitto 1.5.7 et un parc Shelly réel.
+
+**Le jalon 3 (Shelly Gen2+) reste à faire, et il est repoussé volontairement.**
+Aucun appareil Gen2+ n'était joignable au moment de l'écrire : sur les deux
+présents, l'un était hors tension et l'autre, alimenté par pile, dort la plupart
+du temps — son `online: true` retenu datait de sa dernière connexion. Or tout le
+jalon repose sur une conversation RPC avec l'appareil : sans appareil qui
+réponde, on peut l'écrire mais pas le prouver, et son critère d'acceptation est
+précisément qu'un Shelly moderne apparaisse tout seul.
+
+Il sera fait dès qu'un Gen2, Gen3 ou Gen4 pourra être mis sous tension. À
+défaut, il le sera contre un Shelly émulé écrit d'après l'API officielle — avec
+la réserve que cela suppose : un émulateur encode la compréhension qu'on a de
+l'API et peut donc confirmer une erreur qu'on partagerait avec lui. La
+validation sur matériel réel resterait à faire dans ce cas.
+
+**Le jalon 4 (Gen1) est traité avant lui**, le parc Gen1 étant nombreux et
+vivant, donc entièrement vérifiable.
 
 ---
 
@@ -111,10 +127,21 @@ qui valide toute l'approche.
 
 - Adapter `shelly.gen1` : `shellies/announce`, `shellies/+/online`, et
   provocation d'annonce par `shellies/command`.
-- Capacités : sonde HTTP facultative sur l'IP annoncée (`/shelly`,
-  `/settings`) pour le nombre de relais, le mode `relay`/`roller` et la
-  présence d'un compteur ; sinon catalogue Gen1 ; sinon observation des topics
-  reçus, avec un modèle `probable` soumis à l'adoption.
+- Capacités : **lues dans `shellies/<id>/info`**, que l'annonce déclenche elle
+  aussi. Constaté sur un parc de 22 appareils : cette charge utile porte l'état
+  complet — `relays[]`, `meters[]`, `emeters[]`, `inputs[]`, `temperature`,
+  `ext_temperature[]`, `ext_humidity[]`, `has_update`, `wifi_sta.rssi`. Elle
+  suffit donc à énumérer les capacités, et la sonde HTTP que ce jalon prévoyait
+  devient inutile : un appareil qui parle déjà MQTT n'a pas à être interrogé par
+  un second protocole.
+- Une nuance qui compte : un SHSW-1, dépourvu de wattmètre, publie tout de même
+  un `meters[]` réduit à `{"power":0,"is_valid":true}`. Un compteur réel porte
+  en plus `total`, `counters` et `timestamp`. C'est cette différence qui décide,
+  pas le nombre d'entrées — sinon la moitié du parc se retrouverait avec une
+  commande de puissance bloquée à zéro.
+- Le catalogue de modèles ne sert donc qu'à embellir (nom commercial, icône) et
+  à corriger les rares cas où `info` ment. Son absence n'empêche jamais la
+  découverte.
 - Identité `shelly:<mac>`, commune à Gen1 et Gen2+ : un parc mixte ne produit
   jamais de doublon.
 - Modèles couverts en priorité : `SHSW-1`, `SHSW-PM`, `SHSW-25` (relais et

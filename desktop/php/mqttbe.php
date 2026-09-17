@@ -26,6 +26,43 @@ if (class_exists('mqttbe') && method_exists('mqttbe', 'deamon_info')) {
 }
 $brokerState = cache::byKey('mqttbe::brokerState')->getValue('nok');
 $brokerHost = trim(config::byKey('broker::host', 'mqttbe', ''));
+
+/*
+ * Découverte : l'état des deux réglages décide de ce que la page a le droit de
+ * laisser croire. Il est lu ici, côté serveur, et non par un aller-retour ajax :
+ * une page qui annonce une découverte active pendant une seconde, avant de se
+ * corriger, est pire qu'une page muette.
+ */
+$discoveryEnabled = (config::byKey('discovery::enabled', 'mqttbe', 1) == 1);
+$discoveryAutoCreate = (config::byKey('discovery::autoCreate', 'mqttbe', 1) == 1);
+
+/* Ce que la découverte a reconnu sans le créer, quand la création automatique
+ * est désactivée. C'est du cache : son absence n'est pas une anomalie, elle dit
+ * seulement que rien n'attend. */
+$pending = array();
+try {
+    $valeur = cache::byKey('mqttbe::pending')->getValue(array());
+    if (is_array($valeur)) {
+        $pending = $valeur;
+    }
+} catch (Throwable $e) {
+    $pending = array();
+}
+
+/*
+ * Noms lisibles des adapters. La même table sert aux vignettes ci-dessous et au
+ * bloc d'identité du panneau d'édition, côté JS : « shelly.gen1 » ne dit rien à
+ * qui n'a pas lu le code, et c'est pourtant la seule chose qui distingue un
+ * équipement venu tout seul d'un équipement saisi à la main.
+ */
+$mqttbeAdapters = array(
+    'shelly.gen1'   => 'Shelly Gen1',
+    'shelly.gen2'   => 'Shelly Gen2+',
+    'tasmota'       => 'Tasmota',
+    'zigbee2mqtt'   => 'Zigbee2MQTT',
+    'homeassistant' => 'Home Assistant Discovery',
+);
+sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
 ?>
 
 <div class="row row-overflow">
@@ -62,15 +99,61 @@ $brokerHost = trim(config::byKey('broker::host', 'mqttbe', ''));
             echo '{{Ouvrez la configuration du plugin et saisissez l\'adresse de votre broker MQTT : c\'est le seul réglage nécessaire pour démarrer.}}';
             echo '</div>';
         }
+        /*
+         * Découverte arrêtée : un bandeau discret, jamais une alerte rouge.
+         * C'est un réglage volontaire dans bien des cas ; ce qu'il faut éviter,
+         * c'est qu'on attende en vain des équipements qui ne viendront pas.
+         */
+        if (!$discoveryEnabled) {
+            echo '<div class="alert alert-info" style="margin:5px;padding:6px 10px;">';
+            echo '<i class="fas fa-eye-slash"></i> ';
+            echo '{{La découverte automatique est désactivée : les appareils qui s\'annoncent sur le broker ne créent plus rien, seules les commandes saisies à la main restent écoutées.}} ';
+            echo '<a class="cursor eqLogicAction" data-action="gotoPluginConf"><b>{{Ouvrir la configuration du plugin}}</b></a>';
+            echo '</div>';
+        } elseif (!$discoveryAutoCreate) {
+            echo '<div class="alert alert-info" style="margin:5px;padding:6px 10px;">';
+            echo '<i class="fas fa-user-check"></i> ';
+            echo '{{La découverte reconnaît les appareils mais ne crée aucun équipement : la création automatique est désactivée.}} ';
+            if (count($pending) > 0) {
+                $noms = array();
+                foreach ($pending as $candidat) {
+                    $nom = isset($candidat['name']) ? trim((string) $candidat['name']) : '';
+                    if ($nom !== '') {
+                        $noms[] = htmlspecialchars($nom);
+                    }
+                    if (count($noms) >= 5) {
+                        break;
+                    }
+                }
+                echo '<b>' . count($pending) . ' {{appareil(s) vu(s) depuis le dernier démarrage du démon}}</b>';
+                if (count($noms) > 0) {
+                    echo ' : ' . implode(', ', $noms);
+                    if (count($pending) > count($noms)) {
+                        echo '…';
+                    }
+                }
+                echo '. ';
+            }
+            echo '<a class="cursor eqLogicAction" data-action="gotoPluginConf"><b>{{Ouvrir la configuration du plugin}}</b></a>';
+            echo '</div>';
+        }
+        /* Rempli par le JS quand un équipement est découvert page ouverte : la
+         * liste des vignettes, elle, date du chargement. */
+        echo '<div id="div_mqttbeDiscoveryLive" class="alert alert-success hidden" style="margin:5px;padding:6px 10px;"></div>';
         if (count($eqLogics) == 0) {
             echo '<div class="alert alert-info" style="margin:5px;">';
-            echo '<b>{{Aucun équipement pour le moment. Pour en créer un à la main :}}</b>';
+            if ($discoveryEnabled) {
+                echo '<b>{{Aucun équipement pour le moment.}}</b> ';
+                echo '{{La découverte écoute : un appareil qui s\'annonce apparaît ici tout seul. Un appareil connecté depuis longtemps, lui, ne s\'annonce plus — demandez-lui de se présenter avec le bouton « Relancer la découverte » de la configuration du plugin.}}';
+                echo '<br><br>';
+            }
+            echo '<b>{{Pour créer un équipement à la main :}}</b>';
             echo '<ol style="margin:5px 0 0 0;padding-left:20px;">';
             echo '<li>{{Cliquez sur « Ajouter un équipement » et donnez-lui un nom.}}</li>';
             echo '<li>{{Indiquez son topic de base, par exemple shellies/shelly1pm-D8BFC01A0805 : il servira à préremplir le topic des commandes.}}</li>';
             echo '<li>{{Dans l\'onglet « Commandes », ajoutez une information pour lire une valeur, une action pour publier un message, puis enregistrez.}}</li>';
             echo '</ol>';
-            echo '<span class="help-block" style="margin:8px 0 0 0;">{{La découverte automatique — Shelly, Tasmota, Zigbee2MQTT, Home Assistant Discovery — viendra plus tard. La création à la main restera de toute façon le moyen de traiter les cas que la découverte ne sait pas reconnaître.}}</span>';
+            echo '<span class="help-block" style="margin:8px 0 0 0;">{{La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle ne connaît pour l\'instant que les Shelly Gen1.}}</span>';
             echo '</div>';
         }
         echo '<div class="input-group" style="margin:5px;">';
@@ -84,11 +167,35 @@ $brokerHost = trim(config::byKey('broker::host', 'mqttbe', ''));
         foreach ($eqLogics as $eqLogic) {
             $opacity = ($eqLogic->getIsEnable()) ? '' : 'disableCard';
             $topic = trim((string) $eqLogic->getConfiguration('mqttbe::topic', ''));
+            /* L'origine d'un équipement explique tout le reste : pourquoi ses
+             * commandes sont apparues seules, pourquoi elles se remettront à
+             * jour, et à qui s'en prendre quand quelque chose manque. */
+            $adapter = trim((string) $eqLogic->getConfiguration('mqttbe::adapter', ''));
+            $uid = trim((string) $eqLogic->getConfiguration('mqttbe::uid', ''));
+            $adapterLabel = ($adapter !== '' && isset($mqttbeAdapters[$adapter])) ? $mqttbeAdapters[$adapter] : $adapter;
+            $infobulle = ($topic === '' ? '{{Aucun topic de base}}' : htmlspecialchars($topic));
+            if ($uid !== '') {
+                $infobulle .= ' — ' . htmlspecialchars($uid);
+            }
             echo '<div class="eqLogicDisplayCard cursor ' . $opacity . '" data-eqLogic_id="' . $eqLogic->getId() . '"';
-            echo ' title="' . ($topic === '' ? '{{Aucun topic de base}}' : htmlspecialchars($topic)) . '">';
+            echo ' title="' . $infobulle . '">';
             echo '<i class="fas fa-broadcast-tower" style="font-size:4em;"></i>';
             echo '<br>';
             echo '<span class="name">' . $eqLogic->getHumanName(true, true) . '</span>';
+            /* Une vignette est étroite : le texte est court et l'infobulle porte
+             * la phrase entière plutôt que de la faire couper par l'ellipse. */
+            if ($adapter !== '') {
+                echo '<span class="mqttbeOrigin" title="{{Équipement créé par la découverte automatique}} — ' . htmlspecialchars($adapterLabel) . '"';
+            } else {
+                echo '<span class="mqttbeOrigin" title="{{Équipement créé à la main : la découverte ne le touche pas}}"';
+            }
+            echo ' style="display:block;font-size:0.8em;opacity:0.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">';
+            if ($adapter !== '') {
+                echo '<i class="fas fa-magic"></i> {{Découvert}} · ' . htmlspecialchars($adapterLabel);
+            } else {
+                echo '<i class="fas fa-hand-pointer"></i> {{Créé à la main}}';
+            }
+            echo '</span>';
             echo '<span class="hiddenAsCard displayTableRight hidden">';
             echo ($eqLogic->getIsVisible() == 1) ? '<i class="fas fa-eye" title="{{Equipement visible}}"></i>' : '<i class="fas fa-eye-slash" title="{{Equipement non visible}}"></i>';
             echo '</span>';
@@ -200,30 +307,49 @@ $brokerHost = trim(config::byKey('broker::host', 'mqttbe', ''));
                                 </div>
                             </div>
 
-                            <!-- Renseignée par la découverte automatique, vide tant qu'un
-                                 équipement est créé à la main : le bloc reste caché dans ce
-                                 cas plutôt que d'aligner quatre champs vides. -->
+                            <!-- Identité posée par la découverte, vide sur un équipement créé
+                                 à la main : le bloc reste alors caché plutôt que d'aligner
+                                 quatre champs vides.
+
+                                 Ces champs ne portent volontairement pas la classe
+                                 eqLogicAttr. Le cœur les remplirait en innerHTML avec des
+                                 chaînes venues de l'appareil, donc du réseau, et les
+                                 renverrait telles quelles à l'enregistrement : la page
+                                 réécrirait alors une identité dont le serveur est seul
+                                 propriétaire. printEqLogic les pose en texte, et rien ne
+                                 repart. -->
                             <div id="div_mqttbeIdentity" style="display:none;">
                                 <div class="form-group">
                                     <label class="col-sm-3 control-label">{{Identifiant}}</label>
                                     <div class="col-sm-5">
-                                        <span class="eqLogicAttr" data-l1key="configuration" data-l2key="mqttbe::uid"></span>
+                                        <span id="span_mqttbeUid"></span>
                                     </div>
                                     <div class="col-sm-4">
-                                        <span class="help-block" style="margin:0;">{{Identité du périphérique telle que la découverte l'a reconnue.}}</span>
+                                        <span class="help-block" style="margin:0;">{{Identité du périphérique telle que la découverte l'a reconnue. Elle ne bouge pas quand l'appareil change d'adresse IP : c'est elle qui évite les doublons.}}</span>
                                     </div>
                                 </div>
                                 <div class="form-group">
-                                    <label class="col-sm-3 control-label">{{Origine}}</label>
+                                    <label class="col-sm-3 control-label">{{Adaptateur}}</label>
                                     <div class="col-sm-5">
-                                        <span class="eqLogicAttr" data-l1key="configuration" data-l2key="mqttbe::adapter"></span>
+                                        <span id="span_mqttbeAdapter"></span>
                                     </div>
                                 </div>
                                 <div class="form-group">
-                                    <label class="col-sm-3 control-label">{{Matériel}}</label>
+                                    <label class="col-sm-3 control-label">{{Marque}}</label>
                                     <div class="col-sm-5">
-                                        <span class="eqLogicAttr" data-l1key="configuration" data-l2key="mqttbe::manufacturer"></span>
-                                        <span class="eqLogicAttr" data-l1key="configuration" data-l2key="mqttbe::model"></span>
+                                        <span id="span_mqttbeManufacturer"></span>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="col-sm-3 control-label">{{Modèle}}</label>
+                                    <div class="col-sm-5">
+                                        <span id="span_mqttbeModel"></span>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="col-sm-3 control-label"></label>
+                                    <div class="col-sm-9">
+                                        <span class="help-block" style="margin:0;"><i class="fas fa-unlock"></i> {{Cet équipement a été créé par la découverte, et il reste le vôtre : renommez ses commandes, corrigez une unité, masquez ce qui ne vous sert pas. La découverte suivante ne remet à jour que la plomberie — topic écouté et chemin dans la charge utile — et laisse vos retouches en place.}}</span>
                                     </div>
                                 </div>
                             </div>

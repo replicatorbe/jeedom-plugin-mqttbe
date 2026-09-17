@@ -18,6 +18,9 @@
 /* Le routeur est une dépendance de la boucle et d'elle seule : le point
  * d'entrée n'a pas à savoir qu'il existe, ni dans quel ordre le charger. */
 require_once __DIR__ . '/Router.php';
+/* Le moteur de découverte, de même : il ne sait rien du transport ni de
+ * Jeedom, c'est la boucle qui lui branche ses deux bouts. */
+require_once __DIR__ . '/../discovery/Engine.php';
 
 /* =============================================================================
  * La boucle principale : un seul processus, un seul fil, trois sources
@@ -50,6 +53,7 @@ class MqttbeLoop {
     private $commands;
     private $pidFile;
     private $router;
+    private $discovery;
 
     private $running  = true;
     private $exitCode = 0;
@@ -79,6 +83,18 @@ class MqttbeLoop {
      * table ne doit toucher qu'aux siens. */
     private $routingSubs = array();
 
+    /* Ceux de la découverte, tenus séparément pour exactement la même raison,
+     * et avec une précaution de plus : les deux ensembles se recouvrent
+     * volontiers — `shellies/+/online` sert à découvrir un appareil autant
+     * qu'à router sa disponibilité. Chacun consulte donc l'autre avant de
+     * résilier, sans quoi arrêter la découverte couperait l'arrivée des
+     * valeurs, en silence et jusqu'au prochain redémarrage du démon. */
+    private $discoverySubs = array();
+
+    /* Compteurs de découverte au dernier résumé, même raison que ci-dessus :
+     * le journal dit la période écoulée, pas le total depuis le démarrage. */
+    private $lastDiscovery = array('emitted' => 0, 'duplicates' => 0, 'failures' => 0);
+
     public function __construct(MqttbeConfig $_config, MqttbeTransport $_transport,
                                 MqttbeJeedomLink $_link, MqttbeCommandSocket $_commands, $_pidFile) {
         $this->config    = $_config;
@@ -95,6 +111,19 @@ class MqttbeLoop {
          * et c'est la boucle qui branche les deux bouts. */
         $this->router = new MqttbeRouter($this->config);
         $this->router->onValue(array($this->link, 'pushValue'));
+
+        /*
+         * La découverte, branchée de la même façon et pas davantage : elle
+         * réclame des abonnements (la boucle les pose), publie (la boucle
+         * écrit sur le transport) et rend des modèles (la boucle les confie à
+         * Jeedom). Elle ne voit ni l'un ni l'autre, et c'est ce qui permet de
+         * l'éprouver hors ligne sur le code exact qui tourne ici.
+         */
+        $this->discovery = new MqttbeDiscoveryEngine($this->config);
+        $this->discovery->onModel(array($this->link, 'pushDiscovered'));
+        $this->discovery->onPublish(array($this, 'discoveryPublish'));
+        $this->discovery->onSubscribe(array($this, 'syncDiscoverySubscriptions'));
+        $this->discovery->loadAdapters(__DIR__ . '/../discovery/adapters');
     }
 
     public function stop() {
@@ -177,6 +206,9 @@ class MqttbeLoop {
         }
 
         $this->commands->purge();
+        /* Le battement des adapters : le moteur s'y limite tout seul à une
+         * fois par seconde, la boucle n'a pas à tenir ce compte. */
+        $this->discovery->tick();
         $this->link->tick();
 
         if ($this->link->isDead()) {
@@ -292,6 +324,13 @@ class MqttbeLoop {
 
         $this->router->route($_topic, $_payload, $_qos, $_retained);
 
+        /* La découverte APRÈS le routage, et jamais l'inverse : une valeur
+         * attendue par une commande existante ne doit pas attendre qu'un
+         * adapter ait fini d'examiner le message. Le moteur rend la main
+         * aussitôt quand la découverte est arrêtée ou que le topic ne
+         * concerne aucun adapter. */
+        $this->discovery->onMessage($_topic, $_payload, $_retained);
+
         if (MqttbeLog::isDebug()) {
             $payload = (string) $_payload;
             /* Une charge utile peut peser des dizaines de kilo-octets (une
@@ -330,6 +369,11 @@ class MqttbeLoop {
                      * la repousser toutes les minutes à tout hasard. */
                     'routing'  => $this->router->version(),
                     'routed'   => $stats['routed'],
+                    /* Même raison que pour la version de table : un démon
+                     * relancé a perdu son ordre `discovery`, et c'est au
+                     * battement que Jeedom s'en aperçoit — sans avoir à le
+                     * repousser toutes les minutes à tout hasard. */
+                    'discovery' => $this->discovery->isEnabled() ? 1 : 0,
                 ));
 
             case 'loglevel':
@@ -345,6 +389,9 @@ class MqttbeLoop {
 
             case 'routing':
                 return $this->applyRouting($_order);
+
+            case 'discovery':
+                return $this->applyDiscovery($_order);
 
             case 'subscribe':
                 $topic = isset($_order['topic']) ? (string) $_order['topic'] : '';
@@ -477,19 +524,93 @@ class MqttbeLoop {
      * dans Jeedom.
      */
     private function syncRoutingSubscriptions() {
-        $wanted = $this->router->subscriptions();
+        $this->syncSubscriptions($this->routingSubs, $this->router->subscriptions(),
+                                 $this->discoverySubs, 'routage');
+    }
 
-        foreach ($this->routingSubs as $topic => $qos) {
-            if (!isset($wanted[$topic])) {
-                $this->transport->unsubscribe($topic);
-            }
+    /* ---------------------------------------------------------- découverte */
+
+    /*
+     * L'ordre `discovery` (CONTRAT-J4 §4). Même forme que pour le routage, et
+     * dans le même ordre : le moteur décide d'abord quels adapters travaillent,
+     * les abonnements viennent ensuite. S'abonner avant ferait arriver des
+     * messages qu'aucun adapter actif ne réclamerait encore, et le premier état
+     * retenu — celui que le broker rejoue aussitôt l'abonnement posé, et qui
+     * porte justement l'annonce d'un appareil — serait celui qu'on perdrait.
+     */
+    private function applyDiscovery($_order) {
+        $result = $this->discovery->apply($_order);
+        if (empty($result['applied'])) {
+            return array('state' => 'error', 'result' => $result);
         }
-        foreach ($wanted as $topic => $qos) {
-            if (!isset($this->routingSubs[$topic])) {
-                $this->transport->subscribe($topic, $qos);
-            }
+        $this->syncDiscoverySubscriptions();
+        return array('state' => 'ok', 'result' => $result);
+    }
+
+    /*
+     * Publique parce que le moteur l'appelle : un adapter qui s'abonne en
+     * cours de route (le topic de réponse d'un appel RPC) n'attend pas le
+     * prochain ordre `discovery` pour que l'abonnement soit posé.
+     */
+    public function syncDiscoverySubscriptions() {
+        $this->syncSubscriptions($this->discoverySubs, $this->discovery->subscriptions(),
+                                 $this->routingSubs, 'découverte');
+    }
+
+    /* La publication demandée par un adapter. Elle passe par la boucle et non
+     * par le transport en direct : le moteur n'a pas à savoir qu'il existe un
+     * broker, ni à décider ce qu'on fait quand il est absent. */
+    public function discoveryPublish($_topic, $_payload, $_qos = 0, $_retain = false) {
+        if (!$this->transport->isConnected()) {
+            return false;
         }
-        $this->routingSubs = $wanted;
+        return $this->transport->publish($_topic, $_payload, $_qos, $_retain);
+    }
+
+    /* ------------------------------------------------------- les deux jeux */
+
+    /*
+     * Met un jeu d'abonnements en accord avec ce qu'il devrait être, sans
+     * jamais toucher à ceux dont l'AUTRE jeu a besoin.
+     *
+     * Deux règles, et la seconde est celle qui se paie cher quand on l'oublie :
+     *
+     * 1. Différence, jamais table rase. Résilier puis reprendre un abonnement
+     *    inchangé ferait rejouer par le broker tous les messages retenus de la
+     *    branche — pour un parc Shelly, des centaines d'états d'un coup, à
+     *    chaque enregistrement d'une commande dans Jeedom.
+     *
+     * 2. On ne résilie pas ce que l'autre mécanisme tient, et on ne repose pas
+     *    ce qu'il a déjà posé. Les deux jeux se recouvrent largement — le même
+     *    `shellies/+/online` sert à découvrir et à router — et un UNSUBSCRIBE
+     *    est global à la session MQTT : il n'existe pas de « se désabonner
+     *    pour la découverte seulement ». Arrêter la découverte couperait donc
+     *    l'arrivée des valeurs, sans un mot dans le journal, jusqu'au prochain
+     *    redémarrage du démon.
+     */
+    private function syncSubscriptions(&$_current, $_wanted, $_other, $_quoi) {
+        $poses = 0;
+        $otes  = 0;
+        foreach ($_current as $topic => $qos) {
+            if (isset($_wanted[$topic]) || isset($_other[$topic])) {
+                continue;
+            }
+            $this->transport->unsubscribe($topic);
+            $otes++;
+        }
+        foreach ($_wanted as $topic => $qos) {
+            if (isset($_current[$topic]) || isset($_other[$topic])) {
+                continue;
+            }
+            $this->transport->subscribe($topic, $qos);
+            $poses++;
+        }
+        $_current = $_wanted;
+
+        if (($poses > 0 || $otes > 0) && MqttbeLog::isDebug()) {
+            MqttbeLog::debug('abonnements de ' . $_quoi . ' : ' . $poses . ' posé(s), '
+                           . $otes . ' résilié(s), ' . count($_wanted) . ' au total');
+        }
     }
 
     /* --------------------------------------------------------------- vie */
@@ -519,8 +640,19 @@ class MqttbeLoop {
         }
         $this->lastCounts = $since;
 
+        /* La découverte a son propre delta : elle peut avoir travaillé pendant
+         * que le routage se taisait — c'est même le cas d'une installation
+         * neuve, où rien n'est encore routé. */
+        $decouverte = $this->discovery->stats();
+        $deltaD = array();
+        foreach ($this->lastDiscovery as $cle => $valeur) {
+            $deltaD[$cle] = $decouverte[$cle] - $valeur;
+            $this->lastDiscovery[$cle] = $decouverte[$cle];
+        }
+
         $pending = $this->link->pending();
-        if ($delta['received'] === 0 && $delta['excluded'] === 0 && $pending === 0) {
+        if ($delta['received'] === 0 && $delta['excluded'] === 0 && $pending === 0
+            && $deltaD['emitted'] === 0 && $deltaD['failures'] === 0) {
             return;
         }
 
@@ -530,6 +662,14 @@ class MqttbeLoop {
                       . 'file ' . $pending . ', latence médiane '
                       . number_format($stats['median'], 3, ',', ' ') . ' ms, '
                       . 'mémoire ' . round(memory_get_usage(true) / 1048576, 1) . ' Mo');
+
+        if ($this->discovery->isEnabled()) {
+            MqttbeLog::info('découverte (5 min) : ' . $deltaD['emitted'] . ' modèle(s) remis à Jeedom, '
+                          . $deltaD['duplicates'] . ' inchangé(s), ' . $deltaD['failures'] . ' erreur(s) '
+                          . 'd\'adapter — ' . $decouverte['active'] . ' adapter(s) actif(s), '
+                          . $decouverte['subscriptions'] . ' abonnement(s), '
+                          . $decouverte['memory'] . ' clé(s) en mémoire');
+        }
     }
 
     private function shutdown() {

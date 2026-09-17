@@ -85,6 +85,41 @@ if (!isConnect('admin')) {
     </fieldset>
 
     <fieldset>
+        <legend><i class="fas fa-search"></i> {{Découverte}}</legend>
+        <div class="form-group">
+            <label class="col-sm-3 control-label">{{Découverte automatique}}</label>
+            <div class="col-sm-2">
+                <!-- Cochée par défaut dans le balisage : quand aucune valeur n'est
+                     encore enregistrée, le cœur laisse la case telle quelle, et
+                     l'écran doit alors montrer le défaut du plugin — activé. -->
+                <input type="checkbox" class="configKey" data-l1key="discovery::enabled" checked />
+            </div>
+            <div class="col-sm-7">
+                <span class="help-block" style="margin:0;">{{Le plugin écoute les annonces des appareils présents sur le broker et en déduit leurs équipements, leurs commandes et leurs unités. Décochée, plus rien n'est reconnu : seules les commandes saisies à la main restent écoutées.}}</span>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="col-sm-3 control-label">{{Créer les équipements}}</label>
+            <div class="col-sm-2">
+                <input type="checkbox" class="configKey" data-l1key="discovery::autoCreate" checked />
+            </div>
+            <div class="col-sm-7">
+                <span class="help-block" style="margin:0;">{{Cochée, un appareil reconnu devient un équipement Jeedom sans rien demander. Décochée, il est seulement signalé sur la page du plugin et rien n'est créé : le temps de regarder ce que la découverte trouve avant de la laisser faire.}}</span>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="col-sm-3 control-label"></label>
+            <div class="col-sm-9">
+                <a class="btn btn-default" id="bt_mqttbeRescan"><i class="fas fa-sync"></i> {{Relancer la découverte}}</a>
+                <span id="span_mqttbeRescanResult" style="margin-left:10px;"></span>
+                <span class="help-block" style="margin:6px 0 0 0;">{{Redemande à tout le parc de se présenter : un appareil connecté depuis des semaines ne s'annonce plus de lui-même, et resterait invisible alors qu'il publie ses valeurs en continu. C'est le bouton à utiliser après avoir installé le plugin sur une installation déjà en service.}}</span>
+                <span class="help-block" style="margin:2px 0 0 0;">{{La demande passe par le démon et emprunte les réglages enregistrés : si vous venez de réactiver la découverte, sauvegardez d'abord.}}</span>
+                <span class="help-block" style="margin:2px 0 0 0;"><i class="fas fa-unlock"></i> {{Vos retouches survivent à la relance : une commande renommée, une unité corrigée ou un affichage masqué ne sont jamais réécrits. La découverte ne remet à jour que la plomberie — topic écouté et chemin dans la charge utile.}}</span>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend><i class="fas fa-cogs"></i> {{Démon}}</legend>
         <div class="form-group">
             <label class="col-sm-3 control-label">{{Port des ordres}}</label>
@@ -165,6 +200,42 @@ if (!isConnect('admin')) {
                  * « connecté » : version, refus d'identifiants, certificat. */
                 var message = (data.result && data.result.message) ? data.result.message : '{{Connexion au broker réussie.}}';
                 result.attr('class', 'label label-success').text(message);
+                $('#div_alert').showAlert({ message: message, level: 'success' });
+            }
+        });
+    });
+
+    /*
+     * La relance ne prend aucun réglage de l'écran : elle ordonne au démon, qui
+     * tourne avec la configuration enregistrée, de publier la demande
+     * d'annonce. Rien à envoyer d'autre que l'action, donc, et la même gestion
+     * d'erreur que l'essai de connexion — un démon arrêté répond par un échec
+     * explicite plutôt que par un silence.
+     */
+    $('#bt_mqttbeRescan').on('click', function () {
+        var result = $('#span_mqttbeRescanResult');
+        result.attr('class', 'label label-info').text('{{Relance en cours…}}');
+        $.ajax({
+            type: 'POST',
+            url: 'plugins/mqttbe/core/ajax/mqttbe.ajax.php',
+            data: { action: 'rescan' },
+            dataType: 'json',
+            timeout: 20000,
+            error: function (request, status, error) {
+                result.attr('class', 'label label-danger').text('{{Échec}}');
+                handleAjaxError(request, status, error);
+            },
+            success: function (data) {
+                if (data.state != 'ok') {
+                    result.attr('class', 'label label-danger').text('{{Échec}}');
+                    $('#div_alert').showAlert({ message: data.result, level: 'danger' });
+                    return;
+                }
+                /* Les appareils répondent dans la seconde, mais leur création
+                 * passe par le démon puis par Jeedom : annoncer « fait » serait
+                 * mentir, la demande est seulement partie. */
+                var message = (data.result && data.result.message) ? data.result.message : '{{Découverte relancée : les appareils se présentent, patientez quelques secondes.}}';
+                result.attr('class', 'label label-success').text('{{Demande envoyée}}');
                 $('#div_alert').showAlert({ message: message, level: 'success' });
             }
         });

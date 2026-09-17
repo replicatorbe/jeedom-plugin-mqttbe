@@ -1,0 +1,470 @@
+{
+    "shelly1-A8B0C100000B": {
+        "relay/0": {
+            "r": true,
+            "v": "off"
+        },
+        "online": {
+            "r": true,
+            "v": "true"
+        },
+        "info": {
+            "r": true,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.21\",\"rs"
+        },
+        "input_event/0": {
+            "r": true,
+            "v": "{\"event\":\"S\",\"event_cnt\":1377}"
+        },
+        "input/0": {
+            "r": true,
+            "v": "0"
+        },
+        "longpush/0": {
+            "r": true,
+            "v": "0"
+        }
+    },
+    "shelly1-A8B0C1000006": {
+        "relay/0": {
+            "r": true,
+            "v": "off"
+        },
+        "ext_temperature/0": {
+            "r": true,
+            "v": "23.9"
+        },
+        "ext_temperature/1": {
+            "r": true,
+            "v": "20.0"
+        },
+        "ext_temperature_f/0": {
+            "r": true,
+            "v": "75.0"
+        },
+        "ext_temperature_f/1": {
+            "r": true,
+            "v": "68.0"
+        },
+        "ext_temperatures": {
+            "r": true,
+            "v": "{\"0\":{\"hwID\":\"2803000000000000\",\"tC\":23.9},\"1\":{\"hwID\":\"280be331632001"
+        },
+        "ext_temperatures_f": {
+            "r": true,
+            "v": "{\"0\":{\"hwID\":\"2803000000000000\",\"tF\":75.0},\"1\":{\"hwID\":\"280be331632001"
+        },
+        "online": {
+            "r": true,
+            "v": "true"
+        },
+        "info": {
+            "r": true,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.16\",\"rssi"
+        },
+        "input/0": {
+            "r": true,
+            "v": "0"
+        },
+        "input_event/0": {
+            "r": true,
+            "v": "{\"event\":\"\",\"event_cnt\":0}"
+        }
+    },
+    "shelly1-A8B0C1000001": {
+        "relay/0": {
+            "r": false,
+            "v": "off"
+        },
+        "input/0": {
+            "r": false,
+            "v": "1"
+        },
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.11\",\"rs"
+        }
+    },
+    "shellyplug-s-A8B0C1000014": {
+        "relay/0/power": {
+            "r": false,
+            "v": "11.19"
+        },
+        "relay/0/energy": {
+            "r": false,
+            "v": "1816965"
+        },
+        "relay/0": {
+            "r": false,
+            "v": "on"
+        },
+        "temperature": {
+            "r": false,
+            "v": "31.77"
+        },
+        "temperature_f": {
+            "r": false,
+            "v": "89.18"
+        },
+        "overtemperature": {
+            "r": false,
+            "v": "0"
+        },
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.30\",\"rssi\""
+        }
+    },
+    "shelly1-A8B0C1000010": {
+        "relay/0": {
+            "r": false,
+            "v": "off"
+        },
+        "input/0": {
+            "r": false,
+            "v": "0"
+        },
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.26\",\"rssi"
+        }
+    },
+    "shelly1-A8B0C1000004": {
+        "relay/0": {
+            "r": false,
+            "v": "off"
+        },
+        "input/0": {
+            "r": false,
+            "v": "0"
+        },
+        "ext_temperature/0": {
+            "r": false,
+            "v": "20.2"
+        },
+        "ext_temperature_f/0": {
+            "r": false,
+            "v": "68.5"
+        },
+        "ext_temperatures": {
+            "r": false,
+            "v": "{\"0\":{\"hwID\":\"2801000000000000\",\"tC\":20.2}}"
+        },
+        "ext_temperatures_f": {
+            "r": false,
+            "v": "{\"0\":{\"hwID\":\"2801000000000000\",\"tF\":68.5}}"
+        },
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.14\",\"r"
+        }
+    },
+    "shellyem-A8B0C1000013": {
+        "emeter/0/power": {
+            "r": false,
+            "v": "0.00"
+        },
+        "emeter/0/reactive_power": {
+            "r": false,
+            "v": "0.00"
+        },
+        "emeter/0/pf": {
+            "r": false,
+            "v": "0.00"
+        },
+        "emeter/0/voltage": {
+            "r": false,
+            "v": "241.12"
+        },
+        "emeter/0/total": {
+            "r": false,
+            "v": "3918124.9"
+        },
+        "emeter/0/total_returned": {
+            "r": false,
+            "v": "0.0"
+        },
+        "emeter/1/power": {
+            "r": false,
+            "v": "-411.54"
+        },
+        "emeter/1/reactive_power": {
+            "r": false,
+            "v": "-351.42"
+        },
+        "emeter/1/pf": {
+            "r": false,
+            "v": "0.76"
+        },
+        "emeter/1/voltage": {
+            "r": false,
+            "v": "241.12"
+        },
+        "emeter/1/total": {
+            "r": false,
+            "v": "9091154.0"
+        },
+        "emeter/1/total_returned": {
+            "r": false,
+            "v": "7916971.1"
+        },
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.29\",\"rssi"
+        },
+        "relay/0": {
+            "r": false,
+            "v": "off"
+        }
+    },
+    "shelly1-A8B0C100000E": {
+        "relay/0": {
+            "r": false,
+            "v": "on"
+        },
+        "input/0": {
+            "r": false,
+            "v": "0"
+        },
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.24\",\"r"
+        }
+    },
+    "shelly1-A8B0C1000002": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.12\",\"rssi"
+        }
+    },
+    "shelly1-A8B0C100000C": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.22\",\"rssi"
+        }
+    },
+    "shelly1-A8B0C1000007": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.17\",\"rssi"
+        }
+    },
+    "shellyplug-s-A8B0C1000015": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.31\",\"r"
+        },
+        "relay/0/power": {
+            "r": false,
+            "v": "48.36"
+        },
+        "relay/0/energy": {
+            "r": false,
+            "v": "165460"
+        },
+        "relay/0": {
+            "r": false,
+            "v": "on"
+        },
+        "temperature": {
+            "r": false,
+            "v": "32.21"
+        },
+        "temperature_f": {
+            "r": false,
+            "v": "89.98"
+        },
+        "overtemperature": {
+            "r": false,
+            "v": "0"
+        }
+    },
+    "shellyplug-s-A8B0C1000016": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.32\",\"rs"
+        }
+    },
+    "shelly1-A8B0C1000009": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.19\",\"rssi"
+        }
+    },
+    "shelly1-A8B0C100000A": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.20\",\"r"
+        }
+    },
+    "shelly1-A8B0C100000D": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.23\",\"rssi"
+        }
+    },
+    "shelly1-A8B0C1000008": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.18\",\"r"
+        },
+        "relay/0": {
+            "r": false,
+            "v": "off"
+        },
+        "input/0": {
+            "r": false,
+            "v": "0"
+        }
+    },
+    "shelly1-A8B0C1000003": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.13\",\"r"
+        }
+    },
+    "shelly1pm-A8B0C1000012": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.28\",\"rs"
+        },
+        "relay/0": {
+            "r": false,
+            "v": "on"
+        },
+        "input/0": {
+            "r": false,
+            "v": "0"
+        },
+        "relay/0/power": {
+            "r": false,
+            "v": "9.72"
+        },
+        "relay/0/energy": {
+            "r": false,
+            "v": "87749"
+        },
+        "temperature": {
+            "r": false,
+            "v": "37.50"
+        },
+        "temperature_f": {
+            "r": false,
+            "v": "99.50"
+        },
+        "overtemperature": {
+            "r": false,
+            "v": "0"
+        },
+        "temperature_status": {
+            "r": false,
+            "v": "Normal"
+        }
+    },
+    "shelly1-A8B0C1000011": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.27\",\"r"
+        },
+        "relay/0": {
+            "r": false,
+            "v": "off"
+        },
+        "input/0": {
+            "r": false,
+            "v": "0"
+        }
+    },
+    "shelly1-A8B0C1000005": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.15\",\"r"
+        }
+    },
+    "shelly1-A8B0C100000F": {
+        "online": {
+            "r": false,
+            "v": "true"
+        },
+        "info": {
+            "r": false,
+            "v": "{\"wifi_sta\":{\"connected\":true,\"ssid\":\"reseau-essai\",\"ip\":\"192.0.2.25\",\"r"
+        }
+    }
+}

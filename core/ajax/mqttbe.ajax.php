@@ -140,6 +140,30 @@ try {
         ));
     }
 
+    if (init('action') == 'rescan') {
+        /*
+         * Redemande à tout le parc de se présenter.
+         *
+         * Un appareil connecté depuis des semaines ne s'annonce plus : il a
+         * parlé une fois, bien avant que le plugin n'existe. Sans cette relance,
+         * il resterait invisible alors qu'il publie ses valeurs en continu —
+         * c'est le cas le plus courant sur une installation existante, et le
+         * premier reproche qu'on ferait au plugin.
+         */
+        if (!mqttbeDaemon::state()) {
+            throw new Exception(__("Le démon n'est pas démarré", __FILE__));
+        }
+        mqttbeDaemon::sendDiscoveryConfig(true);
+        ajax::success(array('message' => __('Découverte relancée : les appareils se présentent, patientez quelques secondes.', __FILE__)));
+    }
+
+    if (init('action') == 'pending') {
+        /* Ce que la découverte a vu sans le créer, quand la création
+         * automatique est désactivée. */
+        $attente = cache::byKey('mqttbe::pending')->getValue(array());
+        ajax::success(is_array($attente) ? array_values($attente) : array());
+    }
+
     if (init('action') == 'importModel') {
         /*
          * Applique un modèle de périphérique fourni en JSON. C'est le chemin
