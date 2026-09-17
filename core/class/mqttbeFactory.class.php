@@ -51,6 +51,13 @@ class mqttbeFactory {
     const CONF_FINGERPRINT  = 'mqttbe::fingerprint';
     const CONF_MANUFACTURER = 'mqttbe::manufacturer';
     const CONF_MODEL        = 'mqttbe::model';
+    /* Métadonnées volatiles : rafraîchies à chaque passage, y compris quand le
+     * modèle est par ailleurs inchangé. L'adresse sert à ouvrir l'appareil
+     * depuis Jeedom — c'est souvent le seul moyen de savoir lequel des dix-sept
+     * « Shelly 1 » du couloir on est en train de configurer. */
+    const CONF_IP           = 'mqttbe::ip';
+    const CONF_FIRMWARE     = 'mqttbe::firmware';
+    const CONF_CONFIG_URL   = 'mqttbe::configUrl';
     const CONF_AVAILABILITY = 'mqttbe::availability';
     /* Nombre de commandes que la fabrique a laissées derrière elle au dernier
      * passage. Sans ce compte, le raccourci d'idempotence ne regarde que
@@ -327,6 +334,17 @@ class mqttbeFactory {
         if (!$isNew && $fingerprint !== ''
             && (string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') === $fingerprint
             && self::countMatches($eqLogic)) {
+            /*
+             * Une seule exception au « rien à écrire » : les métadonnées
+             * volatiles. Un appareil qui a changé d'adresse arrive ici avec la
+             * même empreinte — elle les exclut délibérément — et c'est donc le
+             * seul endroit où l'adresse peut être rafraîchie. L'écriture n'a
+             * lieu que si quelque chose a réellement changé.
+             */
+            if (self::refreshVolatile($eqLogic, $meta)) {
+                $eqLogic->save();
+                $report['touched'] = 1;
+            }
             $report['status']     = 'unchanged';
             $report['name']       = $eqLogic->getName();
             $report['eqLogic_id'] = $eqLogic->getId();
@@ -414,6 +432,30 @@ class mqttbeFactory {
      * (object_id) n'est jamais fixé par la fabrique — le rangement des pièces
      * appartient à l'utilisateur.
      */
+    /**
+     * Range les métadonnées qui changent sans que l'appareil change.
+     *
+     * Rend true si l'une d'elles a bougé, pour que l'appelant décide d'écrire.
+     * Une valeur vide n'efface jamais une valeur connue : un modèle dégradé —
+     * l'annonce sans le `info` — ne doit pas faire perdre l'adresse acquise.
+     */
+    private static function refreshVolatile($_eqLogic, $_meta) {
+        $change = false;
+        foreach (array('ip'         => self::CONF_IP,
+                       'firmware'   => self::CONF_FIRMWARE,
+                       'config_url' => self::CONF_CONFIG_URL) as $champ => $conf) {
+            $valeur = self::str($_meta, $champ);
+            if ($valeur === '') {
+                continue;
+            }
+            if ((string) $_eqLogic->getConfiguration($conf, '') !== $valeur) {
+                $_eqLogic->setConfiguration($conf, $valeur);
+                $change = true;
+            }
+        }
+        return $change;
+    }
+
     private static function applyEqLogic($_eqLogic, $_isNew, $_uid, $_identity, $_meta, $_model) {
         /* L'identifiant d'hier est exactement un des chemins par lesquels
          * l'appareil peut se représenter : un adapter qui change de clé entre
@@ -462,6 +504,8 @@ class mqttbeFactory {
         }
         $_eqLogic->setConfiguration(self::CONF_ALIASES, array_values($aliases));
 
+        self::refreshVolatile($_eqLogic, $_meta);
+
         foreach (array('manufacturer' => self::CONF_MANUFACTURER,
                        'model'        => self::CONF_MODEL) as $field => $conf) {
             $value = self::str($_meta, $field);
@@ -481,6 +525,23 @@ class mqttbeFactory {
         }
         if ($desired === '') {
             $desired = $_uid;
+        }
+
+        /*
+         * Le nom que l'utilisateur a donné à l'appareil, quand on a pu le lire.
+         *
+         * Il vient après le nom technique et ne le remplace pas : « Shelly 1
+         * 55670C chaudiere ». Le premier reste unique et permet de retrouver
+         * l'appareil dans le parc, le second dit enfin ce qu'il commande — sans
+         * lui, dix-sept équipements se ressemblent à six chiffres près.
+         *
+         * Absent, vide, ou sonde en échec : le nom technique seul, exactement
+         * comme avant. Un appareil injoignable ne doit jamais dégrader ce qui
+         * existe déjà.
+         */
+        $deviceName = self::str($_meta, 'device_name');
+        if ($deviceName !== '' && stripos($desired, $deviceName) === false) {
+            $desired .= ' ' . $deviceName;
         }
         $generated = $_eqLogic->getConfiguration(self::CONF_GENERATED, array());
         if (!is_array($generated)) {

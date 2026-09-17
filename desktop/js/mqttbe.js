@@ -134,7 +134,8 @@ function printEqLogic(_eqLogic) {
   var adapter = String(init(configuration['mqttbe::adapter'], ''))
   var manufacturer = String(init(configuration['mqttbe::manufacturer'], ''))
   var model = String(init(configuration['mqttbe::model'], ''))
-  var known = (uid !== '' || adapter !== '' || manufacturer !== '' || model !== '')
+  var ip = String(init(configuration['mqttbe::ip'], ''))
+  var known = (uid !== '' || adapter !== '' || manufacturer !== '' || model !== '' || ip !== '')
 
   /* Un tiret plutôt qu'un vide : sur un appareil dont l'annonce seule est
      arrivée, la marque peut manquer, et une ligne vide se lirait comme une
@@ -144,6 +145,31 @@ function printEqLogic(_eqLogic) {
   mqttbeSetText('span_mqttbeAdapter', adapter === '' ? '—' : (label === adapter ? adapter : label + ' (' + adapter + ')'))
   mqttbeSetText('span_mqttbeManufacturer', manufacturer === '' ? '—' : manufacturer)
   mqttbeSetText('span_mqttbeModel', model === '' ? '—' : model)
+
+  /*
+     L'adresse en lien, parce que c'est par elle qu'on reconnaît l'appareil.
+     Construite par createElement et non par une chaîne HTML : elle vient du
+     réseau, et un appareil choisit ce qu'il annonce. La forme est contrôlée
+     avant d'en faire un lien — sinon on affiche le texte, ce qui renseigne
+     quand même sans rien exécuter.
+  */
+  var champIp = document.getElementById('span_mqttbeIp')
+  if (champIp !== null) {
+    while (champIp.firstChild !== null) {
+      champIp.removeChild(champIp.firstChild)
+    }
+    if (/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(ip) || /^[0-9a-fA-F:]{2,45}$/.test(ip)) {
+      var lien = document.createElement('a')
+      lien.href = 'http://' + ip
+      lien.target = '_blank'
+      lien.rel = 'noopener'
+      lien.title = '{{Ouvrir la page de l\'appareil}}'
+      lien.appendChild(document.createTextNode(ip))
+      champIp.appendChild(lien)
+    } else {
+      champIp.appendChild(document.createTextNode(ip === '' ? '—' : ip))
+    }
+  }
 
   if (known) {
     identity.classList.remove('hidden')

@@ -24,6 +24,7 @@ require_once __DIR__ . '/check-protocol.php';
 require_once __DIR__ . '/check-config.php';
 require_once __DIR__ . '/check-capabilities.php';
 require_once __DIR__ . '/check-discovery.php';
+require_once __DIR__ . '/check-nameprobe.php';
 require_once __DIR__ . '/check-shelly-gen1.php';
 /* Ces deux-là ne lisent pas les sources : ils font tourner les classes qui
  * écrivent en base, sur le cœur de papier de tests/faux-coeur.php. */
@@ -36,6 +37,7 @@ $sections = array(
     'Clés de configuration'                     => mqttbeControlesConfig(),
     'Vocabulaire des capacités'                 => mqttbeControlesCapacites(),
     'Moteur de découverte'                      => mqttbeControlesDecouverte(),
+    'Sondes de nom'                             => mqttbeControlesSondeNom(),
     'Découverte Shelly Gen1'                    => mqttbeControlesShellyGen1(),
     'Fabrique : écriture en base'               => mqttbeControlesFabrique(),
     'Table de routage'                          => mqttbeControlesRoutage(),

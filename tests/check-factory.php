@@ -91,6 +91,9 @@ function mqttbeModele($_uid, $_nom, $_canaux, $_empreinte = '', $_options = arra
         ),
         'channels' => $_canaux,
     );
+    if (isset($_options['device_name'])) {
+        $modele['meta']['device_name'] = $_options['device_name'];
+    }
     if (!empty($_options['aliases'])) {
         $modele['identity']['aliases'] = $_options['aliases'];
     }
@@ -754,6 +757,121 @@ function mqttbeControlesFabrique() {
     $resultats[] = mqttbeVerdict($titre, $fautes,
         "l'enregistrement est refusé par la contrainte eqLogic (name, object_id) et "
         . "l'appareil découvert n'apparaît jamais dans l'interface.");
+    /* ----------------------------------------------------------------------
+     * Le nom que l'utilisateur a donné à son appareil
+     *
+     * Dix-sept équipements nommés « Shelly 1 » suivis de six chiffres ne
+     * disent rien de ce qu'ils commandent. Quand la sonde parvient à lire le
+     * nom dans l'appareil, il s'ajoute au nom technique — qui reste, parce que
+     * c'est lui qui rend l'équipement reconnaissable dans une liste. Et quand
+     * elle échoue, rien ne doit se dégrader : c'est la moitié qui compte.
+     * -------------------------------------------------------------------- */
+    $titre = 'nom de l\'appareil ajouté au nom technique, et jamais imposé';
+    $fautes = array();
+
+    $modele = mqttbeModele('essai:nom1', 'Machin 1234',
+        array(mqttbeCanalInfo('t', 'sensor.temperature', 'x/t')), 'e-nom-1',
+        array('device_name' => 'chaudiere'));
+    mqttbeFactory::applyData($modele);
+    $eq = eqLogic::byLogicalId('essai:nom1', 'mqttbe');
+    if (!is_object($eq)) {
+        $fautes[] = 'aucun équipement créé pour essai:nom1.';
+    } elseif ($eq->getName() !== 'Machin 1234 chaudiere') {
+        $fautes[] = 'nom composé attendu « Machin 1234 chaudiere », obtenu « ' . $eq->getName() . ' ».';
+    }
+
+    /* Sonde muette : le nom technique seul, exactement comme avant. */
+    $modele = mqttbeModele('essai:nom2', 'Machin 5678',
+        array(mqttbeCanalInfo('t', 'sensor.temperature', 'y/t')), 'e-nom-2');
+    mqttbeFactory::applyData($modele);
+    $eq = eqLogic::byLogicalId('essai:nom2', 'mqttbe');
+    if (!is_object($eq)) {
+        $fautes[] = 'aucun équipement créé pour essai:nom2.';
+    } elseif ($eq->getName() !== 'Machin 5678') {
+        $fautes[] = 'sans nom d\'appareil, le nom technique devait rester seul ; obtenu « '
+                  . $eq->getName() . ' ».';
+    }
+
+    /* Un nom déjà contenu dans le nom technique ne doit pas être répété :
+     * « Chaudiere 12 chaudiere » se lirait comme une faute du plugin. */
+    $modele = mqttbeModele('essai:nom3', 'Chaudiere 12',
+        array(mqttbeCanalInfo('t', 'sensor.temperature', 'z/t')), 'e-nom-3',
+        array('device_name' => 'chaudiere'));
+    mqttbeFactory::applyData($modele);
+    $eq = eqLogic::byLogicalId('essai:nom3', 'mqttbe');
+    if (is_object($eq) && $eq->getName() !== 'Chaudiere 12') {
+        $fautes[] = 'nom déjà contenu : attendu « Chaudiere 12 », obtenu « ' . $eq->getName() . ' ».';
+    }
+
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'un appareil dont le nom n\'a pas pu être lu verrait son équipement renommé, '
+      . 'ou le nom de l\'utilisateur ne serait jamais repris : dans les deux cas la '
+      . 'liste d\'équipements redevient illisible.');
+    /* ----------------------------------------------------------------------
+     * Renommer, puis relancer la découverte
+     *
+     * C'est la crainte légitime devant tout mécanisme qui écrit à votre place :
+     * « si je corrige un nom et que la découverte repasse, est-ce que je perds
+     * mon travail ? ». La réponse doit être non, y compris quand la sonde de
+     * nom finit par répondre APRÈS coup et apporterait un autre nom. Ce
+     * contrôle est là pour que la réponse le reste.
+     * -------------------------------------------------------------------- */
+    $titre = 'un nom corrigé à la main survit à toutes les découvertes suivantes';
+    $fautes = array();
+    $canaux = array(mqttbeCanalInfo('t', 'sensor.temperature', 'r/t'));
+
+    mqttbeFactory::applyData(mqttbeModele('essai:garde', 'Machin 9999', $canaux, 'e-g-1'));
+    $eq = eqLogic::byLogicalId('essai:garde', 'mqttbe');
+    if (!is_object($eq)) {
+        $fautes[] = 'aucun équipement créé.';
+    } else {
+        /* L'utilisateur renomme. */
+        $eq->setName('Chaudière du garage');
+        $eq->save();
+
+        /* Le modèle repasse à l'identique : rien ne doit bouger. */
+        mqttbeFactory::applyData(mqttbeModele('essai:garde', 'Machin 9999', $canaux, 'e-g-1'));
+        $eq = eqLogic::byLogicalId('essai:garde', 'mqttbe');
+        if ($eq->getName() !== 'Chaudière du garage') {
+            $fautes[] = 'une re-découverte identique a renommé en « ' . $eq->getName() . ' ».';
+        }
+
+        /* La sonde répond enfin et apporte un nom : elle ne doit pas primer. */
+        mqttbeFactory::applyData(mqttbeModele('essai:garde', 'Machin 9999', $canaux, 'e-g-2',
+            array('device_name' => 'chaudiere')));
+        $eq = eqLogic::byLogicalId('essai:garde', 'mqttbe');
+        if ($eq->getName() !== 'Chaudière du garage') {
+            $fautes[] = 'le nom lu dans l\'appareil a écrasé la correction : « ' . $eq->getName() . ' ».';
+        }
+
+        /* Le modèle change vraiment (un canal de plus) : toujours pas de renommage. */
+        $canaux2 = array_merge($canaux, array(mqttbeCanalInfo('h', 'sensor.humidity', 'r/h')));
+        mqttbeFactory::applyData(mqttbeModele('essai:garde', 'Machin 9999', $canaux2, 'e-g-3',
+            array('device_name' => 'chaudiere')));
+        $eq = eqLogic::byLogicalId('essai:garde', 'mqttbe');
+        if ($eq->getName() !== 'Chaudière du garage') {
+            $fautes[] = 'un modèle enrichi a renommé en « ' . $eq->getName() . ' ».';
+        }
+        if (count($eq->getCmd()) !== 2) {
+            $fautes[] = 'le canal ajouté n\'a pas été créé : ' . count($eq->getCmd()) . ' commande(s).';
+        }
+    }
+
+    /* Contre-épreuve : sans retouche, la fabrique DOIT pouvoir enrichir le nom,
+     * sinon la sonde ne servirait jamais à rien. */
+    mqttbeFactory::applyData(mqttbeModele('essai:libre', 'Machin 8888', $canaux, 'e-l-1'));
+    mqttbeFactory::applyData(mqttbeModele('essai:libre', 'Machin 8888', $canaux, 'e-l-2',
+        array('device_name' => 'cave')));
+    $eq = eqLogic::byLogicalId('essai:libre', 'mqttbe');
+    if (is_object($eq) && $eq->getName() !== 'Machin 8888 cave') {
+        $fautes[] = 'sans retouche, le nom aurait dû s\'enrichir ; obtenu « ' . $eq->getName() . ' ».';
+    }
+
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'l\'utilisateur perdrait ses renommages à chaque découverte — le reproche '
+      . 'le plus grave qu\'on puisse faire à un plugin qui crée tout seul.');
+
+
 
     return $resultats;
 }

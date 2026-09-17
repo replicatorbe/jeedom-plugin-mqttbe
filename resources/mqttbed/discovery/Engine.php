@@ -22,6 +22,9 @@ require_once __DIR__ . '/../core/Config.php';
 require_once __DIR__ . '/Adapter.php';
 require_once __DIR__ . '/Context.php';
 require_once __DIR__ . '/DeviceModel.php';
+/* L'exécution des sondes de nom. Le moteur les déclenche et les relit ; il ne
+ * sait pas ce qu'elles font, et ce fichier-ci ne sait pas pour qui. */
+require_once __DIR__ . '/NameProbe.php';
 
 /* =============================================================================
  * Le moteur de découverte.
@@ -143,6 +146,22 @@ class MqttbeDiscoveryEngine {
 
     private $lastTick = 0.0;
 
+    /* L'exécution des sondes de nom (MqttbeNameProbe), et les modèles gardés le
+     * temps qu'elles répondent.
+     *
+     * Une sonde n'aboutit pas sur le tour où le modèle est émis : l'appareil met
+     * quelques dizaines de millisecondes à répondre, parfois plusieurs minutes,
+     * parfois jamais. Le modèle est donc remis à Jeedom TOUT DE SUITE, avec son
+     * nom technique, et gardé ici : quand la sonde répond enfin, c'est le moteur
+     * — et non l'adapter, qui n'a aucune raison de reparler — qui le renvoie
+     * complété. Sans ce souvenir, le nom obtenu ne serait appliqué qu'au
+     * prochain redémarrage du démon, quand le broker rejoue ses messages
+     * retenus. */
+    private $probes = null;
+    /* adapter|uid => array('adapter' => id, 'probe' => clé de sonde,
+     *                      'model' => tableau du dernier modèle émis) */
+    private $probed = array();
+
     private $modelHandler     = null;
     private $subscribeHandler = null;
     private $publishHandler   = null;
@@ -162,6 +181,14 @@ class MqttbeDiscoveryEngine {
 
     public function __construct(MqttbeConfig $_config) {
         $this->config = $_config;
+        /*
+         * Les sondes partagent l'horloge du moteur, et non microtime() : c'est
+         * ce qui permet d'éprouver hors ligne un recul progressif de dix minutes
+         * sans attendre dix minutes.
+         */
+        $this->probes = new MqttbeNameProbe();
+        $this->probes->useClock(array($this, 'now'));
+        $this->probes->onLog(array($this, 'logProbe'));
         /*
          * Le journal du démon si on est dans le démon, rien sinon.
          *
@@ -384,6 +411,18 @@ class MqttbeDiscoveryEngine {
 
         $enabled = array_key_exists('enabled', $_order) ? self::toBool($_order['enabled']) : true;
         $rescan  = array_key_exists('rescan', $_order) && self::toBool($_order['rescan']);
+        /*
+         * `discovery::probeNames` (défaut 1), porté par l'ordre `discovery` : le
+         * démon ne charge pas le cœur et ne peut pas lire la configuration de
+         * Jeedom lui-même.
+         *
+         * Absent, la sonde est ACTIVE : un Jeedom d'une version antérieure qui
+         * n'enverrait pas la clé doit se comporter comme le défaut du fichier
+         * ini, et non comme un utilisateur qui aurait décoché la case.
+         */
+        $probeNames = array_key_exists('probeNames', $_order)
+                    ? self::toBool($_order['probeNames']) : true;
+        $this->probes->enable($probeNames);
 
         $demandes = null;
         $inconnus = array();
@@ -443,6 +482,11 @@ class MqttbeDiscoveryEngine {
              * $ctx->rescan() qui leur dit de reprendre ce qu'ils jugent bon.
              */
             $this->seen = array();
+            /* Les sondes abandonnées repartent, et les noms connus sont
+             * redemandés : « relancer la découverte » est justement le geste de
+             * celui qui vient de renommer son appareil dans l'application du
+             * constructeur, ou de rebrancher celui qui ne répondait pas. */
+            $this->probes->rescan();
             foreach ($apres as $id => $ignore) {
                 $this->armRescan($id);
             }
@@ -490,6 +534,14 @@ class MqttbeDiscoveryEngine {
 
     private function releaseAdapter($_id) {
         unset($this->memory[$_id], $this->rescan[$_id]);
+        /* Les modèles gardés pour la réémission suivent le sort du reste : un
+         * adapter arrêté n'a plus à voir ses appareils repartir vers Jeedom
+         * parce qu'une sonde lancée avant l'arrêt a fini par répondre. */
+        foreach ($this->probed as $cle => $entree) {
+            if ($entree['adapter'] === $_id) {
+                unset($this->probed[$cle]);
+            }
+        }
         foreach ($this->adhoc as $topic => $info) {
             unset($this->adhoc[$topic]['adapters'][$_id]);
             /* Le topic ne disparaît qu'avec son dernier demandeur. */
@@ -740,6 +792,19 @@ class MqttbeDiscoveryEngine {
      * appellerait sinon onTick() vingt fois.
      */
     public function tick() {
+        /*
+         * Les sondes AVANT tout le reste, et à chaque tour — pas une fois par
+         * seconde comme les adapters.
+         *
+         * curl_multi n'avance que lorsqu'on le relance : une réponse arrivée
+         * reste dans le tampon du noyau tant que personne ne la lit, et la
+         * ralentir au rythme des adapters ajouterait une seconde d'attente à
+         * chaque appareil du parc, pour rien. C'est aussi pourquoi la boucle
+         * n'a rien eu à changer : elle appelle déjà tick() à chaque tour.
+         */
+        $this->probes->tick();
+        $this->republish();
+
         if (!$this->enabled || empty($this->active)) {
             return;
         }
@@ -762,6 +827,34 @@ class MqttbeDiscoveryEngine {
              * quand l'adapter a levé : le laisser armé après un échec ferait
              * publier une annonce générale à chaque seconde, indéfiniment. */
             unset($this->rescan[$id]);
+        }
+    }
+
+    /*
+     * LA RÉÉMISSION — sans elle, le nom obtenu ne serait jamais appliqué.
+     *
+     * Quand une sonde finit par répondre, le modèle a déjà été remis à Jeedom
+     * depuis longtemps, et l'adapter n'a aucune raison de le reproduire : son
+     * appareil n'a rien publié de nouveau. C'est donc le moteur qui renvoie le
+     * modèle gardé, complété du nom.
+     *
+     * Le chemin est exactement celui d'une émission ordinaire — emitFrom() — et
+     * non un raccourci vers Jeedom : le modèle repasse par la validation, par
+     * l'empreinte et par la table des modèles déjà émis. Comme `device_name`
+     * entre dans l'empreinte principale, l'empreinte diffère, le modèle part, et
+     * le suivant identique ne partira pas.
+     */
+    private function republish() {
+        $changes = $this->probes->drainChanged();
+        if (empty($changes) || !$this->enabled) {
+            return;
+        }
+        $changes = array_flip($changes);
+        foreach ($this->probed as $cle => $entree) {
+            if (!isset($changes[$entree['probe']]) || !isset($this->active[$entree['adapter']])) {
+                continue;
+            }
+            $this->emitFrom($entree['adapter'], $entree['model']);
         }
     }
 
@@ -929,8 +1022,16 @@ class MqttbeDiscoveryEngine {
             return false;
         }
 
+        /* Le nom que l'utilisateur a donné à son appareil, s'il est déjà connu,
+         * et la sonde inscrite s'il ne l'est pas. AVANT l'empreinte : c'est ce
+         * nom-là qui la fait changer le jour où la sonde répond. */
+        $this->resolveDeviceName($_id, $modele);
+
         $cle       = $_id . '|' . $modele->uid();
-        $empreinte = $modele->fingerprint();
+        /* L'empreinte volatile entre dans la décision d'émettre : un appareil
+         * qui a simplement changé d'adresse IP doit repartir vers Jeedom, qui
+         * rafraîchira ce seul champ sans rien réécrire d'autre. */
+        $empreinte = $modele->fingerprint() . '|' . $modele->volatileFingerprint();
         if (isset($this->seen[$cle]) && $this->seen[$cle] === $empreinte) {
             $this->duplicates++;
             $this->log('debug', 'découverte[' . $_id . '] : ' . $modele->uid()
@@ -950,6 +1051,7 @@ class MqttbeDiscoveryEngine {
         $this->emitted++;
 
         $this->log('info', 'découverte[' . $_id . '] : ' . ($modele->name() !== '' ? $modele->name() : $modele->uid())
+                         . ($modele->deviceName() !== '' ? ' « ' . $modele->deviceName() . ' »' : '')
                          . ' (' . $modele->uid() . ', ' . $modele->countChannels() . ' canal/canaux, '
                          . $modele->confidence() . ')');
 
@@ -961,9 +1063,78 @@ class MqttbeDiscoveryEngine {
         return true;
     }
 
+    /*
+     * LE NOM D'USAGE D'UN APPAREIL.
+     *
+     * Le moteur ne sait pas ce qu'est une sonde — il sait que le modèle en porte
+     * une, il la confie à MqttbeNameProbe, et il pose sur le modèle ce qui en
+     * revient. Aucun protocole n'est nommé ici, et aucun ne le sera : un adapter
+     * dont le message de découverte porte déjà le nom (Tasmota `dn`,
+     * Zigbee2MQTT `friendly_name`, Home Assistant `dev.name`) remplit
+     * `meta.device_name` et ne déclare pas de sonde — ce cas-là traverse cette
+     * fonction sans rien déclencher.
+     */
+    private function resolveDeviceName($_id, $_modele) {
+        $cle = $_id . '|' . $_modele->uid();
+
+        /* L'adapter connaît déjà le nom, ou il n'a rien à proposer : dans les
+         * deux cas, aucune requête n'est faite et il n'y a rien à garder. */
+        if (!$_modele->hasProbe() || $_modele->deviceName() !== '') {
+            unset($this->probed[$cle]);
+            return;
+        }
+
+        $sonde = $this->probes->submit($_modele->probe());
+        if ($sonde === '') {
+            /* Sonde refusée : type inconnu, adresse illégale, ou l'utilisateur a
+             * coupé `discovery::probeNames`. L'appareil est découvert avec son
+             * nom technique, comme avant — jamais moins. */
+            unset($this->probed[$cle]);
+            return;
+        }
+
+        if (!isset($this->probed[$cle]) && count($this->probed) >= self::SEEN_MAX) {
+            /* Vidée d'un bloc, comme la table des empreintes : les appareils
+             * concernés ne seront pas réémis à la réponse de leur sonde, et
+             * porteront leur nom d'usage à la découverte suivante. */
+            $this->probed = array();
+            $this->log('warning', 'découverte : ' . self::SEEN_MAX . ' modèles gardés pour la '
+                                . 'réémission, la table est vidée.');
+        }
+        /*
+         * Le modèle est gardé TEL QUE L'ADAPTER L'A PRODUIT, avant que le nom
+         * n'y soit posé — et c'est essentiel.
+         *
+         * Le garder avec son nom reviendrait à ne plus pouvoir distinguer, à la
+         * réémission, un nom que l'adapter connaît (et qui interdit la sonde)
+         * d'un nom que le moteur vient d'y poser. Un appareil renommé dans
+         * l'application du constructeur garderait alors son ancien nom pour
+         * toujours : la sonde le redemanderait bien, l'obtiendrait, et la
+         * réémission le jetterait en croyant que l'adapter l'a déjà donné.
+         */
+        $this->probed[$cle] = array('adapter' => $_id, 'probe' => $sonde,
+                                    'model' => $_modele->toArray());
+
+        /* Un vide ne remplace jamais un nom connu : applyDeviceName() s'y
+         * refuse, et c'est ce qui rend une sonde en échec inoffensive. */
+        $_modele->applyDeviceName($this->probes->name($sonde));
+    }
+
+    public function probes() {
+        return $this->probes;
+    }
+
     /* ==========================================================================
      * JOURNAL ET COMPTEURS
      * ======================================================================= */
+
+    /* Le journal des sondes passe par celui du moteur : une ligne qui ne dit pas
+     * de quel mécanisme elle vient n'apprend rien sur une installation où trois
+     * adapters travaillent en même temps. Publique parce que MqttbeNameProbe
+     * l'appelle, et destinée à lui seul. */
+    public function logProbe($_niveau, $_message) {
+        $this->log($_niveau, 'découverte : ' . $_message);
+    }
 
     private function log($_niveau, $_message) {
         if ($this->logHandler === null) {
@@ -1008,6 +1179,7 @@ class MqttbeDiscoveryEngine {
         foreach ($this->memory as $clefs) {
             $memoire += count($clefs);
         }
+        $sondes = $this->probes->stats();
         return array(
             'enabled'       => $this->enabled,
             'adapters'      => count($this->adapters),
@@ -1020,6 +1192,11 @@ class MqttbeDiscoveryEngine {
             'failures'      => $this->failures,
             'memory'        => $memoire,
             'fingerprints'  => count($this->seen),
+            /* Les sondes de nom, à plat : un compteur imbriqué serait invisible
+             * de la ligne de résumé de la boucle, qui lit des entiers. */
+            'probes'        => $sondes['probes'],
+            'probesKnown'   => $sondes['known'],
+            'probesFailed'  => $sondes['failed'],
         );
     }
 

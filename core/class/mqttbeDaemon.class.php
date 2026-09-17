@@ -541,6 +541,10 @@ class mqttbeDaemon {
             'enabled'  => config::byKey('discovery::enabled', 'mqttbe', 1) == 1,
             'adapters' => $adapters === '' ? array() : array_map('trim', explode(',', $adapters)),
             'rescan'   => (bool) $_rescan,
+            /* Aller lire le nom sur l'appareil suppose une requête vers lui :
+             * certains ne veulent pas que Jeedom frappe aux portes de leur
+             * réseau, et c'est leur droit. */
+            'probeNames' => config::byKey('discovery::probeNames', 'mqttbe', 1) == 1,
         ), false);
     }
 

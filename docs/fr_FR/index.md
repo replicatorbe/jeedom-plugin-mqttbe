@@ -220,6 +220,31 @@ qui sortent de l'ordinaire :
 Une commande qui porte des réglages fins le signale, pour qu'on n'aille pas
 chercher ailleurs l'explication d'une valeur inattendue.
 
+### Le nom de vos appareils
+
+Un équipement découvert s'appelle d'abord par son identifiant technique —
+« Shelly 1 55670C » — qui a le mérite d'être unique, et l'inconvénient de ne
+rien dire. Le plugin va donc lire, sur l'appareil lui-même, le nom que vous lui
+avez donné dans son application, et l'ajoute : **« Shelly 1 55670C chaudiere »**.
+
+Si l'appareil ne répond pas, demande une authentification ou n'a pas de nom, le
+nom technique reste, exactement comme avant : un échec ne dégrade jamais ce qui
+existe. Et le jour où vous renommez un équipement vous-même, la découverte ne
+touche plus jamais à ce nom — elle continue seulement à tenir à jour la
+plomberie, c'est-à-dire les topics écoutés.
+
+Cette lecture suppose une requête vers l'appareil. Si vous préférez que Jeedom
+ne sollicite rien sur votre réseau, décochez « Lire le nom dans l'appareil »
+dans la configuration du plugin.
+
+### L'adresse de vos appareils
+
+Chaque équipement découvert affiche l'adresse de l'appareil, cliquable, sur sa
+vignette et dans son panneau. C'est le moyen le plus court de savoir lequel on
+tient : on ouvre sa page, on le reconnaît, et on revient le nommer dans Jeedom
+en connaissance de cause. L'adresse est tenue à jour à chaque découverte — un
+nouveau bail DHCP ne laisse pas un lien mort derrière lui.
+
 ## En cas de problème
 
 **Deux journaux**, tous deux consultables depuis **Analyse → Logs** :

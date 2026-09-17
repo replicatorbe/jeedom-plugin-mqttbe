@@ -248,3 +248,27 @@ configuration — if you have just re-enabled discovery, save first.
 **If a device does not show on the Dashboard** although it is plainly there on the
 plugin page, it is missing its parent object. See above: it is by far the most
 common cause.
+
+### Your devices' names
+
+A discovered device is first named after its technical identifier — “Shelly 1
+55670C” — which is unique, and tells you nothing. So the plugin reads, from the
+device itself, the name you gave it in its own app, and appends it:
+**“Shelly 1 55670C boiler”**.
+
+If the device does not answer, asks for authentication or has no name, the
+technical name stays exactly as before: a failure never degrades what already
+works. And once you rename a device yourself, discovery never touches that name
+again — it only keeps the plumbing up to date, meaning the topics it listens to.
+
+Reading the name means one request to the device. If you would rather Jeedom did
+not reach out on your network, untick “Read the name from the device” in the
+plugin configuration.
+
+### Your devices' addresses
+
+Every discovered device shows the device's address, as a link, on its tile and
+in its panel. It is the shortest way to tell which one you are holding: open its
+page, recognise it, and come back to name it in Jeedom knowing what it is. The
+address is refreshed at every discovery — a new DHCP lease does not leave a dead
+link behind.

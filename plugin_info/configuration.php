@@ -108,6 +108,15 @@ if (!isConnect('admin')) {
             </div>
         </div>
         <div class="form-group">
+            <label class="col-sm-3 control-label">{{Lire le nom dans l'appareil}}</label>
+            <div class="col-sm-2">
+                <input type="checkbox" class="configKey" data-l1key="discovery::probeNames" checked />
+            </div>
+            <div class="col-sm-7">
+                <span class="help-block" style="margin:0;">{{Le nom que vous avez donné à l'appareil dans son application s'ajoute au nom technique : « Shelly 1 55670C chaudiere » plutôt que « Shelly 1 55670C ». Cela demande une requête vers l'appareil ; décochez si vous préférez que Jeedom ne sollicite rien sur votre réseau. En cas d'échec le nom technique reste, et un nom que vous avez corrigé n'est jamais remplacé.}}</span>
+            </div>
+        </div>
+        <div class="form-group">
             <label class="col-sm-3 control-label"></label>
             <div class="col-sm-9">
                 <a class="btn btn-default" id="bt_mqttbeRescan"><i class="fas fa-sync"></i> {{Relancer la découverte}}</a>

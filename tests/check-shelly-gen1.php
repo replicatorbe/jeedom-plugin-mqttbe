@@ -1504,6 +1504,96 @@ function mqttbeControlesShellyGen1() {
         "l'identifiant vient du réseau et compose tous les topics de l'équipement.\n"
         . implode("\n", $fautes));
 
+    /* ----------------------------------------------------------------- 17 ---
+     * LA SONDE DE NOM.
+     *
+     * « Shelly 1 43F4ED » ne dit rien de ce que l'appareil commande ; son
+     * propriétaire l'a pourtant nommé « chaudiere » dans l'application Shelly.
+     * La génération 1 ne publie ce nom-là nulle part sur MQTT : il n'existe que
+     * dans `/settings`, sur l'appareil.
+     *
+     * L'adapter DÉCLARE le moyen de l'obtenir et n'exécute rien : c'est ce
+     * partage qui fait que l'adapter Tasmota, dont le message de découverte
+     * porte déjà le nom, n'aura aucune sonde à déclarer et que rien dans le
+     * moteur ne devra changer pour lui. */
+    $titre = 'nom d\'usage : la sonde est déclarée, pas exécutée';
+    $fautes = array();
+    $avecIp = 0;
+    foreach ($parUid as $uid => $modele) {
+        $sonde = $modele->meta('probe');
+        $ip    = $modele->ip();
+        if ($ip === '') {
+            /* Sans adresse, pas de sonde : une adresse inventée ferait frapper
+             * à la porte d'un voisin sur le réseau. */
+            if (!empty($sonde)) {
+                $fautes[] = $uid . ' : sonde déclarée alors que l\'annonce ne porte aucune adresse IP';
+            }
+            continue;
+        }
+        $avecIp++;
+        if (!is_array($sonde) || empty($sonde)) {
+            $fautes[] = $uid . ' : aucune sonde déclarée pour ' . $ip;
+            continue;
+        }
+        $attendu = array('type' => 'http.json', 'url' => 'http://' . $ip . '/settings',
+                         'path' => 'name');
+        foreach ($attendu as $champ => $valeur) {
+            if (!isset($sonde[$champ]) || $sonde[$champ] !== $valeur) {
+                $fautes[] = $uid . ' : sonde.' . $champ . ' = '
+                    . var_export(isset($sonde[$champ]) ? $sonde[$champ] : null, true)
+                    . ', attendu ' . var_export($valeur, true);
+            }
+        }
+        if (!isset($sonde['ttl']) || (int) $sonde['ttl'] < 3600) {
+            $fautes[] = $uid . ' : sonde.ttl = ' . var_export(isset($sonde['ttl']) ? $sonde['ttl'] : null, true)
+                . ' — un nom ne change qu\'au jour où quelqu\'un renomme son appareil, et une '
+                . 'validité courte ferait resonder tout le parc à chaque découverte';
+        }
+        /* L'adapter Gen1 ne connaît pas le nom d'usage : le remplir lui-même
+         * reviendrait à le deviner, et à interdire la sonde qui l'obtient. */
+        if ($modele->deviceName() !== '') {
+            $fautes[] = $uid . ' : meta.device_name = « ' . $modele->deviceName()
+                . ' » alors que rien dans l\'annonce ni dans le info ne porte ce nom';
+        }
+    }
+    if ($avecIp === 0) {
+        $fautes[] = 'aucun appareil du parc ne porte d\'adresse IP : la sonde n\'est pas vérifiable.';
+    }
+    /* Une annonce sans adresse : elle existe — message retenu d'un appareil que
+     * le broker rejoue, firmware ancien — et le parc d'essai n'en contient pas.
+     * Sans adresse, une sonde serait bâtie sur « http:///settings », ou pire sur
+     * ce que l'appareil aurait mis à la place : on irait frapper à la porte d'un
+     * voisin, ou d'une machine choisie par l'annonce. */
+    $ctxSansIp = new MqttbeContexteEssaiGen1();
+    $adapterSansIp = new MqttbeShellyGen1($catalogue);
+    $sansIp = $annonces[$reperes['SHSW-1']];
+    unset($sansIp['ip']);
+    $adapterSansIp->onMessage('shellies/announce', json_encode($sansIp), true, $ctxSansIp);
+    $adapterSansIp->onMessage('shellies/' . $reperes['SHSW-1'] . '/info',
+        json_encode($infos[$reperes['SHSW-1']]), true, $ctxSansIp);
+    $modeleSansIp = mqttbeModeleGen1(mqttbeModelesParUidGen1($ctxSansIp), $reperes['SHSW-1']);
+    if ($modeleSansIp === null) {
+        $fautes[] = 'une annonce sans adresse IP ne donne plus aucun modèle : l\'appareil doit '
+            . 'rester découvert, simplement sans sonde.';
+    } elseif (!empty($modeleSansIp->meta('probe'))) {
+        $fautes[] = 'annonce sans adresse IP : sonde tout de même déclarée ('
+            . json_encode($modeleSansIp->meta('probe')) . ').';
+    }
+    /* Et surtout : l'adapter n'exécute rien. Une requête lancée depuis un
+     * adapter serait lancée depuis la boucle principale du démon, celle qui lit
+     * la socket du broker — vingt-deux appareils éteints, ce sont vingt-deux
+     * délais d'expiration pendant lesquels plus rien n'est routé. */
+    $identifiants = mqttbeIdentifiants(file_get_contents(mqttbeCheminAdapterGen1()));
+    foreach ($identifiants as $identifiant) {
+        if (preg_match('/^(curl_|fsockopen|stream_socket_client|fopen|http_get)/i', $identifiant)) {
+            $fautes[] = 'l\'adapter appelle ' . $identifiant . '() : la sonde doit être décrite, '
+                . 'jamais exécutée — l\'adapter tourne dans la boucle qui lit la socket du broker.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre,
+        "l'adapter décrit la sonde sans savoir comment elle sera exécutée ; le moteur l'exécute "
+        . "sans rien savoir de Shelly.\n" . implode("\n", $fautes));
+
     return $resultats;
 }
 

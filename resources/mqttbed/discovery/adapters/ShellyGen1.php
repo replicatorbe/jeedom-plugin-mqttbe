@@ -418,7 +418,10 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
         if ($modele === null) {
             return false;
         }
-        $empreinte = $modele->fingerprint();
+        /* Même raison que dans le moteur : un nouveau bail DHCP doit franchir ce
+         * cache, sans quoi l'adresse retenue par Jeedom serait celle du jour de
+         * la découverte, pour toujours. */
+        $empreinte = $modele->fingerprint() . '|' . $modele->volatileFingerprint();
         $emis = isset($_dossier['emis']) && is_array($_dossier['emis']) ? $_dossier['emis'] : array();
         if (isset($emis['fingerprint']) && $emis['fingerprint'] === $empreinte
             && isset($emis['confidence']) && $emis['confidence'] === $modele->confidence()) {
@@ -485,6 +488,37 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
                  * se règlent le mode d'entrée et les sondes externes. */
                 'config_url'   => ($ip === '') ? '' : 'http://' . $ip . '/',
                 'battery_powered' => $this->surPile($code),
+                /*
+                 * LE NOM QUE L'UTILISATEUR A DONNÉ À SON APPAREIL.
+                 *
+                 * La génération 1 ne le publie nulle part sur MQTT : ni
+                 * l'annonce, ni le info ne le portent. Il n'existe que dans
+                 * `/settings`, sur l'appareil lui-même — « Shelly 1 55670C »
+                 * d'un côté, « chaudiere » de l'autre, et c'est le second qui
+                 * dit à quoi sert l'équipement.
+                 *
+                 * Ce que l'adapter déclare ici, c'est le MOYEN de l'obtenir, et
+                 * rien de plus : il ne fait aucune requête, ne connaît ni le
+                 * délai d'expiration, ni le nombre de tentatives, ni ce qu'il
+                 * advient quand l'appareil est éteint. Le moteur exécute une
+                 * sonde qu'il ne comprend pas ; l'adapter la décrit sans savoir
+                 * comment elle sera exécutée.
+                 *
+                 * Sans adresse IP, pas de sonde : une annonce sans `ip` existe
+                 * (elle arrive d'un appareil que le broker a gardée en message
+                 * retenu, avec une adresse périmée qu'il n'a pas republiée), et
+                 * une adresse inventée ferait frapper à la porte d'un voisin.
+                 *
+                 * Un jour de validité : un nom ne change qu'au moment où
+                 * quelqu'un renomme son appareil, et le bouton « relancer la
+                 * découverte » redemande tout de suite.
+                 */
+                'probe'        => ($ip === '') ? array() : array(
+                    'type' => 'http.json',
+                    'url'  => 'http://' . $ip . '/settings',
+                    'path' => 'name',
+                    'ttl'  => 86400,
+                ),
             ),
             /* `online` est retenu et publié par testament : c'est lui, et non
              * l'absence de messages, qui dit qu'un appareil a disparu. */

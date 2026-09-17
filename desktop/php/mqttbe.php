@@ -196,6 +196,29 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
                 echo '<i class="fas fa-hand-pointer"></i> {{Créé à la main}}';
             }
             echo '</span>';
+            /*
+             * L'adresse de l'appareil, cliquable.
+             *
+             * Dix-sept équipements nommés « Shelly 1 » suivis de six chiffres
+             * ne disent rien de ce qu'ils commandent. Ouvrir la page de
+             * l'appareil est le moyen le plus court de reconnaître lequel on
+             * tient : on y voit son nom, on peut le faire clignoter, et on
+             * revient le renommer dans Jeedom en connaissance de cause.
+             *
+             * `stopPropagation` est indispensable : la vignette entière est
+             * cliquable pour ouvrir l'équipement, et sans cela le lien
+             * ouvrirait les deux. Le lien n'est fabriqué que si l'adresse en
+             * est réellement une — elle vient du réseau.
+             */
+            $ip = trim((string) $eqLogic->getConfiguration('mqttbe::ip', ''));
+            if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false) {
+                echo '<span style="display:block;font-size:0.8em;opacity:0.7;">';
+                echo '<a href="http://' . htmlspecialchars($ip) . '" target="_blank" rel="noopener"';
+                echo ' onclick="event.stopPropagation();"';
+                echo ' title="{{Ouvrir la page de l\'appareil dans un nouvel onglet : c\'est le moyen le plus sûr de savoir lequel c\'est}}">';
+                echo '<i class="fas fa-external-link-alt"></i> ' . htmlspecialchars($ip);
+                echo '</a></span>';
+            }
             echo '<span class="hiddenAsCard displayTableRight hidden">';
             echo ($eqLogic->getIsVisible() == 1) ? '<i class="fas fa-eye" title="{{Equipement visible}}"></i>' : '<i class="fas fa-eye-slash" title="{{Equipement non visible}}"></i>';
             echo '</span>';
@@ -344,6 +367,15 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
                                     <label class="col-sm-3 control-label">{{Modèle}}</label>
                                     <div class="col-sm-5">
                                         <span id="span_mqttbeModel"></span>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="col-sm-3 control-label">{{Adresse}}</label>
+                                    <div class="col-sm-5">
+                                        <span id="span_mqttbeIp"></span>
+                                    </div>
+                                    <div class="col-sm-4">
+                                        <span class="help-block" style="margin:0;">{{Telle que l'appareil l'a annoncée. Ouvrez-la pour voir de quel appareil il s'agit, puis renommez-le ici.}}</span>
                                     </div>
                                 </div>
                                 <div class="form-group">

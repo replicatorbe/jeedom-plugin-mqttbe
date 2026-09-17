@@ -141,7 +141,8 @@
         "La correspondance de cette commande n\\'est pas un objet JSON valide.": "The value map of this command is not a valid JSON object.",
         "Cette commande porte des réglages fins.": "This command carries advanced settings.",
         "commande": "command",
-        "Correspondance ignorée, faute d\\'être un objet JSON valide, sur :": "Value map ignored, because it is not a valid JSON object, on:"
+        "Correspondance ignorée, faute d\\'être un objet JSON valide, sur :": "Value map ignored, because it is not a valid JSON object, on:",
+        "Ouvrir la page de l\\'appareil": "Open the device's own page"
     },
     "plugins/mqttbe/desktop/php/mqttbe.php": {
         "401 - Accès non autorisé": "401 - Access denied",
@@ -218,7 +219,10 @@
         "Type": "Type",
         "Topic": "Topic",
         "Valeur": "Value",
-        "Options": "Options"
+        "Options": "Options",
+        "Ouvrir la page de l\\'appareil dans un nouvel onglet : c\\'est le moyen le plus sûr de savoir lequel c\\'est": "Open the device's own page in a new tab: the surest way to tell which one it is",
+        "Adresse": "Address",
+        "Telle que l'appareil l'a annoncée. Ouvrez-la pour voir de quel appareil il s'agit, puis renommez-le ici.": "As announced by the device itself. Open it to see which device this is, then rename it here."
     },
     "plugins/mqttbe/plugin_info/configuration.php": {
         "401 - Accès non autorisé": "401 - Access denied",
@@ -261,7 +265,9 @@
         "Connexion au broker réussie.": "Successfully connected to the broker.",
         "Relance en cours…": "Rescanning…",
         "Découverte relancée : les appareils se présentent, patientez quelques secondes.": "Rescan started: the devices are introducing themselves, wait a few seconds.",
-        "Demande envoyée": "Request sent"
+        "Demande envoyée": "Request sent",
+        "Lire le nom dans l'appareil": "Read the name from the device",
+        "Le nom que vous avez donné à l'appareil dans son application s'ajoute au nom technique : « Shelly 1 55670C chaudiere » plutôt que « Shelly 1 55670C ». Cela demande une requête vers l'appareil ; décochez si vous préférez que Jeedom ne sollicite rien sur votre réseau. En cas d'échec le nom technique reste, et un nom que vous avez corrigé n'est jamais remplacé.": "The name you gave the device in its own app is appended to the technical name: “Shelly 1 55670C boiler” rather than “Shelly 1 55670C”. This requires one request to the device; untick it if you would rather Jeedom did not reach out on your network. If it fails the technical name stays, and a name you have corrected is never replaced."
     },
     "plugins/mqttbe/plugin_info/install.php": {
         "Mise à jour du plugin :": "Plugin update:",

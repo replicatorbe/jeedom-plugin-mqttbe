@@ -42,6 +42,29 @@ class MqttbeDeviceModel {
 
     const CONFIDENCES = array('certain', 'probable', 'guess');
 
+    /*
+     * Longueur maximale du nom que l'utilisateur a donné à son appareil.
+     *
+     * Ce nom vient du réseau : il est lu dans la réponse d'un appareil, c'est-à-
+     * dire dans ce que n'importe qui sur le réseau local peut faire dire à un
+     * appareil. Il finit dans le nom de l'équipement Jeedom, un varchar(127) que
+     * la fabrique compose avec le nom technique — 64 caractères laissent la
+     * place aux deux, et une chaîne de dix kilo-octets ne traverse pas le démon
+     * pour aller se faire tronquer en base.
+     */
+    const MAX_DEVICE_NAME = 64;
+
+    /*
+     * Bornes de la durée de validité d'une sonde.
+     *
+     * Zéro serait un piège : le résultat expirerait à l'instant même où il est
+     * obtenu, et le parc entier serait resondé à chaque découverte. Trente jours
+     * suffisent pour un nom qu'on ne change qu'en renommant l'appareil.
+     */
+    const PROBE_TTL_DEFAULT = 86400;
+    const PROBE_TTL_MIN     = 60;
+    const PROBE_TTL_MAX     = 2592000;
+
     private $schema = self::SCHEMA;
 
     private $identity = array(
@@ -51,8 +74,30 @@ class MqttbeDeviceModel {
         'confidence' => 'certain',
     );
 
+    /*
+     * `name` et `device_name` ne disent pas la même chose, et les confondre
+     * ferait perdre l'un des deux :
+     *
+     *   name        le nom TECHNIQUE, composé par l'adapter à partir du modèle
+     *               et de la MAC — « Shelly 1 55670C ». Unique, stable,
+     *               reconnaissable sur l'étiquette du boîtier.
+     *   device_name le nom que L'UTILISATEUR a donné à son appareil dans
+     *               l'application du constructeur — « chaudiere ». C'est celui
+     *               qui lui parle, et il n'est unique ni garanti présent.
+     *
+     * La fabrique compose les deux (« Shelly 1 55670C chaudiere ») ; vide, le
+     * nom technique reste seul, exactement comme avant.
+     *
+     * `probe` est d'une autre nature : ce n'est pas une propriété de l'appareil
+     * mais la DESCRIPTION DU MOYEN d'obtenir `device_name` quand l'adapter ne le
+     * connaît pas. L'adapter la décrit sans savoir comment elle sera exécutée ;
+     * le moteur l'exécute sans rien savoir du protocole. Un adapter dont le
+     * message de découverte porte déjà le nom (Tasmota, Zigbee2MQTT, Home
+     * Assistant) remplit `device_name` et ne déclare aucune sonde.
+     */
     private $meta = array(
         'name'            => '',
+        'device_name'     => '',
         'manufacturer'    => '',
         'model'           => '',
         'model_name'      => '',
@@ -61,6 +106,7 @@ class MqttbeDeviceModel {
         'ip'              => '',
         'config_url'      => '',
         'battery_powered' => false,
+        'probe'           => array(),
     );
 
     private $availability = array();
@@ -112,6 +158,13 @@ class MqttbeDeviceModel {
                     $this->meta[$cle] = self::toBool($valeur);
                 } elseif ($cle === 'generation') {
                     $this->meta[$cle] = ($valeur === null || $valeur === '') ? null : (int) $valeur;
+                } elseif ($cle === 'probe') {
+                    $this->meta[$cle] = self::normalizeProbe($valeur);
+                } elseif ($cle === 'device_name') {
+                    /* Nettoyé ici AUSSI, et pas seulement à la source : un
+                     * adapter qui connaît le nom (Tasmota, Zigbee2MQTT) le tire
+                     * lui aussi du réseau, et ne passera jamais par la sonde. */
+                    $this->meta[$cle] = self::cleanDeviceName($valeur);
                 } else {
                     $this->meta[$cle] = trim((string) $valeur);
                 }
@@ -164,6 +217,9 @@ class MqttbeDeviceModel {
     }
 
     public function name()           { return $this->meta['name']; }
+    public function deviceName()     { return $this->meta['device_name']; }
+    public function probe()          { return $this->meta['probe']; }
+    public function hasProbe()       { return !empty($this->meta['probe']); }
     public function manufacturer()   { return $this->meta['manufacturer']; }
     public function model()          { return $this->meta['model']; }
     public function modelName()      { return $this->meta['model_name']; }
@@ -227,6 +283,31 @@ class MqttbeDeviceModel {
         }
         $this->channels[$cle] = $_canal;
         return $this;
+    }
+
+    /*
+     * Poser le nom obtenu pour l'appareil — c'est ce que fait le moteur quand
+     * une sonde a répondu.
+     *
+     * Elle ne s'appelle pas setDeviceName() à dessein : côté Jeedom,
+     * utils::a2o() appelle « set » + le nom de chaque clé reçue du formulaire,
+     * et l'habitude de nommer ainsi finit par produire la méthode qui tue un
+     * enregistrement sur une erreur fatale, avant toute écriture.
+     *
+     * UN VIDE N'EFFACE JAMAIS UN NOM CONNU. C'est la règle qui rend une panne
+     * réseau inoffensive : l'appareil est éteint au moment où la découverte
+     * repasse, la sonde échoue, et l'équipement doit garder le nom qu'il porte
+     * depuis des mois plutôt que de le perdre le temps d'une coupure.
+     *
+     * @return bool vrai si le nom a changé.
+     */
+    public function applyDeviceName($_nom) {
+        $nom = self::cleanDeviceName($_nom);
+        if ($nom === '' || $nom === $this->meta['device_name']) {
+            return false;
+        }
+        $this->meta['device_name'] = $nom;
+        return true;
     }
 
     /* --------------------------------------------------------------------- */
@@ -308,6 +389,28 @@ class MqttbeDeviceModel {
      * disponibilité et l'intégralité des canaux : chacun de ces champs
      * détermine un nom, un type, un topic ou une commande dans Jeedom.
      */
+    /**
+     * Empreinte des métadonnées volatiles : adresse IP, micrologiciel, URL.
+     *
+     * Elles sont délibérément absentes de l'empreinte principale — un nouveau
+     * bail DHCP ou une campagne de mise à jour ne doit pas faire réécrire tout
+     * le parc en base. Mais elles ne doivent pas geler pour autant : sans cette
+     * seconde empreinte, l'adresse retenue restait celle du jour de la
+     * découverte, et le lien « ouvrir l'appareil » menait des mois plus tard à
+     * une autre machine du réseau.
+     *
+     * Le moteur s'en sert pour décider d'une RÉÉMISSION, qui ne coûte qu'un
+     * message ; la fabrique continue de s'appuyer sur l'empreinte principale
+     * pour décider d'une RÉÉCRITURE, qui coûte une base de données.
+     */
+    public function volatileFingerprint() {
+        return sha1(json_encode(array(
+            'ip'         => (string) $this->meta['ip'],
+            'firmware'   => (string) $this->meta['firmware'],
+            'config_url' => (string) $this->meta['config_url'],
+        )));
+    }
+
     public function fingerprint() {
         return 'sha1:' . sha1(json_encode($this->fingerprintData(),
                                           JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
@@ -335,6 +438,22 @@ class MqttbeDeviceModel {
             ),
             'meta'         => array(
                 'name'            => $this->meta['name'],
+                /*
+                 * DANS l'empreinte principale, et non dans la volatile : c'est
+                 * un champ qui s'écrit en base, au même titre que le nom
+                 * technique. Une sonde qui finit par répondre au bout de trois
+                 * minutes doit faire repartir le modèle vers Jeedom, sinon le
+                 * nom obtenu n'est jamais appliqué et la sonde n'aura servi à
+                 * rien. Le coût est nul dans l'autre sens : un nom qui ne change
+                 * pas donne la même empreinte, et rien n'est réécrit.
+                 *
+                 * `probe`, lui, n'entre dans AUCUNE des deux empreintes : il ne
+                 * décrit pas l'appareil mais la façon de l'interroger, il porte
+                 * l'adresse IP — qui change au gré du bail DHCP — et Jeedom n'en
+                 * écrit rien. L'y mettre ferait réécrire tout le parc à chaque
+                 * renouvellement de bail.
+                 */
+                'device_name'     => $this->meta['device_name'],
                 'manufacturer'    => $this->meta['manufacturer'],
                 'model'           => $this->meta['model'],
                 'model_name'      => $this->meta['model_name'],
@@ -452,6 +571,89 @@ class MqttbeDeviceModel {
             'payload_on'  => isset($_valeurs['payload_on']) ? (string) $_valeurs['payload_on'] : 'online',
             'payload_off' => isset($_valeurs['payload_off']) ? (string) $_valeurs['payload_off'] : 'offline',
         );
+    }
+
+    /*
+     * Le nom d'un appareil, tel qu'il est utilisable — la première défense, et
+     * la seule qui soit à la source.
+     *
+     * Ce qui arrive ici vient d'une réponse d'appareil sur le réseau local :
+     * une chaîne que l'appareil compose comme il veut, et que rien n'oblige à
+     * être honnête. Quatre gestes, dans cet ordre :
+     *
+     *   - SEULE UNE CHAÎNE est acceptée. Un objet, un tableau, un booléen ou un
+     *     nombre ne sont pas un nom : `{"name": {"fr": "chaudière"}}` donnerait
+     *     « Array », qui s'écrirait tel quel dans le nom de l'équipement.
+     *   - Les balises sont ôtées. La fabrique et l'interface échappent ce
+     *     qu'elles affichent, mais un nom qui traverse le démon, la base et
+     *     trois gabarits finit toujours par ressortir quelque part sans échappe.
+     *   - Les caractères de contrôle deviennent des espaces, et les espaces se
+     *     réduisent : un retour à la ligne dans un nom fabrique une fausse
+     *     entrée dans tous les journaux qui le citent.
+     *   - La longueur est bornée, sur des CARACTÈRES et non des octets : une
+     *     coupe à 64 octets au milieu d'un « é » produit une chaîne qui n'est
+     *     plus de l'UTF-8, et json_encode rend alors `false` pour le lot entier.
+     */
+    public static function cleanDeviceName($_valeur) {
+        if (!is_string($_valeur)) {
+            return '';
+        }
+        $nom = strip_tags($_valeur);
+        $nom = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $nom);
+        if ($nom === null) {
+            /* Entrée non-UTF-8 : preg_replace rend null plutôt que de couper au
+             * milieu d'un caractère. Un nom illisible vaut pas de nom. */
+            return '';
+        }
+        $nom = trim(preg_replace('/\s+/u', ' ', $nom));
+        if ($nom === '') {
+            return '';
+        }
+        if (MqttbeChannel::length($nom) > self::MAX_DEVICE_NAME) {
+            $nom = function_exists('mb_substr')
+                 ? mb_substr($nom, 0, self::MAX_DEVICE_NAME, 'UTF-8')
+                 : substr($nom, 0, self::MAX_DEVICE_NAME);
+            $nom = trim($nom);
+        }
+        return $nom;
+    }
+
+    /*
+     * Une sonde, réduite à ce que le moteur saura exécuter.
+     *
+     * `type` est le seul champ obligatoire, et il n'est PAS validé contre une
+     * liste : c'est lui qui permettra à `mqtt.rpc` (Shelly Gen2+) de s'ajouter
+     * sans toucher à ce fichier. Un moteur qui ne connaît pas un type l'ignore ;
+     * un modèle qui porte une sonde d'un type inconnu reste un modèle valide, et
+     * l'appareil est découvert sans son nom d'usage plutôt que pas du tout.
+     *
+     * Les clés que ce fichier ne connaît pas sont conservées si elles sont
+     * scalaires — un type à venir aura ses propres paramètres — mais jamais les
+     * structures imbriquées : elles ne serviraient à personne et feraient
+     * voyager n'importe quoi jusqu'à Jeedom.
+     */
+    public static function normalizeProbe($_valeur) {
+        if (!is_array($_valeur) || empty($_valeur)) {
+            return array();
+        }
+        $type = isset($_valeur['type']) && !is_array($_valeur['type'])
+              ? strtolower(trim((string) $_valeur['type'])) : '';
+        if ($type === '') {
+            return array();
+        }
+        $sonde = array('type' => $type);
+        foreach ($_valeur as $cle => $valeur) {
+            $cle = (string) $cle;
+            if ($cle === 'type' || $cle === 'ttl' || is_array($valeur) || is_object($valeur)) {
+                continue;
+            }
+            $sonde[$cle] = trim((string) $valeur);
+        }
+        $ttl = isset($_valeur['ttl']) && is_numeric($_valeur['ttl'])
+             ? (int) $_valeur['ttl'] : self::PROBE_TTL_DEFAULT;
+        $sonde['ttl'] = max(self::PROBE_TTL_MIN, min(self::PROBE_TTL_MAX, $ttl));
+        ksort($sonde, SORT_STRING);
+        return $sonde;
     }
 
     private static function text($_valeurs, $_cle) {
