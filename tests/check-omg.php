@@ -40,11 +40,11 @@ function mqttbeCheminFixturesOmg() {
 /* Les repères du parc, une fois anonymisé. */
 function mqttbeReperesOmg() {
     return array(
-        'SAM'       => 'bt/OMG_ESP32_BLE_SAM',
-        'ENTREE'    => 'bt/OMG_ESP32_BLE_ENTREE',
-        'ETAGE'     => 'bt/OMG_ESP32_BLE_ETAGE',
+        'SAM'       => 'bt/OMG_ESP32_BLE_SEJOUR',
+        'ENTREE'    => 'bt/OMG_ESP32_BLE_GARAGE',
+        'ETAGE'     => 'bt/OMG_ESP32_BLE_CUISINE',
         'SALON'     => 'bt/OMG_ESP32_BLE_SALON',
-        'DOUBLE'    => 'bt/OMG_ESP32_BLE_ETAGEOMG_ESP32_BLE_ETAGE',
+        'DOUBLE'    => 'bt/OMG_ESP32_BLE_CUISINEOMG_ESP32_BLE_CUISINE',
         'BRUTE'     => 'd2d2d2102030',
         'CAPTEUR'   => 'a8b0c1003001',
         'TRACEUR'   => 'a8b0c1003006',
@@ -427,8 +427,8 @@ function mqttbeControlesOmg() {
         return false;
     };
     $exiges = array(
-        'bt/OMG_ESP32_BLE_SAM/SYStoMQTT',
-        'bt/OMG_ESP32_BLE_SAM/BTtoMQTT/D2D2D2102030',
+        'bt/OMG_ESP32_BLE_SEJOUR/SYStoMQTT',
+        'bt/OMG_ESP32_BLE_SEJOUR/BTtoMQTT/D2D2D2102030',
         'OpenMQTTGateway/SYStoMQTT',
         'OpenMQTTGateway/BTtoMQTT/D2D2D2102030',
     );
@@ -500,7 +500,7 @@ function mqttbeControlesOmg() {
         if ($passerelle->meta('ip') !== '192.0.2.132') {
             $fautes[] = 'adresse IP non reprise du SYStoMQTT : « ' . $passerelle->meta('ip') . ' »';
         }
-        if ($passerelle->deviceName() !== 'OMG_ESP32_BLE_SAM') {
+        if ($passerelle->deviceName() !== 'OMG_ESP32_BLE_SEJOUR') {
             $fautes[] = 'le nom donné par l\'utilisateur à sa passerelle est perdu : « '
                       . $passerelle->deviceName() . ' »';
         }
@@ -514,7 +514,7 @@ function mqttbeControlesOmg() {
     /* ------------------------------------------------------------------ 4 ---
      * L'identité par la `mac`, et non par le préfixe.
      *
-     * Le parc réel comporte un préfixe dupliqué (« …_ETAGEOMG_ESP32_BLE_ETAGE »),
+     * Le parc réel comporte un préfixe dupliqué (« …_ETAGEOMG_ESP32_BLE_CUISINE »),
      * né d'une saisie malheureuse. Identifier une passerelle par son préfixe y
      * créerait un second équipement, avec les mêmes capteurs et les mêmes
      * actions, dont personne ne saurait lequel est le vrai. */
@@ -584,9 +584,9 @@ function mqttbeControlesOmg() {
                       . 'balise : les trois passerelles en ont fait trois appareils.';
         }
         $attendus = array(
-            'rssi.bt_OMG_ESP32_BLE_SAM'    => $reperes['SAM'] . '/BTtoMQTT/D2D2D2102030 [rssi]',
-            'rssi.bt_OMG_ESP32_BLE_ETAGE'  => $reperes['ETAGE'] . '/BTtoMQTT/D2D2D2102030 [rssi]',
-            'rssi.bt_OMG_ESP32_BLE_ENTREE' => $reperes['ENTREE'] . '/BTtoMQTT/D2D2D2102030 [rssi]',
+            'rssi.bt_OMG_ESP32_BLE_SEJOUR'    => $reperes['SAM'] . '/BTtoMQTT/D2D2D2102030 [rssi]',
+            'rssi.bt_OMG_ESP32_BLE_CUISINE'  => $reperes['ETAGE'] . '/BTtoMQTT/D2D2D2102030 [rssi]',
+            'rssi.bt_OMG_ESP32_BLE_GARAGE' => $reperes['ENTREE'] . '/BTtoMQTT/D2D2D2102030 [rssi]',
         );
         foreach ($attendus as $cle => $description) {
             $ecart = mqttbeCanalOmg($balise, $cle, 'connectivity.rssi', $description);
@@ -614,8 +614,8 @@ function mqttbeControlesOmg() {
         if ($etat === null) {
             $fautes[] = 'aucun état publié pour la balise : présence, pièce et date de dernière vue '
                       . 'n\'atteindraient jamais Jeedom.';
-        } elseif ($etat['nearest'] !== 'OMG_ESP32_BLE_SAM') {
-            $fautes[] = 'la plus proche est « ' . $etat['nearest'] . ' », attendu OMG_ESP32_BLE_SAM : '
+        } elseif ($etat['nearest'] !== 'OMG_ESP32_BLE_SEJOUR') {
+            $fautes[] = 'la plus proche est « ' . $etat['nearest'] . ' », attendu OMG_ESP32_BLE_SEJOUR : '
                       . 'c\'est elle qui reçoit -71 dBm, contre -92 et -98 pour les autres.';
         }
         $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
@@ -853,7 +853,7 @@ function mqttbeControlesOmg() {
          * moyenne ; « 37 » en chaîne de caractères ne fait rien de tout cela,
          * et l'utilisateur ne le découvre qu'en voulant en tirer un graphique. */
         $ecart = mqttbeCanalOmg($bizarre, 'tilt', 'generic.numeric',
-            'bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003007 [tilt]');
+            'bt/OMG_ESP32_BLE_SEJOUR/BTtoMQTT/A8B0C1003007 [tilt]');
         if ($ecart !== '') {
             $fautes[] = $ecart;
         }
@@ -1060,7 +1060,7 @@ function mqttbeControlesOmg() {
         $ctxH->avance(1);
     }
     $etat = $ctxH->derniereEtat('a8b0c1003001');
-    if ($etat === null || $etat['nearest'] !== 'OMG_ESP32_BLE_ETAGE') {
+    if ($etat === null || $etat['nearest'] !== 'OMG_ESP32_BLE_CUISINE') {
         $fautes[] = 'la balise est passée de -71 à -50 dBm sur l\'autre passerelle et la pièce n\'a '
                   . 'pas suivi : l\'hystérésis a été poussée jusqu\'à l\'immobilité.';
     }
@@ -1831,7 +1831,7 @@ function mqttbeControlesOmg() {
         $adapterF->onTick($ctxF);
     }
     $etat = $ctxF->derniereEtat('a8b0c1003001');
-    if ($etat === null || $etat['nearest'] !== 'OMG_ESP32_BLE_SAM') {
+    if ($etat === null || $etat['nearest'] !== 'OMG_ESP32_BLE_SEJOUR') {
         $fautes[] = 'la passerelle la plus proche n\'est pas celle qui entend le mieux.';
     }
     /* La passerelle du salon est débranchée ; l'autre continue de voir la balise. */
@@ -1842,7 +1842,7 @@ function mqttbeControlesOmg() {
         $adapterF->onMessage($loin, '{"id":"A8:B0:C1:00:30:01","rssi":-88,"tempc":21}', false, $ctxF);
         $adapterF->onTick($ctxF);
         $etat = $ctxF->derniereEtat('a8b0c1003001');
-        if ($change === null && $etat !== null && $etat['nearest'] !== 'OMG_ESP32_BLE_SAM') {
+        if ($change === null && $etat !== null && $etat['nearest'] !== 'OMG_ESP32_BLE_SEJOUR') {
             $change = $ctxF->now() - $depart;
         }
     }

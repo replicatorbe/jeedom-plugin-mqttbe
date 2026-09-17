@@ -263,7 +263,7 @@
         "La découverte écoute : un appareil qui s\\'annonce apparaît ici tout seul. Un appareil connecté depuis longtemps, lui, ne s\\'annonce plus — demandez-lui de se présenter avec le bouton « Relancer la découverte » de la configuration du plugin.": "Discovery is listening: a device that announces itself shows up here on its own. A device that has been connected for a long time, though, no longer announces itself — ask it to introduce itself with the \"Rescan devices\" button in the plugin configuration.",
         "Pour créer un équipement à la main :": "To create a device by hand:",
         "Cliquez sur « Ajouter un équipement » et donnez-lui un nom.": "Click \"Add a device\" and give it a name.",
-        "Indiquez son topic de base, par exemple shellies/shelly1pm-D8BFC01A0805 : il servira à préremplir le topic des commandes.": "Enter its base topic, for example shellies/shelly1pm-D8BFC01A0805: it is used to prefill the topic of the commands.",
+        "Indiquez son topic de base, par exemple shellies/shelly1pm-A8B0C1000105 : il servira à préremplir le topic des commandes.": "Enter its base topic, for example shellies/shelly1pm-A8B0C1000105: it is used to prefill the topic of the commands.",
         "Dans l\\'onglet « Commandes », ajoutez une information pour lire une valeur, une action pour publier un message, puis enregistrez.": "In the \"Commands\" tab, add an info command to read a value, or an action command to publish a message, then save.",
         "Rechercher": "Search",
         "Aucun topic de base": "No base topic",

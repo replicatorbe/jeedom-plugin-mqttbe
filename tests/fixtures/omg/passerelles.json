@@ -10,13 +10,13 @@
         "  - SALON est hors ligne. Son LWT, son RLStoMQTT et son LOGtoMQTT sont",
         "    retenus et rejoués par le broker, mais aucun SYStoMQTT n'arrive : sans",
         "    `mac`, pas d'identité, donc pas d'équipement.",
-        "  - ETAGEOMG_ESP32_BLE_ETAGE est le préfixe dupliqué du parc réel, né d'une",
+        "  - ETAGEOMG_ESP32_BLE_CUISINE est le préfixe dupliqué du parc réel, né d'une",
         "    saisie malheureuse. Il ne porte qu'un LWT ; s'il portait aussi un",
         "    SYStoMQTT, ce serait la MÊME mac que ETAGE, et l'identité par la mac est",
         "    exactement ce qui empêche le fantôme. Voir jumeau.json."
     ],
     "passerelles": {
-        "bt/OMG_ESP32_BLE_SAM": {
+        "bt/OMG_ESP32_BLE_SEJOUR": {
             "LWT": "online",
             "SYStoMQTT": {
                 "uptime": 8069676,
@@ -60,7 +60,7 @@
                 "pubadvdata": false
             }
         },
-        "bt/OMG_ESP32_BLE_ENTREE": {
+        "bt/OMG_ESP32_BLE_GARAGE": {
             "LWT": "online",
             "SYStoMQTT": {
                 "uptime": 22620111,
@@ -94,7 +94,7 @@
                 "release_summary": ""
             }
         },
-        "bt/OMG_ESP32_BLE_ETAGE": {
+        "bt/OMG_ESP32_BLE_CUISINE": {
             "LWT": "online",
             "SYStoMQTT": {
                 "uptime": 10436324,
@@ -132,19 +132,19 @@
                 "release_summary": ""
             }
         },
-        "bt/OMG_ESP32_BLE_ETAGEOMG_ESP32_BLE_ETAGE": {
+        "bt/OMG_ESP32_BLE_CUISINEOMG_ESP32_BLE_CUISINE": {
             "LWT": "online"
         }
     },
     "jumeau": {
         "_": [
-            "Le même SYStoMQTT que bt/OMG_ESP32_BLE_ETAGE, publié sous le préfixe",
+            "Le même SYStoMQTT que bt/OMG_ESP32_BLE_CUISINE, publié sous le préfixe",
             "dupliqué. C'est le cas que le parc réel frôle : deux préfixes, une seule",
             "passerelle. L'identité venant de la `mac`, il doit donner UN équipement,",
             "et sous le préfixe le plus court — celui sur lequel la passerelle écoute",
             "vraiment ses ordres."
         ],
-        "base": "bt/OMG_ESP32_BLE_ETAGEOMG_ESP32_BLE_ETAGE",
+        "base": "bt/OMG_ESP32_BLE_CUISINEOMG_ESP32_BLE_CUISINE",
         "SYStoMQTT": {
             "uptime": 10436330,
             "version": "v1.7.0",

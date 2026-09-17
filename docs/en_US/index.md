@@ -249,7 +249,7 @@ Gen2 Shelly, a Tasmota, a home-made sensor, anything that publishes over MQTT.
 
 1. On the plugin page, click **"Add a device"** and give it a name.
 2. Fill in its **base topic**, for example
-   `shellies/shelly1pm-D8BFC01A0805`. This field does nothing by itself: it only
+   `shellies/shelly1pm-A8B0C1000105`. This field does nothing by itself: it only
    pre-fills the topic of the commands you add next. It is each command's own
    topic, and nothing else, that decides what is listened to or published.
 3. Pick a **parent object**, or the device will not reach the Dashboard — the

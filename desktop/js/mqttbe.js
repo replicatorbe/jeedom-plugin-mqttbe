@@ -940,7 +940,7 @@ function addCmdToTable(_cmd) {
 
   /* --------------------------------------------------------------- topic */
   tr += '<td>'
-  tr += '<input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="topic" placeholder="shellies/shelly1pm-D8BFC01A0805/relay/0/power" title="{{Topic complet. Pour une information, celui que le plugin écoute ; pour une action, celui sur lequel il publie. Les jokers + et # sont acceptés en écoute.}}">'
+  tr += '<input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="topic" placeholder="shellies/shelly1pm-A8B0C1000105/relay/0/power" title="{{Topic complet. Pour une information, celui que le plugin écoute ; pour une action, celui sur lequel il publie. Les jokers + et # sont acceptés en écoute.}}">'
   tr += '</td>'
 
   /* --------------------------------------------------------------- valeur */

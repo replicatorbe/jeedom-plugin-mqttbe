@@ -259,7 +259,7 @@ ce qui publie sur MQTT.
 1. Sur la page du plugin, cliquez sur **« Ajouter un équipement »** et donnez-lui
    un nom.
 2. Renseignez son **topic de base**, par exemple
-   `shellies/shelly1pm-D8BFC01A0805`. Ce champ ne fait rien par lui-même : il
+   `shellies/shelly1pm-A8B0C1000105`. Ce champ ne fait rien par lui-même : il
    sert seulement à préremplir le topic des commandes que vous ajouterez
    ensuite. C'est le topic de chaque commande, et lui seul, qui décide de ce qui
    est écouté ou publié.

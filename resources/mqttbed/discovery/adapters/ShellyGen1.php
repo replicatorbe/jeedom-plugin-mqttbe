@@ -126,7 +126,7 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
      * interdit dans un nom de topic de publication : le broker fermerait la
      * connexion à chaque appui sur le bouton.
      *
-     * Les identifiants Shelly légitimes — « shelly1pm-D8BFC01A0805 » — tiennent
+     * Les identifiants Shelly légitimes — « shelly1pm-A8B0C1000105 » — tiennent
      * très largement dans cette forme.
      */
     const ID_VALIDE = '/^[A-Za-z0-9._-]{1,64}$/';
@@ -1485,7 +1485,7 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
 
     /*
      * La MAC, telle qu'elle est annoncée ou, à défaut, telle que l'identifiant
-     * la porte : « shelly1pm-D8BFC01A0805 ». Les deux sources existent sur le
+     * la porte : « shelly1pm-A8B0C1000105 ». Les deux sources existent sur le
      * terrain, et l'identité de l'équipement en dépend entièrement.
      */
     private function macDe($_annonce, $_identifiant) {

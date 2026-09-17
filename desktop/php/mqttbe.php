@@ -205,7 +205,7 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
             echo '<b>{{Pour créer un équipement à la main :}}</b>';
             echo '<ol style="margin:5px 0 0 0;padding-left:20px;">';
             echo '<li>{{Cliquez sur « Ajouter un équipement » et donnez-lui un nom.}}</li>';
-            echo '<li>{{Indiquez son topic de base, par exemple shellies/shelly1pm-D8BFC01A0805 : il servira à préremplir le topic des commandes.}}</li>';
+            echo '<li>{{Indiquez son topic de base, par exemple shellies/shelly1pm-A8B0C1000105 : il servira à préremplir le topic des commandes.}}</li>';
             echo '<li>{{Dans l\'onglet « Commandes », ajoutez une information pour lire une valeur, une action pour publier un message, puis enregistrez.}}</li>';
             echo '</ol>';
             echo '<span class="help-block" style="margin:8px 0 0 0;">{{La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\'instant les Shelly Gen1 et les passerelles OpenMQTTGateway.}}</span>';
@@ -368,7 +368,7 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
                             <div class="form-group">
                                 <label class="col-sm-3 control-label">{{Topic de base}}</label>
                                 <div class="col-sm-5">
-                                    <input type="text" class="eqLogicAttr form-control" id="in_mqttbeBaseTopic" data-l1key="configuration" data-l2key="mqttbe::topic" placeholder="shellies/shelly1pm-D8BFC01A0805">
+                                    <input type="text" class="eqLogicAttr form-control" id="in_mqttbeBaseTopic" data-l1key="configuration" data-l2key="mqttbe::topic" placeholder="shellies/shelly1pm-A8B0C1000105">
                                 </div>
                                 <div class="col-sm-4">
                                     <span class="help-block" style="margin:0;">{{Le préfixe commun aux topics de cet équipement. Il sert à préremplir le topic des commandes que vous ajoutez : c'est le topic de chaque commande, et lui seul, qui décide de ce qui est écouté ou publié.}}</span>
