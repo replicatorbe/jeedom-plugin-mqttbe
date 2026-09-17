@@ -15,6 +15,10 @@
  * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* Le routeur est une dépendance de la boucle et d'elle seule : le point
+ * d'entrée n'a pas à savoir qu'il existe, ni dans quel ordre le charger. */
+require_once __DIR__ . '/Router.php';
+
 /* =============================================================================
  * La boucle principale : un seul processus, un seul fil, trois sources
  * d'événements multiplexées par stream_select.
@@ -45,6 +49,7 @@ class MqttbeLoop {
     private $link;
     private $commands;
     private $pidFile;
+    private $router;
 
     private $running  = true;
     private $exitCode = 0;
@@ -63,6 +68,17 @@ class MqttbeLoop {
     private $excluded   = 0;
     private $lastReport = 0;
 
+    /* Compteurs au dernier résumé : le journal donne l'activité de la période
+     * écoulée, pas des totaux depuis le démarrage — « 4 812 371 messages reçus »
+     * répété toutes les cinq minutes ne dit rien de ce qui vient de se passer. */
+    private $lastCounts = array('received' => 0, 'excluded' => 0, 'routed' => 0,
+                                'ignored' => 0, 'noTarget' => 0);
+
+    /* Abonnements posés pour le compte de la table de routage. Tenus à part de
+     * ceux que Jeedom demande à la main (ordre `subscribe`) : une nouvelle
+     * table ne doit toucher qu'aux siens. */
+    private $routingSubs = array();
+
     public function __construct(MqttbeConfig $_config, MqttbeTransport $_transport,
                                 MqttbeJeedomLink $_link, MqttbeCommandSocket $_commands, $_pidFile) {
         $this->config    = $_config;
@@ -73,6 +89,12 @@ class MqttbeLoop {
 
         $this->transport->onMessage(array($this, 'onMessage'));
         $this->commands->onCommand(array($this, 'onCommand'));
+
+        /* Le routeur ne connaît ni le transport ni Jeedom : il reçoit des
+         * messages d'un côté, rend des couples (commande, valeur) de l'autre,
+         * et c'est la boucle qui branche les deux bouts. */
+        $this->router = new MqttbeRouter($this->config);
+        $this->router->onValue(array($this->link, 'pushValue'));
     }
 
     public function stop() {
@@ -246,17 +268,20 @@ class MqttbeLoop {
     /* ----------------------------------------------------------- messages */
 
     /*
-     * POINT D'EXTENSION — tout ce que le plugin fera des messages MQTT passera
-     * par ici.
+     * POINT D'EXTENSION — tout ce que le plugin fait des messages MQTT passe
+     * par ici. C'est le chemin chaud du démon : deux mille messages par
+     * seconde le traversent sur un parc chargé, et rien de ce qui s'y ajoute
+     * ne doit coûter plus que ce qu'il apporte.
      *
-     * Aux jalons 0 et 1, le démon ne route rien et ne découvre rien : il compte
-     * et il journalise. La suite (table de routage, sélecteurs, adapters de
-     * découverte) se branche à cet endroit précis, et nulle part ailleurs —
-     * c'est la raison d'être de cette méthode isolée, appelée par le transport
-     * et ignorante de la bibliothèque qui la déclenche.
+     * L'exclusion est vérifiée avant toute chose, et avant même le comptage :
+     * un topic écarté par la configuration n'est pas un message reçu, c'est un
+     * message qu'on n'a pas voulu. La découverte, au jalon suivant, viendra se
+     * brancher ici et nulle part ailleurs.
      *
      * $_retained est transmis jusqu'ici et ne doit jamais être perdu en route :
      * il dit « état rejoué par le broker » et non « cela vient de se produire ».
+     * Le routage le traite comme un message ordinaire — un état rejoué reste
+     * l'état courant de l'appareil — mais il le reçoit, et c'est ce qui compte.
      */
     public function onMessage($_topic, $_payload, $_qos, $_retained) {
         if ($this->config->isExcluded($_topic)) {
@@ -264,6 +289,8 @@ class MqttbeLoop {
             return;
         }
         $this->received++;
+
+        $this->router->route($_topic, $_payload, $_qos, $_retained);
 
         if (MqttbeLog::isDebug()) {
             $payload = (string) $_payload;
@@ -292,10 +319,17 @@ class MqttbeLoop {
             case 'hb':
                 /* La réponse porte l'état du broker : Jeedom en profite pour
                  * rafraîchir son affichage sans avoir à demander deux fois. */
+                $stats = $this->router->stats();
                 return array('state' => 'ok', 'result' => array(
                     'broker'   => $this->brokerOk ? 'ok' : 'nok',
                     'received' => $this->received,
                     'pending'  => $this->link->pending(),
+                    /* La version de table appliquée voyage dans chaque
+                     * battement : c'est ainsi que Jeedom s'aperçoit qu'un
+                     * démon relancé n'a pas la table courante, sans avoir à
+                     * la repousser toutes les minutes à tout hasard. */
+                    'routing'  => $this->router->version(),
+                    'routed'   => $stats['routed'],
                 ));
 
             case 'loglevel':
@@ -308,6 +342,9 @@ class MqttbeLoop {
 
             case 'setBroker':
                 return $this->applyBroker(isset($_order['config']) ? $_order['config'] : array());
+
+            case 'routing':
+                return $this->applyRouting($_order);
 
             case 'subscribe':
                 $topic = isset($_order['topic']) ? (string) $_order['topic'] : '';
@@ -407,16 +444,92 @@ class MqttbeLoop {
         return array('state' => 'ok');
     }
 
+    /* ------------------------------------------------------------ routage */
+
+    /*
+     * Une nouvelle table de routage. Deux effets, et dans cet ordre : le
+     * routeur l'applique, puis les abonnements sont mis en accord avec elle.
+     *
+     * L'inverse — s'abonner d'abord — ferait arriver des messages que le
+     * routeur ne saurait pas encore placer, et le premier état retenu d'un
+     * appareil, celui que le broker rejoue aussitôt l'abonnement posé, serait
+     * justement celui qu'on perdrait.
+     */
+    private function applyRouting($_order) {
+        $result = $this->router->apply($_order);
+        if (empty($result['applied'])) {
+            /* Une table périmée n'est pas une erreur : Jeedom a le droit de
+             * pousser deux fois, et c'est même ce qu'il fait à chaque
+             * redémarrage du démon. */
+            return array('state' => 'ok', 'result' => $result);
+        }
+        $this->syncRoutingSubscriptions();
+        return array('state' => 'ok', 'result' => $result);
+    }
+
+    /*
+     * Différence entre les abonnements voulus et ceux déjà posés.
+     *
+     * Le calcul par différence n'est pas une élégance : résilier puis
+     * reprendre un abonnement inchangé ferait rejouer par le broker tous les
+     * messages retenus de la branche concernée — pour un parc Shelly, des
+     * centaines d'états d'un coup, à chaque enregistrement d'une commande
+     * dans Jeedom.
+     */
+    private function syncRoutingSubscriptions() {
+        $wanted = $this->router->subscriptions();
+
+        foreach ($this->routingSubs as $topic => $qos) {
+            if (!isset($wanted[$topic])) {
+                $this->transport->unsubscribe($topic);
+            }
+        }
+        foreach ($wanted as $topic => $qos) {
+            if (!isset($this->routingSubs[$topic])) {
+                $this->transport->subscribe($topic, $qos);
+            }
+        }
+        $this->routingSubs = $wanted;
+    }
+
     /* --------------------------------------------------------------- vie */
 
+    /*
+     * Le résumé d'activité, toutes les cinq minutes, au niveau info.
+     *
+     * Il est MUET quand il n'y a rien à dire. Un démon de maison passe des
+     * nuits entières sans un message : une ligne « 0 message » toutes les cinq
+     * minutes, c'est deux cent quatre-vingt-huit lignes par jour qui n'ont
+     * jamais rien appris à personne, et un journal que plus personne ne lit —
+     * y compris le matin où il contenait enfin quelque chose.
+     */
     private function report() {
         if ((time() - $this->lastReport) < self::REPORT_PERIOD) {
             return;
         }
         $this->lastReport = time();
-        MqttbeLog::info('activité : ' . $this->received . ' message(s) reçus, '
-                      . $this->excluded . ' écarté(s), ' . $this->link->pending()
-                      . ' en attente d\'envoi, mémoire ' . round(memory_get_usage(true) / 1048576, 1) . ' Mo');
+
+        $stats = $this->router->stats();
+        $since = array('received' => $this->received, 'excluded' => $this->excluded,
+                       'routed'   => $stats['routed'], 'ignored' => $stats['ignored'],
+                       'noTarget' => $stats['noTarget']);
+        $delta = array();
+        foreach ($since as $key => $value) {
+            $delta[$key] = $value - $this->lastCounts[$key];
+        }
+        $this->lastCounts = $since;
+
+        $pending = $this->link->pending();
+        if ($delta['received'] === 0 && $delta['excluded'] === 0 && $pending === 0) {
+            return;
+        }
+
+        MqttbeLog::info('activité (5 min) : ' . $delta['received'] . ' message(s) reçus, '
+                      . $delta['routed'] . ' valeur(s) routée(s), ' . $delta['ignored'] . ' ignorée(s), '
+                      . $delta['noTarget'] . ' sans cible, ' . $delta['excluded'] . ' écarté(s), '
+                      . 'file ' . $pending . ', latence médiane '
+                      . number_format($stats['median'], 3, ',', ' ') . ' ms, '
+                      . 'mémoire ' . round(memory_get_usage(true) / 1048576, 1) . ' Mo');
     }
 
     private function shutdown() {

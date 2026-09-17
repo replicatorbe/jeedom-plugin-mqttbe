@@ -8,6 +8,10 @@ l'architecture doit vérifier, et le jalon 5 sert précisément à la prouver.
 Chaque jalon a un critère d'acceptation vérifiable. Un jalon n'est pas terminé
 tant que son critère ne passe pas sur du vrai matériel et un vrai broker.
 
+**État au 17 septembre 2026 : jalons 0, 1 et 2 terminés et éprouvés** sur un
+Mosquitto 1.5.7 et un parc Shelly réel. Le jalon 3 (découverte Shelly Gen2+ par
+RPC) est le prochain.
+
 ---
 
 ## Jalon 0 — Socle du dépôt
@@ -116,6 +120,12 @@ qui valide toute l'approche.
 - Modèles couverts en priorité : `SHSW-1`, `SHSW-PM`, `SHSW-25` (relais et
   volet), `SHPLG-S`, `SHDM-2`, `SHHT-1`, `SHWT-1`, `SHBTN-2`, `SHEM`,
   `SHRGBW2`.
+- **Ne jamais supposer qu'un topic Gen1 existe.** Constaté sur le parc d'essai :
+  `shellies/<id>/online` n'est publié que par les micrologiciels 1.6 et suivants —
+  deux appareils sur trois l'avaient, le Shelly EM non. Un canal déclaré d'après
+  le modèle mais jamais alimenté produit une commande muette, que l'utilisateur
+  prendra pour une panne du plugin. La disponibilité d'un Gen1 doit donc être
+  déduite de ce qu'il publie réellement, pas de ce que son modèle laisse espérer.
 
 **Acceptation** : un parc mixte Gen1 + Gen2+ se découvre entièrement, un
 Shelly 2.5 en mode volet produit un volet (et non deux relais), aucun appareil

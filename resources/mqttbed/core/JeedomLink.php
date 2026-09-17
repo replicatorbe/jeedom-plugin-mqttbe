@@ -46,6 +46,7 @@
 class MqttbeJeedomLink {
 
     const QUEUE_MAX         = 1000;   // messages en attente, au-delà on jette les plus vieux
+    const VALUES_MAX        = 500;    // valeurs groupées dans un même message `values`
     const HEARTBEAT_PERIOD  = 45;     // silence maximal toléré par Jeedom
     const DEAD_AFTER        = 300;    // Jeedom injoignable au-delà : le démon s'arrête
     const CONNECT_TIMEOUT   = 2;
@@ -60,6 +61,7 @@ class MqttbeJeedomLink {
     private $batchDelay;
 
     private $queue    = array();
+    private $values   = array();      // valeurs routées en cours de groupement
     private $inFlight = array();      // lot confié à curl, gardé jusqu'à l'acquittement
     private $multi    = null;
     private $handle   = null;
@@ -95,6 +97,40 @@ class MqttbeJeedomLink {
 
     public function push($_message) {
         $this->queue[] = $_message;
+        $this->enforceQueueLimit();
+    }
+
+    /*
+     * Une valeur résolue par le routeur, à destination de cmd::event().
+     *
+     * Elle n'entre pas dans la file comme un message ordinaire : les valeurs
+     * sont groupées dans un seul message `values` par envoi. La différence
+     * n'est pas cosmétique — un appareil qui publie sa consommation dix fois
+     * par seconde produit, sur un lot de 200 ms, deux valeurs ; les empiler
+     * comme deux messages distincts, c'est deux fois la clé « cmd », deux
+     * objets JSON, et surtout deux tours de boucle de traitement côté Jeedom
+     * là où un seul suffit. Le plafond de la file, lui, compte des messages :
+     * une file de mille messages `values` à une valeur chacun ne protégerait
+     * plus de rien.
+     */
+    public function pushValue($_cmdId, $_value, $_ts) {
+        $this->values[] = array('cmdId' => (int) $_cmdId, 'value' => $_value, 'ts' => $_ts);
+
+        /* Un lot ne grossit pas indéfiniment en attendant son tour : sur une
+         * rafale d'états retenus rejoués à l'abonnement, il pèserait plusieurs
+         * mégaoctets et Jeedom refuserait le POST en entier. */
+        if (count($this->values) >= self::VALUES_MAX) {
+            $this->sealValues();
+        }
+    }
+
+    /* Ferme le lot de valeurs en cours et le pousse dans la file. */
+    private function sealValues() {
+        if (empty($this->values)) {
+            return;
+        }
+        $this->queue[] = array('cmd' => 'values', 'items' => $this->values);
+        $this->values  = array();
         $this->enforceQueueLimit();
     }
 
@@ -146,7 +182,7 @@ class MqttbeJeedomLink {
         $this->poll();
         $this->heartbeat();
 
-        if ($this->handle !== null || empty($this->queue)) {
+        if ($this->handle !== null || (empty($this->queue) && empty($this->values))) {
             return;
         }
         if ((microtime(true) - $this->lastFlush) < $this->batchDelay) {
@@ -161,6 +197,10 @@ class MqttbeJeedomLink {
         if ($this->failures > 0 && microtime(true) < $this->retryAt) {
             return;
         }
+        /* Le lot de valeurs est fermé au dernier moment : tout ce qui est
+         * arrivé pendant l'attente du délai de groupement part dans le même
+         * message. */
+        $this->sealValues();
         $this->start();
     }
 
@@ -172,7 +212,7 @@ class MqttbeJeedomLink {
         }
         /* Rien à ajouter si quelque chose attend déjà de partir : ce lot-là
          * vaut battement, et lastSend sera repoussé par son envoi. */
-        if (!empty($this->queue) || $this->handle !== null) {
+        if (!empty($this->queue) || !empty($this->values) || $this->handle !== null) {
             return;
         }
         $this->push(array('cmd' => 'hb'));
@@ -295,7 +335,10 @@ class MqttbeJeedomLink {
     }
 
     public function failures()   { return $this->failures; }
-    public function pending()    { return count($this->queue) + count($this->inFlight); }
+    /* Le lot de valeurs en cours de groupement compte pour un message : il
+     * n'est pas encore dans la file, mais il en partira. */
+    public function pending()    { return count($this->queue) + count($this->inFlight)
+                                        + (empty($this->values) ? 0 : 1); }
     public function dropped()    { return $this->dropped; }
     public function silentFor()  { return time() - $this->lastSuccess; }
 

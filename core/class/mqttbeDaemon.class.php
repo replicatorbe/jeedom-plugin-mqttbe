@@ -267,6 +267,10 @@ class mqttbeDaemon {
                 mqttbe::logger('info', __('Démon démarré', __FILE__));
                 message::removeAll('mqttbe', 'unableStartDeamon');
                 self::sendBrokerConfig();
+                /* Le démon vient de naître : il ne sait rien des équipements.
+                 * L'envoi est forcé, sinon la comparaison d'empreinte conclurait
+                 * à tort que la table est déjà en place. */
+                mqttbeRouting::push(true);
                 return true;
             }
             usleep(500000);
@@ -330,6 +334,10 @@ class mqttbeDaemon {
 
     /** Remise à zéro de l'état, quelle que soit la façon dont le démon a fini. */
     public static function cleanup() {
+        /* La table de routage vit dans la mémoire du démon : elle disparaît avec
+         * lui. Oublier son empreinte garantit que le prochain démon la recevra,
+         * au lieu d'un cache qui prétend qu'elle est déjà en place. */
+        mqttbeRouting::forget();
         cache::set(self::CACHE_UID, '0:0');
         cache::set(self::CACHE_PORT, 0);
         cache::set(self::CACHE_BROKER, 'nok');
@@ -475,6 +483,23 @@ class mqttbeDaemon {
      */
     public static function onValues($_items) {
         cache::set(self::CACHE_LAST_RCV, time());
+
+        /*
+         * Mesure de la latence de bout en bout : horodatage posé par le démon à
+         * la réception du message, comparé à maintenant.
+         *
+         * Un échantillon toutes les deux secondes au plus, et non un tirage au
+         * sort : sur une installation calme, le hasard ne produisait presque
+         * jamais assez de mesures pour une médiane, et sur une installation
+         * bavarde il en produisait trop. Le rythme est ici le même dans les deux
+         * cas, et les écritures de cache restent sous une toutes les deux
+         * secondes. Une lecture de cache coûte 0,015 ms : la mesurer pour chaque
+         * lot était une prudence mal placée.
+         */
+        if (isset($_items[0]['ts'])) {
+            self::sampleLatency(microtime(true) - (float) $_items[0]['ts']);
+        }
+
         foreach ($_items as $item) {
             if (!isset($item['cmdId']) || !array_key_exists('value', $item)) {
                 continue;
@@ -486,6 +511,60 @@ class mqttbeDaemon {
             $date = isset($item['ts']) ? date('Y-m-d H:i:s', (int) $item['ts']) : null;
             $cmd->event($item['value'], $date);
         }
+    }
+
+    const LATENCY_INTERVAL = 2;
+
+    /** Ajoute une mesure au réservoir, au plus une toutes les deux secondes. */
+    private static function sampleLatency($_seconds) {
+        try {
+            $reserve = cache::byKey('mqttbe::latency')->getValue(array());
+            if (!is_array($reserve) || !isset($reserve['v']) || !is_array($reserve['v'])) {
+                $reserve = array('t' => 0, 'v' => array());
+            }
+            $maintenant = microtime(true);
+            if ($maintenant - $reserve['t'] < self::LATENCY_INTERVAL) {
+                return;
+            }
+            $reserve['t'] = $maintenant;
+            $reserve['v'][] = round($_seconds * 1000, 1);
+            if (count($reserve['v']) > 200) {
+                $reserve['v'] = array_slice($reserve['v'], -200);
+            }
+            cache::set('mqttbe::latency', $reserve);
+        } catch (Throwable $e) {
+            /* Une mesure perdue n'est pas un incident : on ne casse jamais le
+             * chemin chaud pour un chiffre de confort. */
+        }
+    }
+
+    /**
+     * Inscrit la latence médiane au journal, puis vide le réservoir.
+     *
+     * La médiane et non la moyenne : une seule pointe à deux secondes, due à
+     * une sauvegarde de Jeedom, rendrait une moyenne ininterprétable alors que
+     * la question posée est « est-ce fluide d'ordinaire ? ».
+     */
+    public static function logLatency() {
+        try {
+            $reserve = cache::byKey('mqttbe::latency')->getValue(array());
+        } catch (Throwable $e) {
+            return;
+        }
+        $mesures = (is_array($reserve) && isset($reserve['v']) && is_array($reserve['v']))
+                 ? $reserve['v'] : array();
+        if (count($mesures) < 5) {
+            return;
+        }
+        sort($mesures);
+        $n = count($mesures);
+        $mediane = ($n % 2) ? $mesures[intdiv($n, 2)]
+                            : ($mesures[$n / 2 - 1] + $mesures[$n / 2]) / 2;
+        mqttbe::logger('info', sprintf(
+            __('Latence de bout en bout : médiane %1$s ms, maximum %2$s ms sur %3$s mesures', __FILE__),
+            round($mediane, 1), end($mesures), $n
+        ));
+        cache::set('mqttbe::latency', array('t' => 0, 'v' => array()));
     }
 
     public static function sendDaemonStateEvent($_state) {

@@ -120,6 +120,45 @@ try {
         ));
     }
 
+    if (init('action') == 'routingTable') {
+        /*
+         * Ce que le démon a réellement reçu, et non ce qu'on croit lui avoir
+         * envoyé. Quand une commande reste muette, la première question est
+         * « son topic est-il seulement dans la table ? » : y répondre sans
+         * fouiller les journaux fait gagner beaucoup de temps.
+         */
+        $table = mqttbeRouting::build();
+        $cibles = 0;
+        foreach ($table as $entree) {
+            $cibles += count($entree['targets']);
+        }
+        ajax::success(array(
+            'version' => mqttbeRouting::version(),
+            'topics'  => count($table),
+            'cibles'  => $cibles,
+            'table'   => $table,
+        ));
+    }
+
+    if (init('action') == 'importModel') {
+        /*
+         * Applique un modèle de périphérique fourni en JSON. C'est le chemin
+         * qu'emprunteront les adapters au jalon 3 ; l'exposer dès maintenant
+         * permet de l'éprouver avec un modèle écrit à la main, et il restera
+         * utile pour rejouer un appareil capturé chez un utilisateur.
+         */
+        mqttbeFactory::loadDiscovery();
+        $modele = MqttbeDeviceModel::fromJson(init('model'));
+        if ($modele === null) {
+            throw new Exception(__('Modèle de périphérique illisible', __FILE__));
+        }
+        $motifs = $modele->validate();
+        if (!empty($motifs)) {
+            throw new Exception(__('Modèle refusé :', __FILE__) . ' ' . implode(' ; ', $motifs));
+        }
+        ajax::success(mqttbeFactory::apply($modele));
+    }
+
     throw new Exception(__('Aucune méthode correspondante à : ', __FILE__) . init('action'));
 
 } catch (Throwable $e) {

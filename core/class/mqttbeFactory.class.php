@@ -1,0 +1,1263 @@
+<?php
+/* This file is part of Jeedom.
+ *
+ * Jeedom is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Jeedom is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Fabrique : un modèle de périphérique devient un équipement et ses commandes.
+ *
+ * Le modèle décrit un appareil en capacités ; rien ici ne connaît Shelly,
+ * Tasmota ou Zigbee2MQTT. La traduction capacité → termes Jeedom est lue dans
+ * core/config/capabilities.json et nulle part ailleurs : c'est le seul endroit
+ * où une décision de présentation se prend, et le seul fichier à reprendre
+ * quand le coeur ajoute un type générique. Une correspondance codée en dur ici
+ * serait invisible le jour où il faudrait la corriger.
+ *
+ * Trois exigences gouvernent tout le reste :
+ *
+ *   - idempotence. Les messages de découverte sont retenus par le broker, donc
+ *     rejoués à chaque démarrage du démon. Une empreinte identique doit coûter
+ *     zéro écriture, sans quoi le parc entier serait réécrit à chaque
+ *     redémarrage — et chaque écriture réveille les widgets, l'historique et
+ *     les scénarios liés ;
+ *
+ *   - respect des retouches. Ce que l'utilisateur a changé à la main n'est
+ *     jamais réécrit. La plomberie (topic, chemin JSON, logicalId) reste en
+ *     revanche toujours à jour : c'est le câblage, pas la présentation ;
+ *
+ *   - unicité SQL traitée AVANT l'enregistrement. cmd (eqLogic_id, name) et
+ *     eqLogic (name, object_id) sont uniques, et un doublon de nom fait échouer
+ *     l'enregistrement de l'équipement ENTIER, pas seulement de la commande
+ *     fautive. Le symptôme, côté interface, est un équipement qui disparaît.
+ */
+class mqttbeFactory {
+
+    /* Configuration de l'équipement (contrat, section 5). */
+    const CONF_UID          = 'mqttbe::uid';
+    const CONF_ADAPTER      = 'mqttbe::adapter';
+    const CONF_ALIASES      = 'mqttbe::aliases';
+    const CONF_FINGERPRINT  = 'mqttbe::fingerprint';
+    const CONF_MANUFACTURER = 'mqttbe::manufacturer';
+    const CONF_MODEL        = 'mqttbe::model';
+    const CONF_AVAILABILITY = 'mqttbe::availability';
+
+    /* Traçabilité de la fabrique, sur l'équipement comme sur les commandes. */
+    const CONF_KEY        = 'mqttbe::key';
+    const CONF_CAPABILITY = 'mqttbe::capability';
+    const CONF_GENERATED  = 'mqttbe::generated';
+    const CONF_ORPHAN     = 'mqttbe::orphan';
+    const CONF_SELECTOR   = 'mqttbe::selector';
+
+    /* Capacité de dernier recours : un canal dont la capacité est inconnue du
+     * vocabulaire devient une information texte plutôt que rien du tout. */
+    const CAPABILITY_FALLBACK = 'generic.value';
+
+    /* eqLogic.name et cmd.name sont des varchar(127), eqLogic.logicalId aussi.
+     * cmd.unite est un varchar(45) : un nom d'unité exotique tronqué vaut mieux
+     * qu'un enregistrement refusé par la base. */
+    const MAX_NAME     = 127;
+    const MAX_UNIT     = 45;
+    const MAX_LOGICALID = 127;
+
+    /* Champs que la fabrique pose et que l'utilisateur peut reprendre. Ils sont
+     * suivis un par un : renommer une commande ne doit pas geler la correction
+     * d'unité qui viendra au firmware suivant. */
+    private static $_presentationFields = array(
+        'name', 'type', 'subType', 'generic_type', 'unite',
+        'isVisible', 'isHistorized', 'order',
+        'template::dashboard', 'template::mobile',
+    );
+
+    private static $_capabilities = null;
+    private static $_index = null;
+    private static $_discoveryLoaded = false;
+
+    /* ------------------------------------------------------- point d'entrée */
+
+    /**
+     * Crée ou met à jour l'équipement décrit par le modèle.
+     *
+     * Rend un compte rendu plutôt qu'un booléen : l'appelant (adapter, page de
+     * configuration manuelle, import JSON) doit pouvoir dire à l'utilisateur ce
+     * qui vient de se passer, et l'exploitation doit pouvoir mesurer combien de
+     * découvertes n'ont rien coûté.
+     */
+    public static function apply(MqttbeDeviceModel $_model) {
+        return self::applyData(self::toArray($_model));
+    }
+
+    /**
+     * Même travail à partir du modèle déjà réduit en tableau.
+     *
+     * C'est la forme qui arrive du démon (JSON décodé) et celle qu'emploient
+     * les essais : la fabrique ne doit pas exiger l'objet pour fonctionner.
+     */
+    public static function applyData($_model) {
+        $report = array(
+            'status'     => 'error',
+            'uid'        => '',
+            'name'       => '',
+            'eqLogic_id' => null,
+            'cmd'        => array('created' => 0, 'updated' => 0, 'unchanged' => 0,
+                                  'orphaned' => 0, 'removed' => 0),
+            'touched'    => 0,
+            'messages'   => array(),
+        );
+        try {
+            self::loadDiscovery();
+            $model = self::toArray($_model);
+            $report = self::build($model, $report);
+        } catch (Throwable $e) {
+            $report['status'] = 'error';
+            $report['messages'][] = $e->getMessage();
+            mqttbe::logger('error', __('Fabrique :', __FILE__) . ' ' . $e->getMessage());
+        }
+        return $report;
+    }
+
+    /**
+     * Retrouve l'équipement qui porte cette identité, uid ou alias.
+     *
+     * Un même appareil se présente par plusieurs chemins : adresse MAC, adresse
+     * IEEE, préfixe de topic, unique_id Home Assistant. Reconnaître un seul de
+     * ces chemins suffit à faire une MISE À JOUR au lieu d'une création : c'est
+     * tout l'anti-doublon du plugin, et le seul rempart contre un parc créé en
+     * double le jour où Zigbee2MQTT publie aussi du Home Assistant Discovery.
+     *
+     * $_identity accepte un uid, un tableau identity{uid, aliases}, un modèle
+     * complet ou l'objet MqttbeDeviceModel.
+     */
+    public static function findByIdentity($_identity) {
+        $keys = self::identityKeys($_identity);
+        if (empty($keys)) {
+            return null;
+        }
+        /* Le uid est le logicalId de l'équipement : le chemin le plus court et
+         * le plus sûr, il passe par un index de la base. */
+        foreach ($keys as $key) {
+            $eqLogic = eqLogic::byLogicalId($key, 'mqttbe');
+            if (is_object($eqLogic)) {
+                return $eqLogic;
+            }
+        }
+        $index = self::aliasIndex();
+        foreach ($keys as $key) {
+            $normal = self::normalizeKey($key);
+            if ($normal !== '' && isset($index[$normal])) {
+                return $index[$normal];
+            }
+        }
+        return null;
+    }
+
+    /* ----------------------------------------------------------- capacités */
+
+    /**
+     * Vocabulaire des capacités, lu une fois par requête.
+     *
+     * L'absence du fichier est une panne d'installation, pas un cas courant :
+     * mieux vaut un échec explicite qu'une correspondance de secours codée ici,
+     * qui créerait des commandes silencieusement fausses.
+     */
+    public static function capabilities() {
+        if (self::$_capabilities !== null) {
+            return self::$_capabilities;
+        }
+        $file = __DIR__ . '/../config/capabilities.json';
+        if (!is_readable($file)) {
+            throw new RuntimeException(__('Vocabulaire des capacités introuvable :', __FILE__)
+                . ' core/config/capabilities.json');
+        }
+        $raw = json_decode(file_get_contents($file), true);
+        if (!is_array($raw) || !isset($raw['capabilities']) || !is_array($raw['capabilities'])) {
+            throw new RuntimeException(__('Vocabulaire des capacités illisible :', __FILE__)
+                . ' core/config/capabilities.json');
+        }
+        self::$_capabilities = $raw['capabilities'];
+        return self::$_capabilities;
+    }
+
+    /**
+     * Description d'une capacité, valeurs par défaut comprises.
+     *
+     * Une capacité absente du vocabulaire retombe sur generic.value : l'appareil
+     * reste exploitable, la valeur reste visible, et la trace au journal dit
+     * quelle entrée manque au fichier.
+     */
+    public static function capability($_capability) {
+        $all = self::capabilities();
+        $key = trim((string) $_capability);
+        if ($key !== '' && isset($all[$key]) && is_array($all[$key])) {
+            return self::completeCapability($key, $all[$key]);
+        }
+        if (isset($all[self::CAPABILITY_FALLBACK]) && is_array($all[self::CAPABILITY_FALLBACK])) {
+            mqttbe::logger('warning', __('Capacité inconnue du vocabulaire, repli sur generic.value :', __FILE__)
+                . ' ' . $key);
+            return self::completeCapability(self::CAPABILITY_FALLBACK, $all[self::CAPABILITY_FALLBACK]);
+        }
+        return null;
+    }
+
+    private static function completeCapability($_key, $_entry) {
+        $entry = array_merge(array(
+            'capability'   => $_key,
+            'name'         => $_key,
+            'type'         => 'info',
+            'subType'      => 'string',
+            'generic_type' => '',
+            'unit'         => '',
+            'isVisible'    => 1,
+            'isHistorized' => 0,
+            'order'        => 0,
+            'template'     => array(),
+            'links'        => '',
+            'configuration' => array(),
+        ), $_entry);
+        $entry['capability'] = $_key;
+        if (!is_array($entry['template'])) {
+            $entry['template'] = array();
+        }
+        if (!is_array($entry['configuration'])) {
+            $entry['configuration'] = array();
+        }
+        return $entry;
+    }
+
+    /* ------------------------------------------------- fabrication réelle */
+
+    private static function build($_model, $report) {
+        $identity = isset($_model['identity']) && is_array($_model['identity'])
+                  ? $_model['identity'] : array();
+        $uid = self::str($identity, 'uid');
+        if ($uid === '') {
+            throw new RuntimeException(__("Le modèle ne porte pas d'identifiant (identity.uid)", __FILE__));
+        }
+        if (strlen($uid) > self::MAX_LOGICALID) {
+            /* Tronquer silencieusement fabriquerait des collisions d'identité :
+             * deux appareils différents partageraient le même logicalId. */
+            throw new RuntimeException(__("L'identifiant dépasse 127 caractères :", __FILE__) . ' ' . $uid);
+        }
+        $report['uid'] = $uid;
+
+        /* Le vocabulaire est lu avant toute écriture : s'il manque, rien ne doit
+         * être créé à moitié. */
+        self::capabilities();
+
+        $meta        = isset($_model['meta']) && is_array($_model['meta']) ? $_model['meta'] : array();
+        $channels    = isset($_model['channels']) && is_array($_model['channels']) ? $_model['channels'] : array();
+        $fingerprint = self::str($_model, 'fingerprint');
+
+        $eqLogic = self::findByIdentity($identity);
+        $isNew   = !is_object($eqLogic);
+
+        /* Idempotence : même empreinte, aucune lecture de commande, aucune
+         * écriture. C'est le cas de loin le plus fréquent — à chaque démarrage
+         * du démon, tout le parc repasse ici. */
+        if (!$isNew && $fingerprint !== ''
+            && (string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') === $fingerprint) {
+            $report['status']     = 'unchanged';
+            $report['name']       = $eqLogic->getName();
+            $report['eqLogic_id'] = $eqLogic->getId();
+            mqttbe::logger('debug', __('Modèle inchangé, rien à écrire :', __FILE__) . ' ' . $uid);
+            return $report;
+        }
+
+        if ($isNew) {
+            $eqLogic = new mqttbe();
+            $eqLogic->setEqType_name('mqttbe');
+            $eqLogic->setIsEnable(1);
+            $eqLogic->setIsVisible(1);
+        }
+        self::applyEqLogic($eqLogic, $isNew, $uid, $identity, $meta, $_model);
+
+        $changed = $isNew || $eqLogic->getChanged();
+        if ($changed) {
+            /* L'équipement est enregistré avant ses commandes : cmd::save()
+             * refuse une commande sans eqLogic_id. */
+            $eqLogic->save();
+        }
+        $report['eqLogic_id'] = $eqLogic->getId();
+        $report['name']       = $eqLogic->getName();
+        if ($isNew) {
+            self::indexEqLogic($eqLogic);
+        }
+
+        $report = self::applyChannels($eqLogic, $channels, $report);
+
+        /* L'empreinte n'est posée qu'une fois tout le reste écrit : interrompue
+         * en cours de route, la fabrique doit repasser au prochain message, pas
+         * se croire à jour sur un équipement à moitié construit. */
+        if ($fingerprint !== ''
+            && (string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') !== $fingerprint) {
+            $eqLogic->setConfiguration(self::CONF_FINGERPRINT, $fingerprint);
+            $eqLogic->save();
+            $changed = true;
+        }
+
+        $touched = $report['cmd']['created'] + $report['cmd']['updated']
+                 + $report['cmd']['orphaned'] + $report['cmd']['removed'];
+        $report['touched'] = $touched;
+        if ($isNew) {
+            $report['status'] = 'created';
+        } elseif ($changed || $touched > 0) {
+            $report['status'] = 'updated';
+        } else {
+            $report['status'] = 'unchanged';
+        }
+
+        if ($report['status'] !== 'unchanged') {
+            mqttbe::logger('info', sprintf(
+                __('Équipement %1$s (%2$s) : %3$s, %4$d commande(s) touchée(s)', __FILE__),
+                $eqLogic->getName(), $uid, $report['status'], $touched));
+            /* La table de routage doit suivre les commandes qui viennent de
+             * changer. L'envoi est différé à la fin de la requête par le coeur
+             * du plugin : appeler ici ne coûte rien de plus qu'un drapeau. */
+            if (method_exists('mqttbe', 'scheduleRoutingPush')) {
+                mqttbe::scheduleRoutingPush();
+            }
+        }
+        return $report;
+    }
+
+    /**
+     * Champs et configuration de l'équipement.
+     *
+     * Le nom suit la même règle que celui des commandes : posé à la création,
+     * laissé tel quel dès que l'utilisateur y a touché. L'objet parent
+     * (object_id) n'est jamais fixé par la fabrique — le rangement des pièces
+     * appartient à l'utilisateur.
+     */
+    private static function applyEqLogic($_eqLogic, $_isNew, $_uid, $_identity, $_meta, $_model) {
+        $_eqLogic->setLogicalId($_uid);
+        $_eqLogic->setConfiguration(self::CONF_UID, $_uid);
+
+        $adapter = self::str($_identity, 'adapter');
+        if ($adapter !== '') {
+            $previous = (string) $_eqLogic->getConfiguration(self::CONF_ADAPTER, '');
+            if (!$_isNew && $previous !== '' && $previous !== $adapter) {
+                /* L'arbitrage par priorité entre adapters appartient au jalon 3 ;
+                 * la trace au journal évite qu'une reprise silencieuse passe
+                 * inaperçue en attendant. */
+                mqttbe::logger('info', sprintf(
+                    __('Équipement %1$s repris par l\'adapter %2$s (précédemment %3$s)', __FILE__),
+                    $_uid, $adapter, $previous));
+            }
+            $_eqLogic->setConfiguration(self::CONF_ADAPTER, $adapter);
+        }
+
+        /* Les alias sont cumulés et jamais retirés : un appareil qui cesse
+         * d'annoncer son préfixe de topic doit rester reconnaissable par lui,
+         * sinon la découverte suivante le recrée en double. */
+        $aliases = $_eqLogic->getConfiguration(self::CONF_ALIASES, array());
+        if (!is_array($aliases)) {
+            $aliases = array();
+        }
+        foreach (self::identityKeys($_identity) as $alias) {
+            if ($alias !== $_uid && !in_array($alias, $aliases, true)) {
+                $aliases[] = $alias;
+            }
+        }
+        $_eqLogic->setConfiguration(self::CONF_ALIASES, array_values($aliases));
+
+        foreach (array('manufacturer' => self::CONF_MANUFACTURER,
+                       'model'        => self::CONF_MODEL) as $field => $conf) {
+            $value = self::str($_meta, $field);
+            if ($value !== '') {
+                $_eqLogic->setConfiguration($conf, $value);
+            }
+        }
+        $availability = isset($_model['availability']) && is_array($_model['availability'])
+                      ? $_model['availability'] : array();
+        if (!empty($availability)) {
+            $_eqLogic->setConfiguration(self::CONF_AVAILABILITY, $availability);
+        }
+
+        $desired = self::str($_meta, 'name');
+        if ($desired === '') {
+            $desired = self::str($_meta, 'model_name');
+        }
+        if ($desired === '') {
+            $desired = $_uid;
+        }
+        $generated = $_eqLogic->getConfiguration(self::CONF_GENERATED, array());
+        if (!is_array($generated)) {
+            $generated = array();
+        }
+        $owned = $_isNew
+              || (isset($generated['name'])
+                  && (string) $generated['name'] === (string) $_eqLogic->getName());
+        if ($owned) {
+            $_eqLogic->setName(self::uniqueEqLogicName($desired, $_eqLogic));
+            /* On relit le nom après coup : le coeur nettoie et tronque, et
+             * l'empreinte doit porter ce qui est réellement en base, sinon la
+             * prochaine passe croira l'utilisateur passé par là. */
+            $generated['name'] = $_eqLogic->getName();
+            $_eqLogic->setConfiguration(self::CONF_GENERATED, $generated);
+        }
+    }
+
+    /* ------------------------------------------------------------ commandes */
+
+    /**
+     * Crée ou met à jour les commandes, puis résout les liens action → info.
+     *
+     * Les informations passent d'abord, les actions ensuite : le lien
+     * (cmd.value) réclame l'identifiant de la commande d'information, qui
+     * n'existe qu'une fois celle-ci enregistrée. Faire l'inverse obligerait à
+     * enregistrer chaque action deux fois.
+     */
+    private static function applyChannels($_eqLogic, $_channels, $report) {
+        $wanted  = array();
+        $ordered = array('info' => array(), 'action' => array());
+        $index   = 0;
+        foreach ($_channels as $channel) {
+            $channel = self::toArray($channel);
+            $key = self::str($channel, 'key');
+            if ($key === '') {
+                $report['messages'][] = __('Canal sans clé ignoré', __FILE__);
+                continue;
+            }
+            if (isset($wanted[$key])) {
+                /* La clé est le logicalId de la commande : deux canaux de même
+                 * clé produiraient deux commandes indiscernables, et la seconde
+                 * écraserait la première à chaque passage. */
+                $report['messages'][] = __('Canal en double, ignoré :', __FILE__) . ' ' . $key;
+                continue;
+            }
+            $capability = self::capability(self::str($channel, 'capability'));
+            if ($capability === null) {
+                $report['messages'][] = __('Canal sans capacité exploitable, ignoré :', __FILE__) . ' ' . $key;
+                continue;
+            }
+            $type = ($capability['type'] === 'action') ? 'action' : 'info';
+            $wanted[$key] = true;
+            $ordered[$type][] = array('channel' => $channel, 'capability' => $capability,
+                                      'key' => $key, 'index' => $index);
+            $index++;
+        }
+
+        /* Les noms déjà pris sur l'équipement, commandes manuelles comprises :
+         * la déduplication doit se faire avant l'enregistrement, faute de quoi
+         * la contrainte cmd (eqLogic_id, name) rejette l'équipement entier. */
+        $taken = array();
+        $existing = $_eqLogic->getId() != '' ? cmd::byEqLogicId($_eqLogic->getId()) : array();
+        if (!is_array($existing)) {
+            $existing = array();
+        }
+        /* Les commandes existantes sont lues une seule fois : une recherche par
+         * canal ferait autant d'allers-retours en base qu'un appareil a de
+         * canaux, à chaque message de découverte rejoué. */
+        $known = array('logicalId' => array(), 'key' => array());
+        foreach ($existing as $cmd) {
+            $taken[self::normalizeKey($cmd->getName())] = 'id:' . $cmd->getId();
+            $known['logicalId'][(string) $cmd->getLogicalId()] = $cmd;
+            $cmdKey = (string) $cmd->getConfiguration(self::CONF_KEY, '');
+            if ($cmdKey !== '') {
+                $known['key'][$cmdKey] = $cmd;
+            }
+        }
+
+        $infoByKey        = array();
+        $infoByCapability = array();
+        foreach ($ordered['info'] as $entry) {
+            $result = self::applyChannel($_eqLogic, $entry, $taken, $report, $known);
+            if ($result === null) {
+                continue;
+            }
+            $infoByKey[$entry['key']] = $result;
+            $capName = $entry['capability']['capability'];
+            if (!isset($infoByCapability[$capName])) {
+                $infoByCapability[$capName] = array();
+            }
+            $infoByCapability[$capName][$entry['key']] = $result;
+        }
+        foreach ($ordered['action'] as $entry) {
+            self::applyChannel($_eqLogic, $entry, $taken, $report, $known,
+                               $infoByKey, $infoByCapability);
+        }
+
+        return self::handleOrphans($_eqLogic, $wanted, $report);
+    }
+
+    /**
+     * Une commande, de bout en bout.
+     *
+     * @return cmd|null la commande enregistrée, null en cas d'échec sur celle-ci.
+     */
+    private static function applyChannel($_eqLogic, $_entry, &$_taken, &$report, $_known,
+                                         $_infoByKey = array(), $_infoByCapability = array()) {
+        $channel    = $_entry['channel'];
+        $capability = $_entry['capability'];
+        $key        = $_entry['key'];
+
+        $cmd   = self::findCmd($_known, $key);
+        $isNew = !is_object($cmd);
+        if ($isNew) {
+            $cmd = new mqttbeCmd();
+            $cmd->setEqLogic_id($_eqLogic->getId());
+            $cmd->setEqType('mqttbe');
+        }
+        $cmd->setLogicalId($key);
+        $cmd->setConfiguration(self::CONF_KEY, $key);
+        $cmd->setConfiguration(self::CONF_CAPABILITY, $capability['capability']);
+
+        /* Un canal réapparu redevient une commande ordinaire : l'utilisateur
+         * retrouve son historique et ses scénarios intacts. */
+        if (!$isNew && (string) $cmd->getConfiguration(self::CONF_ORPHAN, '') !== '') {
+            $cmd->setConfiguration(self::CONF_ORPHAN, '');
+        }
+
+        self::applyPlumbing($cmd, $channel, $capability, $isNew);
+
+        /* Réglages que le vocabulaire peut attacher à une capacité (bornes d'un
+         * curseur, par exemple) : posés à la création et plus jamais retouchés.
+         * Ils passent par le fichier plutôt que par du code ici, pour que
+         * capabilities.json reste le seul fichier à reprendre. */
+        if ($isNew) {
+            foreach ($capability['configuration'] as $confKey => $confValue) {
+                $cmd->setConfiguration($confKey, $confValue);
+            }
+        }
+
+        $desiredName = self::str($channel, 'name');
+        if ($desiredName === '') {
+            $desiredName = (string) $capability['name'];
+        }
+        if ($desiredName === '') {
+            $desiredName = $key;
+        }
+        $unit = self::str($channel, 'unit');
+        if ($unit === '') {
+            $unit = (string) $capability['unit'];
+        }
+        $order = isset($channel['order']) ? (int) $channel['order'] : (int) $capability['order'];
+        if ($order === 0) {
+            $order = $_entry['index'] + 1;
+        }
+        $desired = array(
+            'name'         => $desiredName,
+            'type'         => $capability['type'],
+            'subType'      => $capability['subType'],
+            'generic_type' => (string) $capability['generic_type'],
+            /* cmd.unite est un varchar(45) et le coeur ne tronque pas : la
+             * coupe se fait en caractères, sinon une unité accentuée serait
+             * tranchée au milieu d'un caractère et rendue invalide. */
+            'unite'        => function_exists('mb_substr')
+                            ? mb_substr($unit, 0, self::MAX_UNIT, 'UTF-8')
+                            : substr($unit, 0, self::MAX_UNIT),
+            'isVisible'    => (string) ((int) $capability['isVisible']),
+            'isHistorized' => (string) ((int) $capability['isHistorized']),
+            'order'        => (string) $order,
+        );
+        foreach (array('dashboard', 'mobile') as $version) {
+            $template = isset($capability['template'][$version])
+                      ? trim((string) $capability['template'][$version]) : '';
+            if ($template !== '') {
+                $desired['template::' . $version] = $template;
+            }
+        }
+        self::applyPresentation($cmd, $desired, $isNew, $_taken);
+
+        if ($capability['type'] === 'action') {
+            $value = self::resolveLink($channel, $capability, $key, $_infoByKey, $_infoByCapability);
+            if ($value !== null && (string) $cmd->getValue() !== (string) $value) {
+                $cmd->setValue($value);
+            }
+        }
+
+        try {
+            if ($isNew) {
+                $cmd->save();
+                $report['cmd']['created']++;
+            } elseif ($cmd->getChanged()) {
+                $cmd->save();
+                $report['cmd']['updated']++;
+            } else {
+                $report['cmd']['unchanged']++;
+            }
+        } catch (Throwable $e) {
+            /* Une commande refusée ne doit pas emporter les autres : le reste de
+             * l'équipement est utilisable, et le journal dit laquelle manque. */
+            $report['messages'][] = $key . ' : ' . $e->getMessage();
+            mqttbe::logger('error', __('Commande refusée :', __FILE__) . ' ' . $key
+                . ' — ' . $e->getMessage());
+            return null;
+        }
+        return $cmd;
+    }
+
+    /**
+     * Retrouve la commande d'un canal.
+     *
+     * Par logicalId d'abord, par la clé mémorisée ensuite : un utilisateur qui a
+     * modifié le logicalId à la main ne doit pas provoquer la création d'un
+     * doublon, la clé d'origine reste la référence.
+     */
+    private static function findCmd($_known, $_key) {
+        if (isset($_known['logicalId'][$_key])) {
+            return $_known['logicalId'][$_key];
+        }
+        if (isset($_known['key'][$_key])) {
+            return $_known['key'][$_key];
+        }
+        return null;
+    }
+
+    /**
+     * La plomberie : ce que la fabrique réécrit toujours.
+     *
+     * Topic, chemin JSON et charge utile décrivent le câblage, pas la
+     * présentation : un firmware qui déplace une valeur doit être suivi, sinon
+     * la commande cesse de remonter quoi que ce soit sans que rien ne le dise.
+     *
+     * Les réglages fins (map, échelle, arrondi, répétition) suivent une règle
+     * différente : posés à la création, ils ne sont ensuite réécrits que si le
+     * modèle en parle explicitement. Un utilisateur qui allonge le keepalive
+     * d'un capteur bavard garde son réglage.
+     */
+    private static function applyPlumbing($_cmd, $_channel, $_capability, $_isNew) {
+        if ($_capability['type'] === 'action') {
+            $sink = isset($_channel['sink']) && is_array($_channel['sink']) ? $_channel['sink'] : array();
+            $_cmd->setConfiguration('topic', self::str($sink, 'topic'));
+
+            $payload = isset($sink['payload']) ? $sink['payload'] : '';
+            if (is_array($payload)) {
+                /* Une charge utile structurée (RPC Shelly) est rangée telle
+                 * quelle : mqttbeCmd::execute() publie une chaîne. */
+                $payload = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+            $_cmd->setConfiguration('payload', (string) $payload);
+
+            $encoding = self::str($sink, 'encoding');
+            if ($encoding !== '') {
+                $_cmd->setConfiguration('encoding', $encoding);
+            }
+            self::applyTuning($_cmd, array(
+                'qos'    => isset($sink['qos']) ? (int) $sink['qos'] : null,
+                'retain' => isset($sink['retain']) ? (int) ((bool) $sink['retain']) : null,
+            ), array('qos' => 0, 'retain' => 0), $_isNew);
+            return;
+        }
+
+        $source   = isset($_channel['source']) && is_array($_channel['source']) ? $_channel['source'] : array();
+        $selector = isset($source['selector']) && is_array($source['selector']) ? $source['selector'] : array();
+        $type     = self::str($selector, 'type');
+        if ($type === '') {
+            $type = 'raw';
+        }
+        $_cmd->setConfiguration('topic', self::str($source, 'topic'));
+        $_cmd->setConfiguration('path', $type === 'json' ? self::str($selector, 'path') : '');
+        if ($type !== 'raw' && $type !== 'json') {
+            /* Sélecteur d'un jalon ultérieur : il est conservé intact pour que
+             * rien ne soit perdu, mais le démon ne saura pas encore l'appliquer. */
+            $_cmd->setConfiguration(self::CONF_SELECTOR,
+                json_encode($selector, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            mqttbe::logger('warning', __('Sélecteur non pris en charge :', __FILE__)
+                . ' ' . $type . ' (' . self::str($_channel, 'key') . ')');
+        }
+
+        /* Transformation et répétition sont cherchées à plusieurs endroits : le
+         * canal les porte tantôt à sa racine, tantôt dans « value » ou dans
+         * « source », selon l'adapter qui l'a produit. Seuls source, sink et
+         * value traversent MqttbeChannel intacts — chercher au seul endroit du
+         * contrat ferait perdre en silence l'arrondi d'un capteur. */
+        $value     = isset($_channel['value']) && is_array($_channel['value'])
+                   ? $_channel['value'] : array();
+        $transform = self::firstArray(array($_channel, $value, $source), 'transform');
+        $repeat    = self::firstArray(array($_channel, $value, $source), 'repeat');
+
+        $map = null;
+        if (isset($transform['map']) && is_array($transform['map'])) {
+            $map = $transform['map'];
+        } elseif (isset($value['map']) && is_array($value['map'])) {
+            $map = $value['map'];
+        } elseif (self::str($value, 'type') === 'bool'
+                  && (isset($value['true']) || isset($value['false']))) {
+            $map = self::booleanMap($value);
+        }
+
+        self::applyTuning($_cmd, array(
+            'map'         => $map === null ? null : json_encode($map, JSON_UNESCAPED_UNICODE),
+            'scale'       => self::pick(array($transform, $value), 'scale'),
+            'offset'      => self::pick(array($transform, $value), 'offset'),
+            'round'       => self::pick(array($transform, $value), 'round'),
+            'repeat'      => self::pick(array($repeat), 'mode'),
+            'keepalive'   => self::pick(array($repeat), 'keepalive'),
+            'minInterval' => self::pick(array($repeat), 'minInterval'),
+        ), array(
+            /* Aucun défaut pour map, scale, offset et round : une clé écrite à
+             * vide n'est pas une clé absente, et un lecteur qui interroge
+             * getConfiguration('scale', 1) recevrait la chaîne vide au lieu de
+             * son propre défaut. */
+            'repeat'      => 'onchange',
+            /* 300 s par défaut : sans réémission, le champ « dernière
+             * communication » d'un capteur stable vieillit indéfiniment et
+             * l'équipement finit par passer en timeout sans raison. */
+            'keepalive'   => 300,
+            'minInterval' => 0,
+        ), $_isNew);
+    }
+
+    /**
+     * Une charge utile binaire s'écrit de plusieurs façons selon les firmwares.
+     *
+     * Le modèle dit quelle valeur Jeedom correspond au vrai et au faux ; les
+     * orthographes rencontrées sur le terrain (JSON true/false, Shelly Gen1
+     * on/off, 1/0) sont toutes rangées vers ces deux valeurs. La correspondance
+     * étant une égalité exacte de chaînes, une entrée inutile ne coûte rien.
+     */
+    private static function booleanMap($_value) {
+        $true  = isset($_value['true'])  ? (string) $_value['true']  : '1';
+        $false = isset($_value['false']) ? (string) $_value['false'] : '0';
+        return array(
+            'true' => $true,  'false' => $false,
+            'True' => $true,  'False' => $false,
+            '1'    => $true,  '0'     => $false,
+            'on'   => $true,  'off'   => $false,
+            'ON'   => $true,  'OFF'   => $false,
+        );
+    }
+
+    private static function applyTuning($_cmd, $_wanted, $_defaults, $_isNew) {
+        foreach ($_wanted as $key => $value) {
+            if ($value !== null && $value !== '') {
+                $_cmd->setConfiguration($key, $value);
+                continue;
+            }
+            if ($_isNew && array_key_exists($key, $_defaults)) {
+                $_cmd->setConfiguration($key, $_defaults[$key]);
+            }
+        }
+    }
+
+    /**
+     * Les champs de présentation, champ par champ.
+     *
+     * mqttbe::generated garde ce que la fabrique a écrit la dernière fois. Au
+     * passage suivant, un champ dont la valeur en base diffère de cette trace a
+     * été repris par l'utilisateur : il n'est plus jamais réécrit, et la trace
+     * n'est pas mise à jour — sans quoi la fabrique se croirait de nouveau
+     * propriétaire au passage d'après.
+     *
+     * Le suivi est fait champ par champ, et non par une empreinte globale :
+     * renommer une commande ne doit pas figer l'unité ni le type générique, qui
+     * peuvent encore être corrigés par une version du vocabulaire.
+     *
+     * Une commande sans trace et déjà existante est réputée entièrement
+     * manuelle : un équipement créé à la main puis repris par la découverte
+     * garde sa présentation, seule sa plomberie est rafraîchie.
+     */
+    private static function applyPresentation($_cmd, $_desired, $_isNew, &$_taken) {
+        $generated = $_cmd->getConfiguration(self::CONF_GENERATED, array());
+        $hasTrace  = is_array($generated) && !empty($generated);
+        if (!is_array($generated)) {
+            $generated = array();
+        }
+        $ownerKey = $_cmd->getId() != '' ? 'id:' . $_cmd->getId() : 'new:' . $_cmd->getLogicalId();
+
+        foreach (self::$_presentationFields as $field) {
+            if (!isset($_desired[$field])) {
+                continue;
+            }
+            $current = self::presentationValue($_cmd, $field);
+            if ($_isNew) {
+                $owned = true;
+            } elseif (!$hasTrace) {
+                $owned = false;
+            } elseif (array_key_exists($field, $generated)) {
+                $owned = ((string) $generated[$field] === (string) $current);
+            } else {
+                /* Champ suivi depuis peu sur une commande que la fabrique a bien
+                 * écrite : la trace fait foi pour ce qu'elle contient, et le
+                 * reste lui revient. */
+                $owned = true;
+            }
+            if (!$owned) {
+                if ($field === 'name') {
+                    $_taken[self::normalizeKey($current)] = $ownerKey;
+                }
+                continue;
+            }
+            $value = $_desired[$field];
+            if ($field === 'name') {
+                $value = self::uniqueCmdName($value, $_taken, $ownerKey, $current);
+            }
+            self::presentationApply($_cmd, $field, $value);
+            /* Relu après écriture : le coeur nettoie et tronque les noms, et la
+             * trace doit porter ce qui est réellement en base. */
+            $generated[$field] = self::presentationValue($_cmd, $field);
+            if ($field === 'name') {
+                $_taken[self::normalizeKey($generated[$field])] = $ownerKey;
+            }
+        }
+        $_cmd->setConfiguration(self::CONF_GENERATED, $generated);
+    }
+
+    private static function presentationValue($_cmd, $_field) {
+        switch ($_field) {
+            case 'name':         return (string) $_cmd->getName();
+            case 'type':         return (string) $_cmd->getType();
+            case 'subType':      return (string) $_cmd->getSubType();
+            case 'generic_type': return (string) $_cmd->getGeneric_type();
+            case 'unite':        return (string) $_cmd->getUnite();
+            case 'isVisible':    return (string) ((int) $_cmd->getIsVisible());
+            case 'isHistorized': return (string) ((int) $_cmd->getIsHistorized());
+            case 'order':        return (string) ((int) $_cmd->getOrder());
+            case 'template::dashboard': return (string) $_cmd->getTemplate('dashboard', '');
+            case 'template::mobile':    return (string) $_cmd->getTemplate('mobile', '');
+        }
+        return '';
+    }
+
+    private static function presentationApply($_cmd, $_field, $_value) {
+        switch ($_field) {
+            case 'name':         $_cmd->setName($_value); break;
+            case 'type':         $_cmd->setType($_value); break;
+            case 'subType':      $_cmd->setSubType($_value); break;
+            case 'generic_type': $_cmd->setGeneric_type($_value); break;
+            case 'unite':        $_cmd->setUnite($_value); break;
+            case 'isVisible':    $_cmd->setIsVisible((int) $_value); break;
+            case 'isHistorized': $_cmd->setIsHistorized((int) $_value); break;
+            case 'order':        $_cmd->setOrder((int) $_value); break;
+            case 'template::dashboard': $_cmd->setTemplate('dashboard', $_value); break;
+            case 'template::mobile':    $_cmd->setTemplate('mobile', $_value); break;
+        }
+    }
+
+    /* ------------------------------------------------------- canaux disparus */
+
+    /**
+     * Commandes dont le canal a disparu du modèle.
+     *
+     * Elles ne sont pas supprimées : un identifiant de commande est référencé
+     * par les scénarios, les vues, les plans et les interactions, et le
+     * supprimer casse tout cela sans avertissement et sans retour possible. Une
+     * disparition peut d'ailleurs n'être qu'un firmware qui a cessé d'annoncer
+     * un composant le temps d'un redémarrage.
+     *
+     * La commande est donc retirée du tableau de bord et marquée : l'utilisateur
+     * la retrouve dans la page de l'équipement, avec la date à laquelle elle a
+     * cessé d'exister. La table cmd n'a pas de colonne isEnable — isVisible est
+     * la seule mise en sommeil possible au niveau d'une commande.
+     *
+     * Seul cas de suppression : ni historique, ni référence nulle part. Rien ne
+     * peut alors casser, et laisser traîner des commandes mortes finirait par
+     * rendre la page de l'équipement illisible.
+     */
+    private static function handleOrphans($_eqLogic, $_wanted, $report) {
+        if ($_eqLogic->getId() == '') {
+            return $report;
+        }
+        $cmds = cmd::byEqLogicId($_eqLogic->getId());
+        if (!is_array($cmds)) {
+            return $report;
+        }
+        foreach ($cmds as $cmd) {
+            $key = (string) $cmd->getConfiguration(self::CONF_KEY, '');
+            if ($key === '' || isset($_wanted[$key])) {
+                continue;
+            }
+            if ((string) $cmd->getConfiguration(self::CONF_ORPHAN, '') !== '') {
+                continue;
+            }
+            if (!self::isReferenced($cmd) && !self::hasHistory($cmd)) {
+                try {
+                    $cmd->remove();
+                    $report['cmd']['removed']++;
+                    continue;
+                } catch (Throwable $e) {
+                    $report['messages'][] = $key . ' : ' . $e->getMessage();
+                }
+            }
+            $cmd->setConfiguration(self::CONF_ORPHAN, date('Y-m-d H:i:s'));
+            $cmd->setIsVisible(0);
+            /* La trace suit la mise en sommeil : sans cela, le retrait du
+             * tableau de bord passerait au prochain passage pour une retouche de
+             * l'utilisateur, et un canal réapparu resterait invisible. */
+            $generated = $cmd->getConfiguration(self::CONF_GENERATED, array());
+            if (is_array($generated) && isset($generated['isVisible'])) {
+                $generated['isVisible'] = '0';
+                $cmd->setConfiguration(self::CONF_GENERATED, $generated);
+            }
+            try {
+                $cmd->save();
+                $report['cmd']['orphaned']++;
+                mqttbe::logger('info', __('Canal disparu, commande désactivée :', __FILE__)
+                    . ' ' . $cmd->getHumanName());
+            } catch (Throwable $e) {
+                $report['messages'][] = $key . ' : ' . $e->getMessage();
+            }
+        }
+        return $report;
+    }
+
+    /**
+     * La commande est-elle citée quelque part ?
+     *
+     * En cas de doute — une exception, un plugin tiers qui répond mal — on
+     * répond oui : conserver une commande inutile est sans conséquence,
+     * supprimer une commande utilisée casse un scénario.
+     */
+    private static function isReferenced($_cmd) {
+        try {
+            $usedBy = $_cmd->getUsedBy();
+        } catch (Throwable $e) {
+            return true;
+        }
+        if (!is_array($usedBy)) {
+            return true;
+        }
+        foreach ($usedBy as $type => $items) {
+            if (!is_array($items)) {
+                continue;
+            }
+            if ($type === 'plugin') {
+                /* Ce rang est un tableau par plugin, toujours non vide : ce sont
+                 * ses contenus qu'il faut regarder. */
+                foreach ($items as $sub) {
+                    if (is_array($sub) && count($sub) > 0) {
+                        return true;
+                    }
+                }
+                continue;
+            }
+            if (count($items) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function hasHistory($_cmd) {
+        if ($_cmd->getType() != 'info') {
+            return false;
+        }
+        if ($_cmd->getIsHistorized() == 1) {
+            return true;
+        }
+        try {
+            /* Une commande dont l'historisation a été coupée conserve ses
+             * relevés : les effacer serait une perte définitive. */
+            $history = $_cmd->getHistory();
+        } catch (Throwable $e) {
+            return true;
+        }
+        return is_array($history) && count($history) > 0;
+    }
+
+    /* ------------------------------------------------------ liens et noms */
+
+    /**
+     * Commande d'information pilotée par une action (cmd.value).
+     *
+     * Le modèle est prioritaire : il désigne une clé de canal, donc exactement
+     * la bonne information. À défaut, le vocabulaire désigne une capacité, et
+     * l'on choisit alors l'information du même composant — « switch:0.on »
+     * pilote « switch:0.output » et non le relais voisin.
+     */
+    private static function resolveLink($_channel, $_capability, $_key, $_infoByKey, $_infoByCapability) {
+        $links = isset($_channel['links']) ? $_channel['links'] : null;
+        if (is_string($links) && isset($_infoByKey[$links])) {
+            return $_infoByKey[$links]->getId();
+        }
+        if (is_array($links)) {
+            foreach ($links as $target) {
+                if (is_string($target) && isset($_infoByKey[$target])) {
+                    return $_infoByKey[$target]->getId();
+                }
+            }
+        }
+        $capability = trim((string) $_capability['links']);
+        if ($capability === '' || !isset($_infoByCapability[$capability])) {
+            return null;
+        }
+        $candidates = $_infoByCapability[$capability];
+        $prefix = strrpos($_key, '.') === false ? '' : substr($_key, 0, strrpos($_key, '.') + 1);
+        if ($prefix !== '') {
+            foreach ($candidates as $key => $cmd) {
+                if (strpos($key, $prefix) === 0) {
+                    return $cmd->getId();
+                }
+            }
+        }
+        $first = reset($candidates);
+        return is_object($first) ? $first->getId() : null;
+    }
+
+    /**
+     * Nom de commande unique sur l'équipement.
+     *
+     * cmd (eqLogic_id, name) est unique : deux canaux nommés « Température »
+     * feraient échouer l'enregistrement de l'équipement entier, et l'utilisateur
+     * verrait son appareil disparaître sans explication.
+     */
+    private static function uniqueCmdName($_desired, &$_taken, $_ownerKey, $_current) {
+        $base = self::cleanName($_desired);
+        if ($base === '') {
+            $base = $_ownerKey;
+        }
+        $previous = self::normalizeKey($_current);
+        if ($previous !== '' && isset($_taken[$previous]) && $_taken[$previous] === $_ownerKey) {
+            unset($_taken[$previous]);
+        }
+        $candidate = $base;
+        $suffix    = 2;
+        while (isset($_taken[self::normalizeKey($candidate)])
+               && $_taken[self::normalizeKey($candidate)] !== $_ownerKey) {
+            $marker    = ' ' . $suffix;
+            $candidate = self::cleanName(substr($base, 0, self::MAX_NAME - strlen($marker))) . $marker;
+            $suffix++;
+        }
+        return $candidate;
+    }
+
+    /**
+     * Nom d'équipement unique dans son objet parent.
+     *
+     * eqLogic (name, object_id) est unique, tous types confondus : le conflit
+     * peut donc venir d'un équipement d'un autre plugin rangé dans la même pièce.
+     */
+    private static function uniqueEqLogicName($_desired, $_eqLogic) {
+        $base = self::cleanName($_desired);
+        if ($base === '') {
+            $base = (string) $_eqLogic->getLogicalId();
+        }
+        $objectId = $_eqLogic->getObject_id();
+        if ($objectId === '' || $objectId === false) {
+            $objectId = null;
+        }
+        $taken = array();
+        $siblings = eqLogic::byObjectId($objectId, false, false);
+        if (is_array($siblings)) {
+            foreach ($siblings as $sibling) {
+                if ($_eqLogic->getId() != '' && $sibling->getId() == $_eqLogic->getId()) {
+                    continue;
+                }
+                $taken[self::normalizeKey($sibling->getName())] = true;
+            }
+        }
+        $candidate = $base;
+        $suffix    = 2;
+        while (isset($taken[self::normalizeKey($candidate)])) {
+            $marker    = ' ' . $suffix;
+            $candidate = self::cleanName(substr($base, 0, self::MAX_NAME - strlen($marker))) . $marker;
+            $suffix++;
+        }
+        return $candidate;
+    }
+
+    /**
+     * Nettoyage identique à celui du coeur.
+     *
+     * setName() applique cleanComponanteName() puis tronque : calculer
+     * l'unicité sur le nom brut vérifierait une chaîne que la base ne verra
+     * jamais, et laisserait passer le doublon qu'on cherche à éviter.
+     */
+    private static function cleanName($_name) {
+        $name = (string) $_name;
+        if (function_exists('cleanComponanteName')) {
+            $name = cleanComponanteName($name);
+        } else {
+            $name = strip_tags(str_replace(array('&', '#', ']', '[', '%', "\\", '/', "'", '"', '*'), '', $name));
+            $name = preg_replace('/\s+/', ' ', $name);
+        }
+        return trim(substr($name, 0, self::MAX_NAME));
+    }
+
+    /* ------------------------------------------------- index d'identité */
+
+    /**
+     * Index alias → équipement, construit une fois par requête.
+     *
+     * Une découverte complète repasse par ici pour chaque appareil du parc : une
+     * requête par alias et par appareil ferait des centaines d'allers-retours là
+     * où une seule lecture suffit.
+     */
+    private static function aliasIndex() {
+        if (self::$_index !== null) {
+            return self::$_index;
+        }
+        self::$_index = array();
+        $all = eqLogic::byType('mqttbe');
+        if (is_array($all)) {
+            foreach ($all as $eqLogic) {
+                self::indexEqLogic($eqLogic);
+            }
+        }
+        return self::$_index;
+    }
+
+    private static function indexEqLogic($_eqLogic) {
+        if (self::$_index === null) {
+            self::$_index = array();
+        }
+        $keys = array((string) $_eqLogic->getLogicalId(),
+                      (string) $_eqLogic->getConfiguration(self::CONF_UID, ''));
+        $aliases = $_eqLogic->getConfiguration(self::CONF_ALIASES, array());
+        if (is_array($aliases)) {
+            $keys = array_merge($keys, $aliases);
+        }
+        foreach ($keys as $key) {
+            $normal = self::normalizeKey($key);
+            if ($normal !== '' && !isset(self::$_index[$normal])) {
+                self::$_index[$normal] = $_eqLogic;
+            }
+        }
+    }
+
+    /**
+     * Oublie ce qui a été mis en cache dans la requête.
+     *
+     * Utile aux essais et à un appelant qui supprime des équipements entre deux
+     * fabrications : l'index garderait sinon des objets disparus.
+     */
+    public static function resetCache() {
+        self::$_capabilities = null;
+        self::$_index = null;
+    }
+
+    /**
+     * Identités possibles d'un modèle, uid en tête.
+     *
+     * L'ordre compte : le uid est l'identité, les alias ne sont que des chemins
+     * par lesquels l'appareil peut aussi se présenter.
+     */
+    private static function identityKeys($_identity) {
+        $identity = $_identity;
+        if (is_object($identity)) {
+            $identity = self::toArray($identity);
+        }
+        if (is_string($identity)) {
+            $identity = array('uid' => $identity);
+        }
+        if (!is_array($identity)) {
+            return array();
+        }
+        if (isset($identity['identity']) && is_array($identity['identity'])) {
+            $identity = $identity['identity'];
+        }
+        $keys = array();
+        $uid = self::str($identity, 'uid');
+        if ($uid !== '') {
+            $keys[$uid] = true;
+        }
+        if (isset($identity['aliases']) && is_array($identity['aliases'])) {
+            foreach ($identity['aliases'] as $alias) {
+                $alias = trim((string) $alias);
+                if ($alias !== '') {
+                    $keys[$alias] = true;
+                }
+            }
+        }
+        return array_keys($keys);
+    }
+
+    /* Comparaison insensible à la casse : une adresse MAC s'écrit aussi bien en
+     * majuscules qu'en minuscules selon le firmware qui l'annonce, et c'est le
+     * même appareil. */
+    private static function normalizeKey($_key) {
+        return strtolower(trim((string) $_key));
+    }
+
+    /* ------------------------------------------------------------- outillage */
+
+    /**
+     * Charge les classes du modèle de périphérique.
+     *
+     * L'autochargeur de Jeedom ne sait résoudre que la classe portant le nom du
+     * plugin : ces classes, partagées avec le démon, s'incluent à la main. Le
+     * dossier peut ne pas exister — la découverte est un jalon ultérieur, et la
+     * fabrique doit fonctionner sur un modèle fourni en JSON.
+     */
+    public static function loadDiscovery() {
+        if (self::$_discoveryLoaded) {
+            return;
+        }
+        self::$_discoveryLoaded = true;
+        $dir = __DIR__ . '/../../resources/mqttbed/discovery';
+        if (!is_dir($dir)) {
+            return;
+        }
+        $files = glob($dir . '/*.php');
+        if (!is_array($files)) {
+            return;
+        }
+        sort($files);
+        foreach ($files as $file) {
+            require_once $file;
+        }
+    }
+
+    /**
+     * Réduit un modèle ou un canal en tableau.
+     *
+     * La fabrique travaille sur des tableaux et non sur les accesseurs des
+     * classes de découverte : elle est ainsi la même qu'on lui passe l'objet,
+     * le JSON décodé du démon ou un modèle écrit à la main dans la page de
+     * configuration manuelle.
+     */
+    private static function toArray($_value) {
+        if (is_array($_value)) {
+            return $_value;
+        }
+        if (!is_object($_value)) {
+            throw new RuntimeException(__('Modèle de périphérique illisible', __FILE__));
+        }
+        $data = null;
+        if (method_exists($_value, 'toArray')) {
+            $data = $_value->toArray();
+        } elseif ($_value instanceof JsonSerializable) {
+            $data = $_value->jsonSerialize();
+        } else {
+            $data = json_decode(json_encode($_value), true);
+        }
+        if (!is_array($data)) {
+            throw new RuntimeException(__('Modèle de périphérique illisible', __FILE__));
+        }
+        if (self::str($data, 'fingerprint') === '' && method_exists($_value, 'fingerprint')) {
+            $data['fingerprint'] = (string) $_value->fingerprint();
+        }
+        return $data;
+    }
+
+    private static function str($_array, $_key) {
+        if (!is_array($_array) || !isset($_array[$_key]) || is_array($_array[$_key])) {
+            return '';
+        }
+        return trim((string) $_array[$_key]);
+    }
+
+    /* Premier sous-tableau portant cette clé, parmi plusieurs tableaux. */
+    private static function firstArray($_sources, $_key) {
+        foreach ($_sources as $source) {
+            if (is_array($source) && isset($source[$_key]) && is_array($source[$_key])) {
+                return $source[$_key];
+            }
+        }
+        return array();
+    }
+
+    /* Première valeur non vide parmi plusieurs tableaux : le modèle peut ranger
+     * une transformation dans « transform » comme dans « value ». */
+    private static function pick($_sources, $_key) {
+        foreach ($_sources as $source) {
+            if (is_array($source) && isset($source[$_key]) && !is_array($source[$_key])
+                && (string) $source[$_key] !== '') {
+                return $source[$_key];
+            }
+        }
+        return null;
+    }
+}

@@ -22,11 +22,13 @@ require_once __DIR__ . '/outils.php';
 require_once __DIR__ . '/check-classes.php';
 require_once __DIR__ . '/check-protocol.php';
 require_once __DIR__ . '/check-config.php';
+require_once __DIR__ . '/check-capabilities.php';
 
 $sections = array(
     'Conformité aux conventions du cœur Jeedom' => mqttbeControlesClasses(),
     'Contrat démon ↔ Jeedom'                    => mqttbeControlesProtocole(),
     'Clés de configuration'                     => mqttbeControlesConfig(),
+    'Vocabulaire des capacités'                 => mqttbeControlesCapacites(),
 );
 
 $tous = array();

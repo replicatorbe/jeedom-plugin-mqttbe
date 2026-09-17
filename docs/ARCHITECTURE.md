@@ -359,11 +359,23 @@ Extrait de `core/config/capabilities.json` :
 | `alarm.smoke` | info / binary | `SMOKE` | | |
 | `alarm.water_leak` | info / binary | `WATER_LEAK` | | |
 | `battery.level` | info / numeric | `BATTERY` | % | |
-| `button.event` | info / string | `BUTTON` | | |
+| `button.pressed` | info / binary | `BUTTON` | | |
+| `button.event` | info / string | `GENERIC_INFO` | | `BUTTON` n'admet ni `string` ni charge utile nommée |
 | `connectivity.online` | info / binary | `ONLINE` | | |
 | `lock.state` / `lock.open` / `lock.close` | info+action | `LOCK_STATE` / `LOCK_OPEN` / `LOCK_CLOSE` | | |
 | `thermostat.setpoint` | action / slider | `THERMOSTAT_SET_SETPOINT` | °C | |
 | `generic.value` | info / string | `GENERIC_INFO` | | dernier recours |
+
+Les noms de la table du coeur sont contre-intuitifs et se vérifient un par un :
+l'état d'une prise est `ENERGY_STATE` (il n'existe pas de `SWITCH_STATE`),
+`BRIGHTNESS` désigne la luminosité **ambiante** mesurée par un capteur alors que
+le niveau d'une lampe est `LIGHT_BRIGHTNESS`, et rien ne couvre le courant en
+ampères ni le gaz — ces deux-là retombent sur `GENERIC_INFO` plutôt que d'être
+détournés vers un type voisin qui mentirait sur la vue Maison. Le gabarit de
+volet s'appelle `core::shutter` ; `core::volet` n'existe pas. Un contrôle hors
+ligne (`tests/check-capabilities.php`) confronte chaque entrée à la table réelle
+du coeur, parce qu'un type générique inventé ne produit aucune erreur : il ne
+fait rien, silencieusement.
 
 Chaque entrée porte aussi les valeurs par défaut de `isVisible`,
 `isHistorized` (la puissance oui, l'horodatage non), l'icône et l'ordre
