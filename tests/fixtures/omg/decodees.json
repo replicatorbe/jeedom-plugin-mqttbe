@@ -1,0 +1,83 @@
+{
+    "_": [
+        "Les balises DÉCODÉES, que le parc d'essai ne contient pas.",
+        "",
+        "Ses trois passerelles tournent en v1.7.0 et ne voient, aujourd'hui, que des",
+        "trames brutes. Un adapter qui ne saurait traiter que celles-là passe donc",
+        "tous les contrôles du parc réel et produit pourtant un équipement vide pour",
+        "chaque capteur du jour où l'on branche un thermomètre.",
+        "",
+        "Ces charges utiles sont reconstituées d'après la documentation de Theengs",
+        "Decoder — la liste des propriétés publiées y est donnée champ par champ — et",
+        "non relevées sur un appareil. Les adresses sont fabriquées.",
+        "",
+        "Elles couvrent exactement ce que la table champ → capacité doit savoir :",
+        "  - tempc, hum, batt, volt : le capteur le plus répandu ;",
+        "  - tempc ET tempf sur le même appareil : c'est la même température dans",
+        "    deux unités, et non deux capteurs ;",
+        "  - tempf seul : converti en °C, faute de quoi l'utilisateur lit 71,6 sur",
+        "    un thermomètre qui affiche 22 ;",
+        "  - moi, lux, et `fer` que personne n'a prévu : l'inconnu devient une",
+        "    valeur générique plutôt que d'être jeté ;",
+        "  - co2, pres, noise, uv ;",
+        "  - open : un contact ;",
+        "  - track : un traceur, qui n'est reconnu que par ce nom de champ ;",
+        "  - un champ `a.b`, illégal comme chemin JSON, et un sous-objet : tous deux",
+        "    écartés sans que l'appareil le soit."
+    ],
+    "trames": {
+        "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003001": [
+            "{\"id\":\"A8:B0:C1:00:30:01\",\"mac_type\":0,\"name\":\"ATC_003001\",\"rssi\":-67,\"brand\":\"Xiaomi\",\"model\":\"Temperature and humidity sensor\",\"model_id\":\"LYWSD03MMC_ATC\",\"type\":\"THB\",\"tempc\":21.4,\"tempf\":70.52,\"hum\":48,\"batt\":86,\"volt\":2.931}",
+            "{\"id\":\"A8:B0:C1:00:30:01\",\"mac_type\":0,\"rssi\":-71,\"manufacturerdata\":\"a4c1381030014a2f\"}"
+        ],
+        "bt/OMG_ESP32_BLE_ETAGE/BTtoMQTT/A8B0C1003001": [
+            "{\"id\":\"A8:B0:C1:00:30:01\",\"mac_type\":0,\"rssi\":-88,\"brand\":\"Xiaomi\",\"model\":\"Temperature and humidity sensor\",\"model_id\":\"LYWSD03MMC_ATC\",\"type\":\"THB\",\"tempc\":21.4,\"hum\":48,\"batt\":86,\"volt\":2.931}"
+        ],
+        "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003002": [
+            "{\"id\":\"A8:B0:C1:00:30:02\",\"mac_type\":0,\"name\":\"THERMO-F\",\"rssi\":-72,\"brand\":\"Inkbird\",\"model\":\"Thermometer\",\"model_id\":\"IBS-TH1\",\"type\":\"THB\",\"tempf\":71.6,\"hum\":52,\"batt\":91}"
+        ],
+        "bt/OMG_ESP32_BLE_ENTREE/BTtoMQTT/A8B0C1003003": [
+            "{\"id\":\"A8:B0:C1:00:30:03\",\"mac_type\":0,\"name\":\"Flower care\",\"rssi\":-80,\"brand\":\"Xiaomi\",\"model\":\"Plant sensor\",\"model_id\":\"HHCCJCY01HHCC\",\"type\":\"PLANT\",\"tempc\":18.6,\"moi\":27,\"lux\":1450,\"fer\":184,\"batt\":72}"
+        ],
+        "bt/OMG_ESP32_BLE_ETAGE/BTtoMQTT/A8B0C1003004": [
+            "{\"id\":\"A8:B0:C1:00:30:04\",\"mac_type\":0,\"name\":\"AIR-003004\",\"rssi\":-64,\"brand\":\"Aranet\",\"model\":\"CO2 sensor\",\"model_id\":\"Aranet4\",\"type\":\"AIR\",\"tempc\":20.1,\"hum\":44,\"pres\":1013.2,\"co2\":742,\"noise\":38.5,\"uv\":0.4,\"batt\":88,\"volt\":3.012}"
+        ],
+        "bt/OMG_ESP32_BLE_ENTREE/BTtoMQTT/A8B0C1003005": [
+            "{\"id\":\"A8:B0:C1:00:30:05\",\"mac_type\":0,\"name\":\"PORTE-003005\",\"rssi\":-75,\"brand\":\"Xiaomi\",\"model\":\"Door sensor\",\"model_id\":\"MCCGQ02HL\",\"type\":\"CTMO\",\"open\":true,\"batt\":94}"
+        ],
+        "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003006": [
+            "{\"id\":\"A8:B0:C1:00:30:06\",\"mac_type\":0,\"rssi\":-83,\"brand\":\"Tile\",\"model\":\"Tracker\",\"model_id\":\"TILE\",\"type\":\"TRACK\",\"track\":true}"
+        ],
+        "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003007": [
+            "{\"id\":\"A8:B0:C1:00:30:07\",\"mac_type\":0,\"name\":\"BIZARRE\",\"rssi\":-70,\"model\":\"Capteur inconnu\",\"tilt\":37,\"a.b\":1,\"imbrique\":{\"x\":1},\"distance\":4.2,\"txpower\":-59}"
+        ]
+    },
+    "attendus": {
+        "_": "Ce que la table champ → capacité doit produire, capteur par capteur.",
+        "ble:a8b0c1003001": {
+            "tempc": "sensor.temperature",
+            "hum": "sensor.humidity",
+            "batt": "battery.level",
+            "volt": "power.voltage"
+        },
+        "ble:a8b0c1003003": {
+            "tempc": "sensor.temperature",
+            "moi": "sensor.humidity",
+            "lux": "sensor.luminosity",
+            "fer": "generic.value",
+            "batt": "battery.level"
+        },
+        "ble:a8b0c1003004": {
+            "pres": "sensor.pressure",
+            "co2": "sensor.co2",
+            "noise": "sensor.noise",
+            "uv": "sensor.uv"
+        },
+        "ble:a8b0c1003005": {
+            "open": "contact.open"
+        },
+        "ble:a8b0c1003006": {
+            "track": "presence.detected"
+        }
+    }
+}

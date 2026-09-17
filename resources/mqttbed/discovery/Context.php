@@ -52,6 +52,19 @@ class MqttbeDiscoveryContext {
         return $this->adapterId;
     }
 
+    /**
+     * Un réglage porté par l'ordre `discovery`.
+     *
+     * Le démon ne charge pas le cœur de Jeedom : tout ce qu'un adapter doit
+     * savoir de la configuration voyage dans cet ordre. Sans ce passage, les
+     * réglages arrivaient jusqu'au moteur et s'y perdaient — l'adapter
+     * retombait sur ses défauts, et décocher une case dans Jeedom n'avait
+     * aucun effet.
+     */
+    public function setting($_nom, $_defaut = null) {
+        return $this->engine->setting($_nom, $_defaut);
+    }
+
     /* --------------------------------------------------------------- broker */
 
     /*

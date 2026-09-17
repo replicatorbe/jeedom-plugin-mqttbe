@@ -97,6 +97,16 @@
             "isHistorized": 0,
             "order": 110
         },
+        "connectivity.rssi": {
+            "name": "Signal",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "dBm",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 92
+        },
         "contact.open": {
             "name": "Ouverture",
             "type": "info",
@@ -166,6 +176,36 @@
             "isVisible": 1,
             "order": 33
         },
+        "device.memory": {
+            "name": "Mémoire libre",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "o",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 95
+        },
+        "device.restart": {
+            "name": "Redémarrer",
+            "type": "action",
+            "subType": "other",
+            "generic_type": "REBOOT",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 96
+        },
+        "device.uptime": {
+            "name": "Durée de fonctionnement",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "s",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 94
+        },
         "energy.daily": {
             "name": "Consommation du jour",
             "type": "info",
@@ -223,6 +263,16 @@
             "generic_type": "GENERIC_ACTION",
             "isVisible": 1,
             "order": 901
+        },
+        "generic.slider": {
+            "name": "Réglage",
+            "type": "action",
+            "subType": "slider",
+            "generic_type": "GENERIC_ACTION",
+            "unit": "",
+            "isVisible": 1,
+            "isHistorized": 0,
+            "order": 98
         },
         "generic.value": {
             "name": "Valeur",

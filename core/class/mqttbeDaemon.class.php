@@ -535,17 +535,32 @@ class mqttbeDaemon {
     }
 
     public static function sendDiscoveryConfig($_rescan = false) {
-        $adapters = trim(config::byKey('discovery::adapters', 'mqttbe', 'shelly.gen1'));
-        return self::send(array(
+        $ordre = array(
             'cmd'      => 'discovery',
             'enabled'  => config::byKey('discovery::enabled', 'mqttbe', 1) == 1,
-            'adapters' => $adapters === '' ? array() : array_map('trim', explode(',', $adapters)),
             'rescan'   => (bool) $_rescan,
             /* Aller lire le nom sur l'appareil suppose une requête vers lui :
              * certains ne veulent pas que Jeedom frappe aux portes de leur
              * réseau, et c'est leur droit. */
             'probeNames' => config::byKey('discovery::probeNames', 'mqttbe', 1) == 1,
-        ), false);
+            /* Réglages des balises Bluetooth. Le démon ne charge pas le cœur :
+             * tout ce qu'il doit savoir passe par cet ordre. */
+            'bleAwayDelay' => (int) config::byKey('discovery::bleAwayDelay', 'mqttbe', 300),
+            'bleAdoptAll'  => config::byKey('discovery::bleAdoptAll', 'mqttbe', 0) == 1,
+        );
+
+        /*
+         * Une liste d'adapters vide ne veut pas dire « aucun » mais « tous ceux
+         * que le démon connaît » — c'est ce que promet le fichier de
+         * configuration. Le moteur distingue la clé absente (tous) de la liste
+         * vide (aucun) : on ne l'envoie donc pas plutôt que de l'envoyer vide,
+         * sinon effacer le champ éteindrait toute la découverte sans un mot.
+         */
+        $adapters = trim(config::byKey('discovery::adapters', 'mqttbe', ''));
+        if ($adapters !== '') {
+            $ordre['adapters'] = array_values(array_filter(array_map('trim', explode(',', $adapters))));
+        }
+        return self::send($ordre, false);
     }
 
     public static function sendBrokerConfig() {
@@ -775,7 +790,23 @@ class mqttbeDaemon {
                     ));
                     continue;
                 }
-                if (!$auto) {
+                /*
+                 * Deux raisons de mettre en attente plutôt que de créer.
+                 *
+                 * La première est un choix global : la création automatique est
+                 * décochée, l'utilisateur veut regarder avant.
+                 *
+                 * La seconde tient au modèle lui-même. Une passerelle Bluetooth
+                 * voit tout ce qui passe, y compris le téléphone d'un visiteur
+                 * dont l'adresse change toutes les quinze minutes. Quand
+                 * l'adapter dit « guess » — je vois quelque chose, je ne sais
+                 * pas ce que c'est — créer un équipement serait présumer à la
+                 * place de l'utilisateur. « probable » reste créé : c'est
+                 * « je sais ce que c'est, je ne le connais pas encore tout à
+                 * fait », le cas d'un Shelly annoncé dont l'état complet n'est
+                 * pas encore arrivé.
+                 */
+                if (!$auto || $modele->confidence() === 'guess') {
                     self::rememberPending($modele);
                     continue;
                 }
@@ -857,17 +888,74 @@ class mqttbeDaemon {
      * données à conserver. Une file qui grossirait sans limite sur un broker
      * partagé finirait par peser plus lourd que les équipements eux-mêmes.
      */
+    /**
+     * Identifiants que l'utilisateur a explicitement écartés.
+     *
+     * En configuration et non en cache : un refus est une décision, elle doit
+     * survivre à un vidage de cache et partir dans les sauvegardes. Sans cette
+     * liste, une balise écartée reviendrait dans la file à la trame suivante,
+     * c'est-à-dire quelques secondes plus tard, indéfiniment.
+     */
+    public static function ignoredUids() {
+        $brut = config::byKey('discovery::ignored', 'mqttbe', '');
+        $liste = json_decode((string) $brut, true);
+        return is_array($liste) ? $liste : array();
+    }
+
+    public static function ignoreUid($_uid) {
+        $liste = self::ignoredUids();
+        $liste[(string) $_uid] = time();
+        /* Bornée : une maison très passante pourrait sinon faire enfler la
+         * configuration sans fin. Les plus anciens refus sortent en premier. */
+        if (count($liste) > 500) {
+            asort($liste);
+            $liste = array_slice($liste, -500, null, true);
+        }
+        config::save('discovery::ignored', json_encode($liste), 'mqttbe');
+        self::forgetPending($_uid);
+    }
+
+    public static function forgetIgnored($_uid) {
+        $liste = self::ignoredUids();
+        unset($liste[(string) $_uid]);
+        config::save('discovery::ignored', json_encode($liste), 'mqttbe');
+    }
+
+    /** Retire un candidat de la file, adopté ou écarté. */
+    public static function forgetPending($_uid) {
+        try {
+            $attente = cache::byKey('mqttbe::pending')->getValue(array());
+            if (is_array($attente)) {
+                unset($attente[(string) $_uid]);
+                cache::set('mqttbe::pending', $attente);
+            }
+        } catch (Throwable $e) {
+            /* Sans conséquence : la file est un cache, elle se reconstruit. */
+        }
+    }
+
     private static function rememberPending($_modele) {
+        /* Ce que l'utilisateur a écarté ne revient pas le déranger. */
+        $ignores = self::ignoredUids();
+        if (isset($ignores[$_modele->uid()])) {
+            return;
+        }
         try {
             $attente = cache::byKey('mqttbe::pending')->getValue(array());
             if (!is_array($attente)) {
                 $attente = array();
             }
+            $connu = isset($attente[$_modele->uid()]) ? $attente[$_modele->uid()] : array();
             $attente[$_modele->uid()] = array(
-                'name'    => $_modele->name(),
-                'adapter' => $_modele->adapter(),
-                'model'   => $_modele->toArray(),
-                'seen'    => time(),
+                'name'     => $_modele->name(),
+                'adapter'  => $_modele->adapter(),
+                'model'    => $_modele->toArray(),
+                /* Depuis quand on le voit, et non seulement la dernière fois :
+                 * c'est la durée de présence qui distingue un objet de la
+                 * maison d'un passant, et c'est elle qui permet de décider. */
+                'first'    => isset($connu['first']) ? $connu['first'] : time(),
+                'seen'     => time(),
+                'channels' => $_modele->countChannels(),
             );
             if (count($attente) > 50) {
                 $attente = array_slice($attente, -50, null, true);

@@ -179,11 +179,71 @@ try {
         ajax::success(array('message' => __('Découverte relancée : les appareils se présentent, patientez quelques secondes.', __FILE__)));
     }
 
+    if (init('action') == 'adopt') {
+        /*
+         * Adopter un candidat : c'est l'utilisateur qui tranche, et le modèle
+         * est déjà là — on ne redemande rien à l'appareil, on applique ce que la
+         * découverte avait mis de côté.
+         */
+        $uid = init('uid');
+        $attente = cache::byKey('mqttbe::pending')->getValue(array());
+        if (!is_array($attente) || !isset($attente[$uid]['model'])) {
+            throw new Exception(__("Ce candidat n'est plus dans la file : relancez la découverte.", __FILE__));
+        }
+        mqttbeFactory::loadDiscovery();
+        $modele = MqttbeDeviceModel::fromArray($attente[$uid]['model']);
+        if ($modele === null) {
+            throw new Exception(__('Modèle de périphérique illisible', __FILE__));
+        }
+        /*
+         * L'adoption vaut décision : le modèle était « guess », il devient
+         * certain. Sans cela, la fabrique le remettrait aussitôt dans la file
+         * et le bouton n'aurait aucun effet visible.
+         */
+        $donnees = $modele->toArray();
+        $donnees['identity']['confidence'] = 'certain';
+        $compte = mqttbeFactory::applyData($donnees);
+        mqttbeDaemon::forgetPending($uid);
+        ajax::success($compte);
+    }
+
+    if (init('action') == 'ignore') {
+        /* Écarté ne veut pas dire oublié : sans mémoire du refus, le candidat
+         * reviendrait dans la file à la trame suivante, quelques secondes plus
+         * tard, indéfiniment. */
+        mqttbeDaemon::ignoreUid(init('uid'));
+        ajax::success(array('message' => __('Appareil écarté : il ne vous sera plus proposé.', __FILE__)));
+    }
+
+    if (init('action') == 'unignore') {
+        mqttbeDaemon::forgetIgnored(init('uid'));
+        ajax::success(array('message' => __('Appareil de nouveau proposé à la prochaine découverte.', __FILE__)));
+    }
+
     if (init('action') == 'pending') {
         /* Ce que la découverte a vu sans le créer, quand la création
          * automatique est désactivée. */
         $attente = cache::byKey('mqttbe::pending')->getValue(array());
-        ajax::success(is_array($attente) ? array_values($attente) : array());
+        $liste = array();
+        foreach (is_array($attente) ? $attente : array() as $uid => $candidat) {
+            $meta = isset($candidat['model']['meta']) ? $candidat['model']['meta'] : array();
+            /* Le modèle complet n'a rien à faire dans la page : ce qui aide à
+             * décider, c'est depuis quand on le voit et ce qu'on en sait. */
+            $liste[] = array(
+                'uid'      => $uid,
+                'name'     => isset($candidat['name']) ? $candidat['name'] : $uid,
+                'adapter'  => isset($candidat['adapter']) ? $candidat['adapter'] : '',
+                'channels' => isset($candidat['channels']) ? (int) $candidat['channels'] : 0,
+                'first'    => isset($candidat['first']) ? (int) $candidat['first'] : 0,
+                'seen'     => isset($candidat['seen']) ? (int) $candidat['seen'] : 0,
+                'meta'     => array_intersect_key($meta, array_flip(array(
+                    'manufacturer', 'model', 'model_name', 'device_name',
+                    'address_type', 'gateways', 'ip',
+                ))),
+            );
+        }
+        usort($liste, function ($_a, $_b) { return $_b['seen'] - $_a['seen']; });
+        ajax::success(array('pending' => $liste, 'ignored' => mqttbeDaemon::ignoredUids()));
     }
 
     if (init('action') == 'importModel') {

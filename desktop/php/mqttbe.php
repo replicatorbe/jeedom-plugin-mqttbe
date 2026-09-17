@@ -36,9 +36,18 @@ $brokerHost = trim(config::byKey('broker::host', 'mqttbe', ''));
 $discoveryEnabled = (config::byKey('discovery::enabled', 'mqttbe', 1) == 1);
 $discoveryAutoCreate = (config::byKey('discovery::autoCreate', 'mqttbe', 1) == 1);
 
-/* Ce que la découverte a reconnu sans le créer, quand la création automatique
- * est désactivée. C'est du cache : son absence n'est pas une anomalie, elle dit
- * seulement que rien n'attend. */
+/*
+ * Ce que la découverte a vu sans le créer.
+ *
+ * Deux raisons de se retrouver là : la création automatique est décochée, ou
+ * l'adapter n'a pas su dire ce qu'il voyait — le cas d'une passerelle Bluetooth
+ * qui aperçoit le téléphone d'un visiteur. La seconde se produit même création
+ * automatique cochée : le bandeau ne doit donc pas dépendre de ce réglage,
+ * faute de quoi des appareils attendraient une décision que rien ne demande.
+ *
+ * C'est du cache : son absence n'est pas une anomalie, elle dit seulement que
+ * rien n'attend.
+ */
 $pending = array();
 try {
     $valeur = cache::byKey('mqttbe::pending')->getValue(array());
@@ -47,6 +56,15 @@ try {
     }
 } catch (Throwable $e) {
     $pending = array();
+}
+
+/* Les refus, eux, sont une décision : ils vivent en configuration et survivent
+ * au cache. Lus ici pour n'offrir le retour en arrière que s'il y a de quoi
+ * revenir. */
+$ignoredCount = 0;
+$ignoredList = json_decode((string) config::byKey('discovery::ignored', 'mqttbe', ''), true);
+if (is_array($ignoredList)) {
+    $ignoredCount = count($ignoredList);
 }
 
 /*
@@ -113,29 +131,36 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
         } elseif (!$discoveryAutoCreate) {
             echo '<div class="alert alert-info" style="margin:5px;padding:6px 10px;">';
             echo '<i class="fas fa-user-check"></i> ';
-            echo '{{La découverte reconnaît les appareils mais ne crée aucun équipement : la création automatique est désactivée.}} ';
-            if (count($pending) > 0) {
-                $noms = array();
-                foreach ($pending as $candidat) {
-                    $nom = isset($candidat['name']) ? trim((string) $candidat['name']) : '';
-                    if ($nom !== '') {
-                        $noms[] = htmlspecialchars($nom);
-                    }
-                    if (count($noms) >= 5) {
-                        break;
-                    }
-                }
-                echo '<b>' . count($pending) . ' {{appareil(s) vu(s) depuis le dernier démarrage du démon}}</b>';
-                if (count($noms) > 0) {
-                    echo ' : ' . implode(', ', $noms);
-                    if (count($pending) > count($noms)) {
-                        echo '…';
-                    }
-                }
-                echo '. ';
-            }
+            echo '{{La découverte reconnaît les appareils mais ne crée aucun équipement : la création automatique est désactivée. Ce qu\'elle voit passe dans la file d\'adoption, et c\'est vous qui décidez appareil par appareil.}} ';
             echo '<a class="cursor eqLogicAction" data-action="gotoPluginConf"><b>{{Ouvrir la configuration du plugin}}</b></a>';
             echo '</div>';
+        }
+
+        /*
+         * La file d'adoption, en un bandeau cliquable.
+         *
+         * Elle existait côté serveur sans qu'aucune page ne la montre : des
+         * appareils attendaient une décision que rien ne demandait, et le
+         * compte affiché plus haut n'ouvrait rien. Ce n'est pas une alerte —
+         * rien n'est cassé — mais une question, et une question doit pouvoir
+         * être ouverte.
+         */
+        if ($discoveryEnabled && count($pending) > 0) {
+            echo '<div class="alert alert-info cursor mqttbeAction" data-action="openAdoption" style="margin:5px;padding:6px 10px;"';
+            echo ' title="{{Ouvrir la liste et décider appareil par appareil}}">';
+            echo '<i class="fas fa-question-circle"></i> ';
+            echo '<b>' . count($pending) . ' {{appareil(s) vu(s) et pas créé(s)}}</b> — ';
+            echo '{{la découverte ne sait pas ce qu\'ils sont et attend votre décision : une balise de la maison mérite un équipement, le téléphone d\'un visiteur non.}} ';
+            echo '<a class="cursor"><b>{{Examiner la liste}}</b></a>';
+            echo '</div>';
+        } elseif ($ignoredCount > 0) {
+            /* Rien n'attend, mais des refus ont été enregistrés : se tromper de
+             * bouton ne doit pas être définitif, et la porte reste ouverte. */
+            echo '<div style="margin:5px;">';
+            echo '<span class="help-block" style="margin:0;"><i class="fas fa-eye-slash"></i> ';
+            echo '<a class="cursor mqttbeAction" data-action="openAdoption">';
+            echo $ignoredCount . ' {{appareil(s) écarté(s) — revenir sur un refus}}</a>';
+            echo '</span></div>';
         }
         /* Rempli par le JS quand un équipement est découvert page ouverte : la
          * liste des vignettes, elle, date du chargement. */

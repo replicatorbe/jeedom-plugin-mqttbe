@@ -202,6 +202,495 @@ function mqttbeNoteDiscovered(_name) {
   zone.classList.remove('hidden')
 }
 
+/* =============================================================== ADOPTION */
+
+/*
+ * La file d'adoption : ce que la découverte a vu sans oser le créer.
+ *
+ * Deux cas l'alimentent. La création automatique décochée, d'abord : tout ce
+ * qui est reconnu attend alors un accord. Le doute de l'adapter ensuite — une
+ * passerelle Bluetooth voit passer le téléphone d'un visiteur, la montre du
+ * voisin, un traceur d'objet, et « je vois quelque chose, je ne sais pas ce que
+ * c'est » ne justifie pas un équipement. Dans les deux cas, c'est une question
+ * posée à l'utilisateur, et il faut donc un endroit pour y répondre.
+ *
+ * Tout ce qui suit pose du texte, jamais du balisage : ces noms, ces modèles et
+ * ces identifiants sont annoncés par des appareils qui écrivent ce qu'ils
+ * veulent, et la page est celle d'un administrateur.
+ */
+
+function mqttbeAdoptionAjax(_data, _success, _failure) {
+  $.ajax({
+    type: 'POST',
+    url: 'plugins/mqttbe/core/ajax/mqttbe.ajax.php',
+    data: _data,
+    dataType: 'json',
+    timeout: 20000,
+    error: function (_request, _status, _error) {
+      /* Réseau coupé, session expirée, erreur 500 : le cœur sait dire lequel,
+         et il le dit mieux que nous. */
+      if (typeof _failure === 'function') { _failure('') }
+      handleAjaxError(_request, _status, _error)
+    },
+    success: function (_data) {
+      if (_data.state != 'ok') {
+        var message = String(init(_data.result, ''))
+        if (typeof _failure === 'function') { _failure(message) }
+        jeedomUtils.showAlert({ message: message, level: 'danger' })
+        return
+      }
+      if (typeof _success === 'function') { _success(init(_data.result, {})) }
+    }
+  })
+}
+
+/*
+ * Durée lisible.
+ *
+ * « 259 200 secondes » ne décide de rien, « 3 jours » décide de tout : c'est la
+ * durée de présence qui sépare l'objet de la maison du passant. Les paliers
+ * gardent le nombre petit ; la date exacte, elle, reste en infobulle.
+ */
+function mqttbeDurationText(_seconds) {
+  var s = Math.floor(_seconds)
+  if (!isFinite(s) || s < 0) { s = 0 }
+  if (s < 90) { return s + ' s' }
+  if (s < 5400) { return Math.floor(s / 60) + ' min' }
+  if (s < 172800) { return Math.floor(s / 3600) + ' h' }
+  var d = Math.floor(s / 86400)
+  return d + (d > 1 ? ' {{jours}}' : ' {{jour}}')
+}
+
+/*
+ * L'instant de référence.
+ *
+ * Les horodatages viennent du serveur, la comparaison se fait dans le
+ * navigateur : une horloge de poste en retard de dix minutes afficherait « vu
+ * dans 9 min ». La trame la plus récente sert donc de plancher — elle a
+ * forcément déjà eu lieu.
+ */
+function mqttbeAdoptionNow(_list) {
+  var now = Math.floor(Date.now() / 1000)
+  for (var i = 0; i < _list.length; i++) {
+    var seen = parseInt(init(_list[i].seen, 0), 10)
+    if (isFinite(seen) && seen > now) { now = seen }
+  }
+  return now
+}
+
+function mqttbeStampText(_timestamp) {
+  var ts = parseInt(_timestamp, 10)
+  if (!isFinite(ts) || ts <= 0) { return '' }
+  return new Date(ts * 1000).toLocaleString()
+}
+
+/* Le compte rendu des décisions. Posé en texte : il porte le nom de
+   l'équipement, et ce nom vient de l'appareil. */
+function mqttbeAdoptionStatus(_text, _level) {
+  var zone = mqttbeEl('div_mqttbeAdoptionStatus')
+  if (zone === null) { return }
+  var text = String(init(_text, ''))
+  if (text === '') {
+    zone.textContent = ''
+    zone.className = 'hidden'
+    return
+  }
+  zone.textContent = text
+  zone.className = 'alert alert-' + init(_level, 'info')
+  zone.style.margin = '0 0 10px 0'
+  zone.style.padding = '8px 12px'
+}
+
+/* Une ligne secondaire sous le titre d'une cellule : identifiant, modèle,
+   adresse. Texte seulement, et rien du tout si la valeur est vide — une ligne
+   vide se lit comme une page mal chargée. */
+function mqttbeAdoptionLine(_parent, _text, _title) {
+  var text = String(init(_text, '')).trim()
+  if (text === '') { return null }
+  var span = document.createElement('span')
+  span.style.display = 'block'
+  span.style.fontSize = '0.85em'
+  span.style.opacity = '0.75'
+  span.textContent = text
+  if (isset(_title) && String(_title) !== '') { span.title = String(_title) }
+  _parent.appendChild(span)
+  return span
+}
+
+/* Un bouton d'action de la modale. Construit pièce par pièce : l'icône et le
+   libellé sont des constantes, l'identifiant vient du réseau et reste un
+   attribut, jamais un morceau de HTML. */
+function mqttbeAdoptionButton(_action, _uid, _icon, _label, _className, _title) {
+  var button = document.createElement('a')
+  button.className = 'btn btn-sm ' + _className + ' cursor mqttbeAdoptionAction'
+  button.setAttribute('data-action', _action)
+  button.setAttribute('data-uid', _uid)
+  if (isset(_title)) { button.title = _title }
+  var icon = document.createElement('i')
+  icon.className = _icon
+  button.appendChild(icon)
+  button.appendChild(document.createTextNode(' ' + _label))
+  return button
+}
+
+/* Une ligne de candidat : ce qui permet de décider, et rien d'autre. */
+/*
+ * « il y a 8 min », et son équivalent anglais « 8 min ago ».
+ *
+ * La durée est composée dans une phrase entière plutôt que collée derrière un
+ * préfixe traduit : l'anglais place « ago » APRÈS la durée, ce qu'un préfixe
+ * rend impossible. Le marqueur %s dit où la durée se place, et chaque langue
+ * en décide.
+ */
+function mqttbeAgo(_duree) {
+  return '{{il y a %s}}'.replace('%s', _duree)
+}
+
+function mqttbePendingRow(_candidate, _now) {
+  var meta = init(_candidate.meta, {})
+  if (meta === null || typeof meta !== 'object') { meta = {} }
+  var uid = String(init(_candidate.uid, ''))
+  var name = String(init(_candidate.name, '')).trim()
+
+  var tr = document.createElement('tr')
+  tr.setAttribute('data-uid', uid)
+
+  /* ------------------------------------------------------------ appareil */
+  var tdName = document.createElement('td')
+  var titre = document.createElement('b')
+  /* Son nom s'il en a un, sinon son identifiant : une ligne sans titre ne se
+     désigne pas, et on ne peut pas décider de ce qu'on ne peut pas nommer. */
+  titre.textContent = (name !== '' ? name : uid)
+  tdName.appendChild(titre)
+  if (name !== '') {
+    mqttbeAdoptionLine(tdName, uid, '{{Identifiant retenu par la découverte : il ne bouge pas quand l\'appareil change d\'adresse.}}')
+  }
+  tr.appendChild(tdName)
+
+  /* -------------------------------------------------- ce qu'on en sait */
+  var tdMeta = document.createElement('td')
+  var known = false
+
+  var adapter = mqttbeAdapterLabel(String(init(_candidate.adapter, '')))
+  if (adapter !== '') {
+    known = (mqttbeAdoptionLine(tdMeta, adapter, '{{Adaptateur qui l\'a repéré}}') !== null) || known
+  }
+
+  var manufacturer = String(init(meta.manufacturer, '')).trim()
+  var model = String(init(meta.model_name, '')).trim()
+  if (model === '') { model = String(init(meta.model, '')).trim() }
+  var identite = manufacturer
+  if (model !== '') { identite = (identite === '' ? model : identite + ' ' + model) }
+  if (identite !== '') {
+    known = (mqttbeAdoptionLine(tdMeta, identite, '{{Marque et modèle tels que l\'appareil les annonce}}') !== null) || known
+  }
+
+  var deviceName = String(init(meta.device_name, '')).trim()
+  if (deviceName !== '' && deviceName !== name) {
+    known = (mqttbeAdoptionLine(tdMeta, deviceName, '{{Nom que l\'appareil annonce lui-même}}') !== null) || known
+  }
+
+  /*
+   * Le type d'adresse est le renseignement le plus décisif sur une balise
+   * Bluetooth : une adresse aléatoire est renouvelée toutes les quinze minutes
+   * environ, et l'équipement créé serait muet dès le changement suivant.
+   */
+  var addressType = String(init(meta.address_type, '')).trim().toLowerCase()
+  if (addressType === 'public' || addressType === 'random') {
+    var badge = document.createElement('span')
+    badge.className = 'label label-' + (addressType === 'public' ? 'success' : 'warning')
+    badge.style.display = 'inline-block'
+    badge.style.marginTop = '2px'
+    if (addressType === 'public') {
+      badge.textContent = '{{adresse publique}}'
+      badge.title = '{{Une adresse publique ne change pas : l\'équipement créé restera valable.}}'
+    } else {
+      badge.textContent = '{{adresse aléatoire}}'
+      badge.title = '{{Cette adresse est renouvelée toutes les quinze minutes environ — c\'est ainsi qu\'un téléphone se protège du pistage. L\'équipement créé deviendrait muet au prochain changement : c\'est rarement un bon candidat.}}'
+    }
+    tdMeta.appendChild(badge)
+    known = true
+  } else if (addressType !== '') {
+    known = (mqttbeAdoptionLine(tdMeta, '{{Type d\'adresse :}} ' + addressType) !== null) || known
+  }
+
+  /* Le nombre de passerelles qui la voient : une balise vue par trois
+     passerelles est chez vous, une balise vue par une seule passe peut-être
+     dans la rue. */
+  var gateways = meta.gateways
+  var gatewayCount = null
+  if (Array.isArray(gateways)) {
+    gatewayCount = gateways.length
+  } else if (gateways !== null && gateways !== undefined && String(gateways).trim() !== '') {
+    var parsed = parseInt(gateways, 10)
+    if (isFinite(parsed)) { gatewayCount = parsed }
+  }
+  if (gatewayCount !== null) {
+    known = (mqttbeAdoptionLine(tdMeta, gatewayCount + ' {{passerelle(s) la voient}}',
+      '{{Une balise vue par plusieurs passerelles est chez vous ; une balise vue par une seule, au bord du réseau, passe peut-être dans la rue.}}') !== null) || known
+  }
+
+  var ip = String(init(meta.ip, '')).trim()
+  if (ip !== '') {
+    known = (mqttbeAdoptionLine(tdMeta, ip, '{{Adresse annoncée par l\'appareil}}') !== null) || known
+  }
+
+  if (!known) {
+    mqttbeAdoptionLine(tdMeta, '{{Rien d\'autre que son identifiant : il s\'est annoncé sans se présenter.}}')
+  }
+  tr.appendChild(tdMeta)
+
+  /* --------------------------------------------------- présent depuis */
+  var first = parseInt(init(_candidate.first, 0), 10)
+  var tdFirst = document.createElement('td')
+  if (isFinite(first) && first > 0) {
+    tdFirst.textContent = '{{vu depuis}} ' + mqttbeDurationText(_now - first)
+    tdFirst.title = mqttbeStampText(first)
+  } else {
+    tdFirst.textContent = '—'
+  }
+  tr.appendChild(tdFirst)
+
+  /* --------------------------------------------------- dernière trame */
+  var seen = parseInt(init(_candidate.seen, 0), 10)
+  var tdSeen = document.createElement('td')
+  if (isFinite(seen) && seen > 0) {
+    tdSeen.textContent = mqttbeAgo(mqttbeDurationText(_now - seen))
+    tdSeen.title = mqttbeStampText(seen)
+  } else {
+    tdSeen.textContent = '—'
+  }
+  tr.appendChild(tdSeen)
+
+  /* ------------------------------------------------------- commandes */
+  var channels = parseInt(init(_candidate.channels, 0), 10)
+  if (!isFinite(channels) || channels < 0) { channels = 0 }
+  var tdChannels = document.createElement('td')
+  tdChannels.textContent = String(channels)
+  tdChannels.title = '{{Nombre de commandes que la création produirait.}}'
+  tr.appendChild(tdChannels)
+
+  /* -------------------------------------------------------- décision */
+  var tdActions = document.createElement('td')
+  tdActions.appendChild(mqttbeAdoptionButton('adopt', uid, 'fas fa-plus-circle', '{{Créer}}', 'btn-success',
+    '{{Crée l\'équipement et ses commandes, sans redemander quoi que ce soit à l\'appareil.}}'))
+  tdActions.appendChild(document.createTextNode(' '))
+  tdActions.appendChild(mqttbeAdoptionButton('ignore', uid, 'fas fa-eye-slash', '{{Ignorer}}', 'btn-default',
+    '{{Il ne vous sera plus proposé. La liste des appareils écartés, en bas, permet de revenir dessus.}}'))
+  tr.appendChild(tdActions)
+
+  return tr
+}
+
+/* Les deux boutons d'une ligne pendant que le serveur travaille : un double
+   clic ne doit pas partir deux fois, et la ligne doit dire qu'il se passe
+   quelque chose. */
+function mqttbeAdoptionBusy(_row, _busy) {
+  if (_row === null) { return }
+  var buttons = _row.querySelectorAll('.mqttbeAdoptionAction')
+  for (var i = 0; i < buttons.length; i++) {
+    if (_busy) {
+      buttons[i].classList.add('disabled')
+    } else {
+      buttons[i].classList.remove('disabled')
+    }
+  }
+  _row.style.opacity = _busy ? '0.5' : ''
+}
+
+/* Le tableau et le message « rien n'attend » ne peuvent pas être affichés en
+   même temps : l'un dit le contraire de l'autre. */
+function mqttbeAdoptionEmptiness() {
+  var body = mqttbeEl('tbody_mqttbePending')
+  var table = mqttbeEl('table_mqttbePending')
+  var empty = mqttbeEl('div_mqttbeAdoptionEmpty')
+  if (body === null || table === null || empty === null) { return }
+  if (body.querySelectorAll('tr').length > 0) {
+    table.classList.remove('hidden')
+    empty.classList.add('hidden')
+    return
+  }
+  table.classList.add('hidden')
+  empty.classList.remove('hidden')
+}
+
+function mqttbeRenderPending(_list) {
+  var body = mqttbeEl('tbody_mqttbePending')
+  /* La modale a pu être refermée pendant que la réponse voyageait : il n'y a
+     alors plus rien à remplir, et ce n'est pas une anomalie. */
+  if (body === null) { return }
+  while (body.firstChild !== null) { body.removeChild(body.firstChild) }
+
+  var list = Array.isArray(_list) ? _list : []
+  var now = mqttbeAdoptionNow(list)
+  for (var i = 0; i < list.length; i++) {
+    body.appendChild(mqttbePendingRow(list[i], now))
+  }
+  mqttbeAdoptionEmptiness()
+}
+
+function mqttbeRenderIgnored(_map) {
+  var body = mqttbeEl('tbody_mqttbeIgnored')
+  var block = mqttbeEl('div_mqttbeIgnoredBlock')
+  if (body === null || block === null) { return }
+  while (body.firstChild !== null) { body.removeChild(body.firstChild) }
+
+  var map = (_map !== null && typeof _map === 'object') ? _map : {}
+  var uids = Object.keys(map)
+  if (uids.length === 0) {
+    /* Rien d'écarté : le repli n'a rien à replier. */
+    block.classList.add('hidden')
+    return
+  }
+  block.classList.remove('hidden')
+
+  var label = mqttbeEl('span_mqttbeIgnoredLabel')
+  if (label !== null) {
+    label.textContent = '{{Appareils écartés}} (' + uids.length + ')'
+  }
+
+  /* Le refus le plus récent en premier : c'est celui qu'on vient de regretter. */
+  uids.sort(function (_a, _b) {
+    return (parseInt(map[_b], 10) || 0) - (parseInt(map[_a], 10) || 0)
+  })
+
+  var now = Math.floor(Date.now() / 1000)
+  for (var i = 0; i < uids.length; i++) {
+    var uid = String(uids[i])
+    var when = parseInt(map[uid], 10)
+
+    var tr = document.createElement('tr')
+    tr.setAttribute('data-uid', uid)
+
+    var tdUid = document.createElement('td')
+    /* La file ne garde rien d'un appareil écarté : son identifiant est tout ce
+       dont on dispose, et c'est par lui qu'on le reconnaît. */
+    tdUid.textContent = uid
+    tr.appendChild(tdUid)
+
+    var tdWhen = document.createElement('td')
+    if (isFinite(when) && when > 0) {
+      tdWhen.textContent = mqttbeAgo(mqttbeDurationText(now < when ? 0 : now - when))
+      tdWhen.title = mqttbeStampText(when)
+    } else {
+      tdWhen.textContent = '—'
+    }
+    tr.appendChild(tdWhen)
+
+    var tdAction = document.createElement('td')
+    tdAction.appendChild(mqttbeAdoptionButton('unignore', uid, 'fas fa-undo', '{{Reproposer}}', 'btn-default',
+      '{{Il repassera dans la file à sa prochaine annonce.}}'))
+    tr.appendChild(tdAction)
+
+    body.appendChild(tr)
+  }
+}
+
+/* Relit la file entière. Le compte rendu de la dernière décision est conservé
+   quand on le demande : il dit ce qui vient d'être créé, et une liste qui se
+   rafraîchit ne doit pas l'effacer sous les yeux. */
+function mqttbeAdoptionLoad(_keepStatus) {
+  if (mqttbeEl('tbody_mqttbePending') === null) { return }
+  /* Le tableau et le message « rien n'attend » sont tous deux cachés tant que
+     la réponse n'est pas là : sans un mot, l'ouverture semblerait vide. */
+  if (_keepStatus !== true) { mqttbeAdoptionStatus('{{Lecture de la file…}}', 'info') }
+  mqttbeAdoptionAjax({ action: 'pending' }, function (_result) {
+    if (_keepStatus !== true) { mqttbeAdoptionStatus('') }
+    mqttbeRenderPending(init(_result.pending, []))
+    mqttbeRenderIgnored(init(_result.ignored, {}))
+  }, function (_message) {
+    mqttbeAdoptionStatus(_message === '' ? '{{La file n\'a pas pu être lue.}}' : _message, 'danger')
+  })
+}
+
+/* Ce que la fabrique a réellement écrit, et non « c'est fait » : un équipement
+   créé sans commande est un échec silencieux, et il vaut mieux l'apprendre
+   ici. */
+function mqttbeAdoptionReport(_result) {
+  var result = init(_result, {})
+  var cmd = init(result.cmd, {})
+  var created = parseInt(init(cmd.created, 0), 10) || 0
+  var updated = parseInt(init(cmd.updated, 0), 10) || 0
+  var failed = parseInt(init(cmd.failed, 0), 10) || 0
+  var name = String(init(result.name, '')).trim()
+
+  var texte = '{{Équipement créé :}} ' + (name === '' ? '{{sans nom}}' : name)
+  texte += ' — ' + created + ' {{commande(s) créée(s)}}'
+  if (updated > 0) { texte += ', ' + updated + ' {{mise(s) à jour}}' }
+  if (failed > 0) { texte += ', ' + failed + ' {{refusée(s) par la base}}' }
+  texte += '. {{Rechargez la page du plugin pour le voir apparaître parmi les équipements.}}'
+  mqttbeAdoptionStatus(texte, failed > 0 ? 'warning' : 'success')
+}
+
+function mqttbeAdopt(_button) {
+  var uid = _button.getAttribute('data-uid')
+  var row = _button.closest('tr')
+  mqttbeAdoptionBusy(row, true)
+  mqttbeAdoptionStatus('{{Création en cours…}}', 'info')
+  mqttbeAdoptionAjax({ action: 'adopt', uid: uid }, function (_result) {
+    /* Le candidat a quitté la file côté serveur : la ligne s'en va aussi,
+       plutôt que de recharger une page dont le reste n'a pas bougé. */
+    if (row !== null && row.parentNode !== null) { row.parentNode.removeChild(row) }
+    mqttbeAdoptionEmptiness()
+    mqttbeAdoptionReport(_result)
+  }, function (_message) {
+    mqttbeAdoptionBusy(row, false)
+    mqttbeAdoptionStatus(_message === '' ? '{{La création a échoué.}}' : _message, 'danger')
+    /* Un candidat disparu de la file — démon redémarré, cache vidé — ne
+       reviendra pas d'un second clic : la liste est relue pour dire la vérité
+       plutôt que de laisser un bouton sans effet. */
+    if (_message !== '') { mqttbeAdoptionLoad(true) }
+  })
+}
+
+function mqttbeIgnore(_button) {
+  var uid = _button.getAttribute('data-uid')
+  var row = _button.closest('tr')
+  mqttbeAdoptionBusy(row, true)
+  mqttbeAdoptionAjax({ action: 'ignore', uid: uid }, function (_result) {
+    mqttbeAdoptionStatus(String(init(_result.message, '{{Appareil écarté.}}')), 'info')
+    /* La file et la liste des refus changent ensemble : on relit les deux, et
+       les appareils annoncés entre-temps apparaissent au passage. */
+    mqttbeAdoptionLoad(true)
+  }, function (_message) {
+    mqttbeAdoptionBusy(row, false)
+    mqttbeAdoptionStatus(_message === '' ? '{{L\'appareil n\'a pas pu être écarté.}}' : _message, 'danger')
+  })
+}
+
+function mqttbeUnignore(_button) {
+  var uid = _button.getAttribute('data-uid')
+  var row = _button.closest('tr')
+  mqttbeAdoptionBusy(row, true)
+  mqttbeAdoptionAjax({ action: 'unignore', uid: uid }, function (_result) {
+    mqttbeAdoptionStatus(String(init(_result.message, '{{Appareil de nouveau proposé à la prochaine découverte.}}')), 'info')
+    mqttbeAdoptionLoad(true)
+  }, function (_message) {
+    mqttbeAdoptionBusy(row, false)
+    mqttbeAdoptionStatus(_message === '' ? '{{Le refus n\'a pas pu être annulé.}}' : _message, 'danger')
+  })
+}
+
+/*
+ * Ouvre la file.
+ *
+ * jeeDialog charge la modale en ajax puis appelle `callback` : c'est le seul
+ * moment où les éléments de la modale existent, et donc le seul moment où l'on
+ * peut la remplir.
+ */
+function mqttbeOpenAdoption() {
+  if (typeof jeeDialog === 'undefined') {
+    jeedomUtils.showAlert({ message: '{{Cette version de Jeedom ne sait pas ouvrir la fenêtre d\'adoption.}}', level: 'danger' })
+    return
+  }
+  jeeDialog.dialog({
+    id: 'jee_modal',
+    title: '{{Appareils vus et pas créés}}',
+    contentUrl: 'index.php?v=d&plugin=mqttbe&modal=adoption',
+    callback: function () { mqttbeAdoptionLoad() }
+  })
+}
+
 /* ============================================================== COMMANDES */
 
 /*
@@ -609,6 +1098,12 @@ mqttbeContainer.addEventListener('click', function (_event) {
   _event.preventDefault()
 
   var name = action.getAttribute('data-action')
+  /* Le bandeau « N appareils vus et pas créés » de la page principale : sans
+     lui, la file d'adoption n'avait aucune porte d'entrée. */
+  if (name === 'openAdoption') {
+    mqttbeOpenAdoption()
+    return
+  }
   if (name === 'addInfoCmd') {
     mqttbeAddCmd('info')
     return
@@ -656,5 +1151,49 @@ mqttbeContainer.addEventListener('input', function (_event) {
   }
   if (target.closest('.mqttbeAdvanced') !== null) {
     mqttbeMarkAdvanced(target.closest('tr'))
+  }
+})
+
+/*
+ * Les actions de la modale d'adoption.
+ *
+ * La modale est posée à la racine du document, hors du conteneur de page :
+ * l'écouteur du conteneur ne verrait jamais ses clics. Il est donc délégué sur
+ * body, et nommé — off() puis on() — parce que les pages de plugin sont
+ * chargées en ajax : revenir sur la page réexécute ce script, et un écouteur
+ * anonyme s'empilerait, envoyant deux créations pour un seul clic.
+ */
+$('body').off('click.mqttbeAdoption').on('click.mqttbeAdoption', '.mqttbeAdoptionAction', function (_event) {
+  _event.preventDefault()
+  /* Une action en cours : le second clic ne doit pas partir. */
+  if (this.classList.contains('disabled')) { return }
+
+  var name = this.getAttribute('data-action')
+  if (name === 'refresh') {
+    mqttbeAdoptionLoad()
+    return
+  }
+  if (name === 'toggleIgnored') {
+    var liste = mqttbeEl('div_mqttbeIgnoredList')
+    var caret = mqttbeEl('i_mqttbeIgnoredCaret')
+    if (liste === null) { return }
+    liste.classList.toggle('hidden')
+    if (caret !== null) {
+      var ouvert = !liste.classList.contains('hidden')
+      caret.className = ouvert ? 'fas fa-caret-down' : 'fas fa-caret-right'
+    }
+    return
+  }
+  if (name === 'adopt') {
+    mqttbeAdopt(this)
+    return
+  }
+  if (name === 'ignore') {
+    mqttbeIgnore(this)
+    return
+  }
+  if (name === 'unignore') {
+    mqttbeUnignore(this)
+    return
   }
 })

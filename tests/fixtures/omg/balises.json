@@ -1,0 +1,48 @@
+{
+    "_": [
+        "Les trames BLE réellement relevées sur le parc — toutes BRUTES, aucune",
+        "décodée : les passerelles y tournent en v1.7.0 et aucun capteur Theengs n'y",
+        "est présent. Les adresses sont fabriquées (A8:B0:C1 pour les publiques,",
+        "D2:D2:D2 pour l'aléatoire) et le nom annoncé est remplacé.",
+        "",
+        "Trois choses tiennent dans ce fichier, et chacune casse un adapter naïf :",
+        "",
+        "  1. D2:D2:D2:10:20:30 est vue par TROIS passerelles, à -98, -93 et -71 dBm.",
+        "     Un seul équipement doit en sortir, avec trois RSSI et la plus proche.",
+        "  2. Le champ `name` n'est présent que dans une trame sur deux, et pas sur",
+        "     les mêmes passerelles. Un nom qui s'efface quand il manque fait osciller",
+        "     le modèle entre deux formes — donc le réémettre à chaque trame.",
+        "  3. Le RSSI change à chaque trame. Il ne doit entrer dans rien de ce qui",
+        "     décrit l'appareil, sans quoi 280 messages donnent 280 réécritures.",
+        "",
+        "Et une quatrième, plus sournoise : OpenMQTTGateway/BTtoMQTT/C5:F6:... porte",
+        "la chaîne « home », qui n'est pas du JSON. C'est du trafic voisin — un autre",
+        "système publie ses présences au même endroit — et le broker le rejoue,",
+        "retenu, à chaque démarrage du démon."
+    ],
+    "trames": {
+        "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/D2D2D2102030": [
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"name\":\"BALISE-ESSAI 01\",\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-71,\"txpower\":0}",
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"name\":\"BALISE-ESSAI 01\",\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-69,\"txpower\":0}",
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-74,\"txpower\":0}"
+        ],
+        "bt/OMG_ESP32_BLE_ETAGE/BTtoMQTT/D2D2D2102030": [
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"name\":\"BALISE-ESSAI 01\",\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-93,\"txpower\":0}",
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-92,\"txpower\":0}"
+        ],
+        "bt/OMG_ESP32_BLE_ENTREE/BTtoMQTT/D2D2D2102030": [
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-99,\"txpower\":0}",
+            "{\"id\":\"D2:D2:D2:10:20:30\",\"mac_type\":1,\"adv_type\":0,\"manufacturerdata\":\"a705060012202a00ca060010000000935237da\",\"rssi\":-98,\"txpower\":0}"
+        ],
+        "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1002002": [
+            "{\"id\":\"A8:B0:C1:00:20:02\",\"mac_type\":0,\"adv_type\":3,\"manufacturerdata\":\"8f030a10420c018f83aa12c970ec\",\"rssi\":-87}",
+            "{\"id\":\"A8:B0:C1:00:20:02\",\"mac_type\":0,\"adv_type\":3,\"manufacturerdata\":\"8f030a10420c018f83aa12c970ec\",\"rssi\":-91}"
+        ],
+        "bt/OMG_ESP32_BLE_ETAGE/BTtoMQTT/A8B0C1002003": [
+            "{\"id\":\"A8:B0:C1:00:20:03\",\"mac_type\":0,\"adv_type\":0,\"manufacturerdata\":\"260405045fd6050f\",\"rssi\":-98}"
+        ],
+        "OpenMQTTGateway/BTtoMQTT/C5:F6:50:A5:28:0F": [
+            "home"
+        ]
+    }
+}

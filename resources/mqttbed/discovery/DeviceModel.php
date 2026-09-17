@@ -106,6 +106,16 @@ class MqttbeDeviceModel {
         'ip'              => '',
         'config_url'      => '',
         'battery_powered' => false,
+        /*
+         * Ce qui permet de TRANCHER dans la file d'adoption, pour un appareil
+         * qu'on ne sait pas identifier. Une adresse Bluetooth aléatoire est
+         * probablement un téléphone qui en changera dans le quart d'heure ; une
+         * adresse publique est stable. Et le nombre de passerelles qui voient la
+         * balise dit si elle est chez soi ou chez le voisin. Sans ces deux
+         * faits, l'utilisateur n'a qu'une adresse hexadécimale et doit deviner.
+         */
+        'address_type'    => '',
+        'gateways'        => null,
         'probe'           => array(),
     );
 
@@ -228,6 +238,8 @@ class MqttbeDeviceModel {
     public function ip()             { return $this->meta['ip']; }
     public function configUrl()      { return $this->meta['config_url']; }
     public function isBatteryPowered() { return $this->meta['battery_powered']; }
+    public function addressType()   { return $this->meta['address_type']; }
+    public function gateways()      { return $this->meta['gateways']; }
 
     public function availability()    { return $this->availability; }
     public function hasAvailability() { return isset($this->availability['topic']) && $this->availability['topic'] !== ''; }

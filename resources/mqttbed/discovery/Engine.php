@@ -108,6 +108,8 @@ class MqttbeDiscoveryEngine {
     /* id => array('adapter' => MqttbeAdapter, 'priority' => int,
      *             'context' => MqttbeDiscoveryContext) */
     private $adapters = array();
+    /* Dernier ordre `discovery` reçu, servi aux adapters par setting(). */
+    private $settings = array();
 
     /* Identifiants triés une fois pour toutes : priorité décroissante, puis
      * ordre alphabétique. C'est ce qui donne à la découverte le même résultat
@@ -424,6 +426,11 @@ class MqttbeDiscoveryEngine {
                     ? self::toBool($_order['probeNames']) : true;
         $this->probes->enable($probeNames);
 
+        /* L'ordre entier est conservé : les adapters y puisent leurs propres
+         * réglages par $ctx->setting(), sans que le moteur ait à connaître ce
+         * que chacun attend — il n'a pas à savoir ce qu'est une balise. */
+        $this->settings = $_order;
+
         $demandes = null;
         $inconnus = array();
         if (isset($_order['adapters']) && is_array($_order['adapters'])) {
@@ -530,6 +537,11 @@ class MqttbeDiscoveryEngine {
     private function armRescan($_id) {
         $this->rescan[$_id] = true;
         $this->rememberFor($_id, $_id . ':rescan', true);
+    }
+
+    /** Un réglage de l'ordre `discovery`, ou le défaut fourni. */
+    public function setting($_nom, $_defaut = null) {
+        return array_key_exists($_nom, $this->settings) ? $this->settings[$_nom] : $_defaut;
     }
 
     private function releaseAdapter($_id) {
