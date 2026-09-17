@@ -3,13 +3,30 @@
 Ordre de développement retenu après l'analyse, et **priorité explicite à
 Shelly** (Gen1, Gen2, Gen3, Gen4). Tasmota, Zigbee2MQTT et Home Assistant
 Discovery viennent ensuite, sans modification du noyau : c'est la condition que
-l'architecture doit vérifier, et le jalon 5 sert précisément à la prouver.
+l'architecture doit vérifier, et le jalon 6 sert précisément à la prouver. Le
+jalon 4 bis, écrit après coup et absent du plan d'origine, l'a déjà montré une
+première fois.
 
 Chaque jalon a un critère d'acceptation vérifiable. Un jalon n'est pas terminé
 tant que son critère ne passe pas sur du vrai matériel et un vrai broker.
 
-**État au 17 septembre 2026 : jalons 0, 1 et 2 terminés et éprouvés** sur un
+**État au 17 septembre 2026 : jalons 0, 1, 2 et 4 terminés et éprouvés** sur un
 Mosquitto 1.5.7 et un parc Shelly réel.
+
+Deux choses ont bougé depuis, et l'ordre ci-dessous n'en rendait plus compte :
+
+- **un adapter OpenMQTTGateway existe, qui n'était prévu nulle part.** Ces
+  passerelles Bluetooth n'apparaissaient qu'au détour du critère d'acceptation
+  du jalon 8, comme un sous-produit du Home Assistant Discovery. Elles publient
+  en réalité sur leurs propres topics, lisibles sans qu'aucun Home Assistant ne
+  tourne, et les traiter par le HA Discovery aurait attaché la découverte d'un
+  parc Bluetooth à un logiciel tiers que l'utilisateur a justement le droit de
+  supprimer. D'où le jalon 4 bis ci-dessous, écrit après coup ;
+- **la file d'adoption du jalon 5 existe et tourne.** Elle n'a pas attendu le
+  reste du jalon parce que les passerelles Bluetooth la rendaient nécessaire :
+  une passerelle voit tout ce qui passe, et sans file d'adoption il n'y avait
+  que deux issues, tout créer ou ne rien créer. L'explorateur de topics, lui,
+  reste à écrire.
 
 **Le jalon 3 (Shelly Gen2+) reste à faire, et il est repoussé volontairement.**
 Aucun appareil Gen2+ n'était joignable au moment de l'écrire : sur les deux
@@ -166,21 +183,102 @@ n'apparaît deux fois.
 
 ---
 
-## Jalon 5 — Explorateur, adoption, reprise en main
+## Jalon 4 bis — Passerelles Bluetooth (OpenMQTTGateway) *(fait, hors plan)*
+
+Ce jalon n'existait pas : il est écrit après coup, à l'endroit où il a
+réellement été fait.
+
+- Adapter `omg`, reconnaissant les passerelles à la **forme** de leurs topics —
+  `<préfixe>/SYStoMQTT` et `<préfixe>/BTtoMQTT/<adresse>`, préfixe de un à trois
+  niveaux — et non à un préfixe fixe : celui-ci se change dans l'interface de la
+  passerelle, espaces compris.
+- **Aucune dépendance à un autre système domotique.** La passerelle publie aussi
+  des messages de découverte Home Assistant ; l'adapter ne les lit pas, ne s'y
+  abonne pas et ne les nomme pas. Décocher « Auto discovery » dans
+  OpenMQTTGateway, ou supprimer Home Assistant, ne fait rien perdre à Jeedom.
+- La passerelle elle-même devient un équipement : température interne, mémoire
+  libre, signal Wi-Fi, durée de fonctionnement, adresse, version, version
+  disponible, état de la détection Bluetooth et ses deux durées de scan, plus
+  quatre actions — redémarrer, reprendre la détection, l'arrêter, forcer un
+  scan. Aucune écriture ne porte `save: true` : un clic malheureux sur « arrêter
+  la détection » ne doit pas survivre au redémarrage de la passerelle.
+- **L'adapter ne décode aucune trame.** Ni catalogue de balises, ni identifiant
+  de constructeur, ni lecture de `manufacturerdata` : c'est la passerelle qui
+  décode, et l'adapter traduit les noms de champs qu'elle produit en capacités
+  (`tempc`, `hum`, `batt`, `volt`, `lux`, `pres`, `co2`, `moi`, `motion`,
+  `open`…). Un champ inconnu n'est pas jeté : il devient une commande générique.
+  Conséquence directe, et c'est tout l'intérêt : mettre à jour la passerelle
+  fait apparaître de nouveaux capteurs sans toucher au plugin.
+- Identité d'une balise par sa seule MAC (`ble:<mac>`) : **une balise vue par
+  plusieurs passerelles reste un seul équipement**, avec un signal par
+  passerelle et une passerelle la plus proche, élue au meilleur signal avec une
+  marge de 6 dB — sans quoi une balise à mi-chemin entre deux passerelles
+  changerait de pièce plusieurs fois par seconde.
+- Présence déduite du silence (`discovery::bleAwayDelay`, 300 s par défaut), et
+  état republié au démarrage du démon depuis sa propre branche retenue : sans
+  cela, Jeedom affirmerait éternellement qu'un traceur parti depuis trois jours
+  est au salon.
+- Tri entre ce qui devient un équipement et ce qui part en file d'adoption : une
+  balise que la passerelle sait décoder **et** dont on peut montrer qu'elle est
+  chez soi — signal supérieur à -85 dBm, ou vue au moins trois fois sur plus de
+  cinq minutes — est créée ; tout le reste attend une décision. Une adresse
+  aléatoire n'entre même pas dans la file avant vingt minutes d'existence : une
+  adresse de téléphone tourne toutes les quinze minutes et remplirait la file de
+  candidats déjà morts.
+- Captures anonymisées d'un parc de cinq passerelles dans `tests/fixtures/omg`,
+  rejouées par `tests/check-omg.php`.
+
+**Acceptation** : sur le parc de captures, les cinq passerelles et leurs balises
+décodées apparaissent seules ; le RSSI, qui change à chaque trame, ne provoque
+aucune réécriture en base ; la passerelle au préfixe dupliqué ne crée pas
+d'équipement fantôme ; une balise vue par trois passerelles est un équipement et
+non trois ; une balise silencieuse est déclarée absente au bout du délai réglé.
+**Aucune ligne du noyau, du modèle ou de la fabrique n'a été modifiée** pour
+ajouter cet adapter — c'est, par anticipation, le test que le jalon 6 devait
+faire passer.
+
+---
+
+## Jalon 5 — Explorateur, adoption, reprise en main *(à moitié fait)*
+
+**Fait**, parce que les passerelles Bluetooth du jalon 4 bis ne pouvaient pas
+s'en passer :
+
+- File d'adoption pour les candidats `guess` — un candidat `probable` reste
+  créé d'office : c'est « je sais ce que c'est, je ne le connais pas encore tout
+  à fait », le cas d'un Shelly annoncé dont l'état complet n'est pas arrivé.
+  La file est bornée à cinquante entrées et périme au bout d'une semaine ;
+  quand elle déborde, elle est coupée au plus intéressant et non au plus
+  récent — durée de présence, augmentée d'une heure fictive pour une adresse
+  qui n'est pas aléatoire.
+- Fenêtre d'adoption (`desktop/modal/adoption.php`) : ce qu'on sait de chaque
+  candidat, depuis quand on le voit, sa dernière trame, le nombre de commandes
+  que sa création produirait, et deux boutons — créer, écarter.
+- Les refus vivent en configuration et non en cache : une décision doit
+  survivre à un vidage de cache et partir dans les sauvegardes. Un refus vaut
+  aussi contre la création automatique, sans quoi l'appareil écarté serait créé
+  d'office dès que sa confiance monte. Revenir sur un refus est toujours
+  possible.
+- Plafond global de création (`discovery::maxDevices`, 250 par défaut) : au-delà,
+  la découverte cesse d'écrire et met en attente. La découverte se fonde sur ce
+  qui circule sur le broker, et rien n'oblige ce qui circule à être honnête.
+- Marquage des champs modifiés par l'utilisateur : jamais réécrits par une
+  re-découverte.
+
+**Reste à faire** :
 
 - Mode scan borné en durée et en mémoire, arbre de topics en direct
   (valeur, `retain`, fréquence).
 - Création d'une commande depuis une feuille de JSON : chemin déduit, type,
   unité et capacité proposés.
-- File d'adoption pour les candidats `probable` et `guess`, avec
-  prévisualisation du modèle avant création.
-- Marquage des champs modifiés par l'utilisateur : jamais réécrits par une
-  re-découverte.
+- Prévisualisation du modèle avant création, dans la fenêtre d'adoption : on y
+  lit aujourd'hui le nombre de commandes, pas leur liste.
 - Export d'un équipement en modèle réutilisable.
 
 **Acceptation** : un appareil MQTT quelconque, non pris en charge, devient un
 équipement complet en moins de dix clics ; une re-découverte ne perd aucune
-retouche manuelle.
+retouche manuelle. La seconde moitié du critère passe ; la première attend
+l'explorateur.
 
 ---
 
@@ -192,7 +290,9 @@ Identité par `mac`.
 
 **Acceptation** : un Tasmota est découvert complètement sans intervention ;
 **aucune ligne du noyau, du modèle ou de la fabrique n'a été modifiée** pour
-l'ajouter. C'est le test de l'extensibilité promise par l'architecture.
+l'ajouter. C'est le test de l'extensibilité promise par l'architecture — et le
+jalon 4 bis l'a déjà fait passer une première fois, sur un protocole que rien
+n'avait prévu.
 
 ---
 
@@ -218,8 +318,17 @@ courants et marquage explicite des `value_template` non interprétables.
 Arbitrage de priorité avec les adapters natifs — cas de test principal :
 Zigbee2MQTT publiant simultanément `bridge/devices` et du HA Discovery.
 
-**Acceptation** : ESPHome, Z-Wave JS UI, OpenMQTTGateway et Theengs découverts ;
-aucun doublon avec l'adapter Zigbee2MQTT.
+**OpenMQTTGateway sort de ce jalon** : il y figurait comme un sous-produit, et
+il est traité nativement depuis le jalon 4 bis. C'était une erreur de le ranger
+ici. Faire dépendre la découverte d'un parc Bluetooth du protocole d'annonce de
+Home Assistant, c'est la faire dépendre d'une case à cocher dans la passerelle
+et d'un logiciel tiers que l'utilisateur a le droit de désinstaller. Le jalon
+gagne en revanche un cas d'arbitrage de plus : une passerelle qui publie à la
+fois ses propres topics et du HA Discovery ne doit produire qu'un équipement,
+et c'est l'adapter natif qui l'emporte.
+
+**Acceptation** : ESPHome, Z-Wave JS UI et Theengs découverts ; aucun doublon
+avec l'adapter Zigbee2MQTT ni avec l'adapter OpenMQTTGateway.
 
 ---
 
@@ -233,7 +342,9 @@ obligatoire. Aucun équipement créé automatiquement à ce niveau de confiance.
 ## Jalon 10 — Version 1.0
 
 - Documentation utilisateur `docs/fr_FR/index.md` et `docs/en_US/index.md`,
-  changelog.
+  changelog. Elle suit les livraisons plutôt que d'attendre la 1.0 : elle sert
+  le bouton « Documentation » du plugin, et une fonctionnalité livrée sans une
+  ligne écrite n'a pour toute source que les trois paragraphes de sa fenêtre.
 - Traductions `core/i18n/en_US.json`.
 - Sauvegarde et restauration, page de santé, diagnostic
   (broker joignable, démon vivant, dernier message reçu par adapter).

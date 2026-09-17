@@ -1094,12 +1094,34 @@ class config {
         self::$_valeurs = array();
     }
 
+    /**
+     * Comme le cœur — y compris là où c'est déroutant.
+     *
+     * Le vrai byKey() fait passer la valeur lue par is_json() (core/php/
+     * utils.inc.php) : une chaîne qui se décode en TABLEAU est rendue décodée,
+     * et non telle qu'elle a été écrite. Une chaîne quelconque, un nombre, un
+     * booléen JSON ressortent tels quels — is_json() n'accepte que le tableau.
+     *
+     * Ce détail n'en est pas un. Un simulacre qui rendait la chaîne laissait
+     * passer un json_decode() de trop dans le plugin : le double décodage
+     * donnait null, la liste des refus d'adoption était éternellement vide, et
+     * le bouton « Ignorer » n'a jamais rien fait. Le contrôle écrit pour
+     * l'attraper le laissait passer aussi, puisqu'il éprouvait un cœur plus
+     * accommodant que le vrai. C'est la raison d'être de cette fidélité-là.
+     */
     public static function byKey($_key, $_plugin = 'core', $_default = '', $_forceFresh = false) {
         $cle = $_plugin . '::' . $_key;
         if (!isset(self::$_valeurs[$cle]) || self::$_valeurs[$cle] === '') {
             return $_default;
         }
-        return self::$_valeurs[$cle];
+        $valeur = self::$_valeurs[$cle];
+        if (is_string($valeur)) {
+            $decodee = json_decode($valeur, true, 512, JSON_BIGINT_AS_STRING);
+            if (is_array($decodee)) {
+                return $decodee;
+            }
+        }
+        return $valeur;
     }
 
     public static function save($_key, $_value, $_plugin = 'core') {
@@ -1259,7 +1281,20 @@ class message {
     }
 
     public static function add($_type, $_message, $_action = '', $_logicalId = '') {
-        self::$_messages[] = array('type' => $_type, 'message' => $_message);
+        self::$_messages[] = array('type' => $_type, 'message' => $_message,
+                                   'logicalId' => (string) $_logicalId);
+    }
+
+    /* Le cœur rend un tableau, éventuellement vide. mqttbeDaemon s'en sert pour
+     * ne pas répéter le même avertissement à chaque lot reçu. */
+    public static function byPluginLogicalId($_plugin, $_logicalId) {
+        $trouves = array();
+        foreach (self::$_messages as $message) {
+            if ($message['logicalId'] === (string) $_logicalId) {
+                $trouves[] = $message;
+            }
+        }
+        return $trouves;
     }
 
     public static function messages() {
@@ -1282,6 +1317,24 @@ class message {
  * Il est défini AVANT le chargement des classes du plugin : c'est ce qui le
  * substitue à la vraie classe, dont le require_once est neutralisé.
  * ------------------------------------------------------------------------ */
+
+/*
+ * Le démon, en simulacre — ou en vrai.
+ *
+ * La fabrique et le routage n'ont besoin que de savoir si un ordre est parti :
+ * ce simulacre le note et n'ouvre aucune socket. Mais la file d'adoption, elle,
+ * VIT dans mqttbeDaemon, et la contrôler demande le vrai code. Un contrôle qui
+ * veut l'éprouver définit MQTTBE_VRAI_DEMON avant d'inclure ce fichier : la
+ * classe réelle est alors chargée, telle quelle, et c'est bien elle qui est
+ * mise à l'épreuve.
+ *
+ * Les deux ne peuvent pas cohabiter — un seul nom de classe — et c'est voulu :
+ * un contrôle éprouve la vraie file, ou la fabrique par-dessus un démon muet,
+ * jamais les deux dans le même processus.
+ */
+if (defined('MQTTBE_VRAI_DEMON') && MQTTBE_VRAI_DEMON) {
+    require_once dirname(__DIR__) . '/core/class/mqttbeDaemon.class.php';
+} else {
 
 class mqttbeDaemon {
 
@@ -1342,6 +1395,8 @@ class mqttbeDaemon {
     }
 }
 
+}
+
 /* --------------------------------------------------------------------------
  * 6. Chargement des classes du plugin
  *
@@ -1400,7 +1455,12 @@ class MqttbeFauxCoeur {
         log::reinitialise();
         event::reinitialise();
         message::reinitialise();
-        mqttbeDaemon::reinitialise();
+        /* Le vrai mqttbeDaemon — celui que charge MQTTBE_VRAI_DEMON — n'a rien
+         * à remettre à zéro : son état vit dans le cache et la configuration,
+         * que les deux lignes ci-dessus viennent de vider. */
+        if (method_exists('mqttbeDaemon', 'reinitialise')) {
+            mqttbeDaemon::reinitialise();
+        }
         self::$_references = array();
         self::$_historique = array();
         self::$_evenementsCmd = array();

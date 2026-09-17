@@ -119,11 +119,14 @@ if (!interface_exists('MqttbeAdapter')) {
  *
  *   L'INVENTAIRE. Une passerelle BLE voit TOUT ce qui passe : téléphones des
  *   visiteurs, montres, écouteurs, balises des voisins. L'inventaire des
- *   balises vues est donc plafonné (MAX_BALISES), périmé (PEREMPTION) et,
- *   au plafond, il évince la candidate la plus ancienne plutôt que de grandir.
- *   Seules les balises jamais décodées se périment et s'évincent : le silence
- *   d'un capteur reconnu est justement ce que son équipement rapporte.
- *   C'est le seul endroit de ce plugin où un démon peut enfler sans limite.
+ *   balises vues est donc plafonné (MAX_BALISES), périmé (PEREMPTION, et
+ *   PEREMPTION_DECODEE pour ce que la passerelle a reconnu) et, au plafond, il
+ *   évince la plus ancienne balise sans faisceau plutôt que de grandir. TOUT se
+ *   périme, y compris les décodées : « décodée » ne veut pas dire « à moi », et
+ *   les capteurs du voisinage sont décodés tout aussi bien que les nôtres.
+ *   C'est le seul endroit de ce plugin où un démon peut enfler sans limite —
+ *   et les dossiers de PASSERELLE s'y périment aussi (PEREMPTION_GW), sans
+ *   quoi le préfixe d'une passerelle renommée lui survivrait pour toujours.
  *
  * Aucune référence à Jeedom dans ce fichier : il est chargé par le démon, qui
  * tourne sans core.inc.php. Les décisions de présentation (type de commande,
@@ -180,12 +183,33 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     const MAX_BALISES     = 250;
     const MAX_PASSERELLES = 32;
 
-    /* Une balise que la passerelle n'a jamais décodée et qu'on n'a plus vue
+    /*
+     * Une balise que la passerelle n'a jamais décodée et qu'on n'a plus vue
      * depuis trois heures n'encombre plus la file : c'est le téléphone d'un
-     * visiteur, vu une fois, jamais revu. Une balise DÉCODÉE, elle, ne périme
-     * pas — son silence est justement l'information que porte son équipement. */
-    const PEREMPTION      = 10800;
-    const PERIODE_PURGE   = 60;
+     * visiteur, vu une fois, jamais revu.
+     *
+     * UNE BALISE DÉCODÉE SE PÉRIME AUSSI, plus tard. « Décodée » ne veut pas
+     * dire « à moi » : les thermomètres du voisinage sont décodés tout aussi
+     * bien que les miens, et une décodée qui ne périmerait jamais remplirait
+     * l'inventaire de capteurs vus une fois à −97 dBm — après quoi la balise de
+     * la maison ne serait plus jamais découverte, faute de place. Vingt-quatre
+     * heures : un capteur qui n'a rien dit de la journée a été retiré, et son
+     * équipement, lui, reste dans Jeedom avec sa dernière valeur.
+     */
+    const PEREMPTION          = 10800;
+    const PEREMPTION_DECODEE  = 86400;
+    const PERIODE_PURGE       = 60;
+
+    /*
+     * Et une PASSERELLE se périme comme une balise.
+     *
+     * Renommer une passerelle dans son interface web lui donne un préfixe de
+     * topic neuf sans changer sa `mac` : l'ancien dossier ne décrit plus rien,
+     * mais rien ne l'effaçait — il restait en mémoire pour toujours, et
+     * continuait de revendiquer l'équipement. Vingt-quatre heures sans
+     * SYStoMQTT : le préfixe n'existe plus.
+     */
+    const PEREMPTION_GW = 86400;
 
     /* Une trame décodée porte une dizaine de champs ; deux douzaines couvrent
      * très largement le plus bavard des capteurs Theengs. Au-delà, c'est une
@@ -227,6 +251,59 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      */
     const MARGE_PROCHE = 6;
 
+    /*
+     * Depuis combien de temps une passerelle doit s'être tue pour être écartée
+     * du calcul de proximité.
+     *
+     * C'est une constante COURTE et FIXE, et surtout pas le délai d'absence
+     * d'une balise : celui-ci se règle jusqu'à une journée, pour une balise qui
+     * n'émet que de loin en loin — tandis qu'une passerelle, elle, parle en
+     * permanence. Les juger avec le même délai, c'est laisser « au salon »
+     * pendant une journée entière après avoir débranché la passerelle du salon,
+     * à l'endroit exact où l'utilisateur vient chercher son objet. Une
+     * passerelle muette depuis quatre-vingt-dix secondes ne voit plus rien.
+     */
+    const FRAICHEUR_PROCHE = 90;
+
+    /*
+     * Deux préfixes pour une même `mac` : de combien le plus frais doit
+     * devancer l'autre pour l'emporter à coup sûr.
+     *
+     * En deçà, les deux sont réputés vivants et c'est la longueur qui tranche —
+     * sans quoi deux préfixes qui publient tous les deux (le parc réel en a un,
+     * dupliqué par une mauvaise saisie) se voleraient l'équipement à chaque
+     * battement, et le modèle repartirait sans fin vers Jeedom.
+     */
+    const FRAICHEUR_GW = 300;
+
+    /*
+     * Une adresse BLE aléatoire tourne toutes les quinze minutes : un seul
+     * téléphone fabrique quatre-vingt-seize candidats par jour, et la file
+     * d'adoption, bornée, éjecte le traceur repéré la veille. On attend donc
+     * qu'une balise à adresse aléatoire ait duré PLUS QUE LA PÉRIODE DE
+     * ROTATION avant de la proposer : ce qui a survécu à la rotation ne
+     * tournait pas.
+     */
+    const ROTATION_ALEATOIRE = 1200;
+
+    /*
+     * Le faisceau qui distingue « décodée » de « à moi ». Voir confiance().
+     *
+     * Un signal au-dessus du plancher — une balise de la maison, même à
+     * l'autre bout —, ou bien plusieurs trames étalées sur plusieurs minutes.
+     * Les 260 thermomètres du voisinage vus une fois à −97 dBm ne passent ni
+     * l'un ni l'autre.
+     */
+    const PLANCHER_RSSI = -85;
+    const VUES_MIN      = 3;
+    const DUREE_MIN     = 300;
+
+    /* Un réessai de publication au plus par balise et par minute. Sans cette
+     * borne, un broker injoignable produisait 7 200 tentatives en soixante
+     * secondes — chacune journalisée, au moment précis où l'utilisateur est
+     * passé en debug pour comprendre sa panne. */
+    const PERIODE_ESSAI = 60;
+
     /* La balise dont on publie l'état : au plus un message par changement, et
      * un rafraîchissement de la date de dernière vue par minute. Sans cette
      * seconde borne, « vue à » repartirait à chaque trame reçue — c'est-à-dire
@@ -248,7 +325,8 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * Un seul topic pour les trois : trois topics, ce serait trois publications
      * à chaque changement de présence, pour trois valeurs qui changent ensemble.
      */
-    const RACINE_ETAT = 'mqttbe/omg/ble';
+    const RACINE_ETAT  = 'mqttbe/omg/ble';
+    const FEUILLE_ETAT = 'state';
 
     /* ------------------------------------------------------------------ */
     /* Des noms de champs vers des capacités                              */
@@ -283,8 +361,6 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             'co2'      => array('sensor.co2',         'ppm', 'CO2',              null, 0),
             'noise'    => array('sensor.noise',       'dB',  'Bruit',            null, 1),
             'uv'       => array('sensor.uv',          '',    'Indice UV',        null, 1),
-            'presence' => array('presence.detected',  '',    'Présence signalée', null, null),
-            'track'    => array('presence.detected',  '',    'Traceur',          null, null),
             'motion'   => array('presence.detected',  '',    'Mouvement',        null, null),
             'open'     => array('contact.open',       '',    'Ouverture',        null, null),
             'contact'  => array('contact.open',       '',    'Contact',          null, null),
@@ -293,6 +369,26 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
 
     /* Le décalage du Fahrenheit, appliqué après l'échelle : (F − 32) × 5/9. */
     const OFFSET_FAHRENHEIT = -17.777778;
+
+    /*
+     * LES CHAMPS QUI DISENT « JE SUIS LÀ », ET QUI NE DEVIENNENT PAS UNE
+     * COMMANDE.
+     *
+     * `track` et `presence` sont vrais tant que la balise émet — et ils ne
+     * redescendent JAMAIS, puisqu'une balise qui part cesse d'émettre. Les
+     * exposer, c'est poser à côté de la présence CALCULÉE une seconde commande
+     * de présence, du même type générique, historisée elle aussi, et qui reste
+     * bloquée sur « présent » pour l'éternité. Un scénario a alors une chance
+     * sur deux de choisir la mauvaise, et celui qui se trompe ne se déclenchera
+     * jamais.
+     *
+     * Ils ne sont pas jetés pour autant : leur présence dans une trame prouve
+     * que la passerelle a RECONNU la balise (voir trameDecodee), et c'est ce
+     * qui fait d'un traceur Tile un équipement plutôt qu'un candidat.
+     */
+    private static function champsPresence() {
+        return array('track' => true, 'presence' => true);
+    }
 
     /*
      * Les champs qui ne deviennent JAMAIS un canal, et pourquoi.
@@ -307,6 +403,17 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      *                        et les afficher tels quels remplirait l'historique
      *                        de Jeedom d'un bruit que personne ne lit ;
      *   rssi                 traité à part : un canal PAR PASSERELLE.
+     *
+     *   acts, cidc, cont, adv_type, mac_type, device
+     *                        des DRAPEAUX INTERNES DU DÉCODEUR. Le traceur
+     *                        Tile réel les apporte tous les six, et ils
+     *                        arrivaient sur le tableau de bord en commandes
+     *                        visibles, sans nom lisible ni sens pour personne :
+     *                        « cidc » ne veut rien dire, et sa valeur ne
+     *                        décrira jamais l'objet qu'on cherche. `mac_type`
+     *                        et `adv_type`, eux, sont déjà lus — ils décident
+     *                        de ce qui va dans la file d'adoption — mais ils
+     *                        décrivent la TRAME, pas l'appareil.
      */
     private static function champsTechniques() {
         return array(
@@ -316,6 +423,8 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             'manufacturerdata' => true, 'manufacturerdata2' => true,
             'servicedata' => true, 'servicedatauuid' => true, 'servicuuid' => true,
             'rssi' => true,
+            'acts' => true, 'cidc' => true, 'cont' => true,
+            'adv_type' => true, 'mac_type' => true, 'device' => true,
         );
     }
 
@@ -341,8 +450,17 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * `{"base":"+"}` donnerait `+/commands/MQTTtoSYS/config`, ce que MQTT
      * 3.1.1 §3.3.2 interdit dans un nom de topic de publication : le broker
      * fermerait la connexion à chaque appui sur le bouton « Redémarrer ».
+     *
+     * L'ESPACE EST ACCEPTÉ. Il est légal dans un nom de topic MQTT, et
+     * l'interface d'OpenMQTTGateway laisse parfaitement saisir « OMG Salon » :
+     * le refuser, c'était abandonner la passerelle d'un utilisateur qui n'avait
+     * rien fait d'anormal — et l'abandonner sans une ligne de journal, si bien
+     * qu'aucune enquête ne pouvait aboutir. Ce qui reste interdit, ce sont les
+     * jokers et les caractères de contrôle, qui, eux, feraient fermer la
+     * connexion. Un niveau fait de seuls espaces est refusé à part : il ne
+     * nomme rien.
      */
-    const NIVEAU_VALIDE = '/^[A-Za-z0-9._:-]{1,64}$/';
+    const NIVEAU_VALIDE = '/^[A-Za-z0-9 ._:-]{1,64}$/';
 
     /* Un nom de champ décodé doit pouvoir servir de chemin JSON : le routage
      * éclate le chemin sur les points, et un champ « a.b » désignerait alors
@@ -376,6 +494,22 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             $filtres[] = $prefixe . self::SYS;
             $filtres[] = $prefixe . self::BT . '/+';
         }
+        /*
+         * ET CE QUE LE DÉMON PRÉCÉDENT A LAISSÉ DERRIÈRE LUI.
+         *
+         * L'état calculé est publié RETENU, pour qu'il survive au redémarrage
+         * du démon — mais il lui survit aussi quand l'objet, lui, est parti
+         * entre-temps. Le démon s'arrête, le traceur quitte la maison, le démon
+         * repart : le message retenu dit toujours « présent, au salon », et
+         * comme l'inventaire est vide au redémarrage, plus rien ne vient jamais
+         * le contredire. Les scénarios bâtis sur cette présence ne se
+         * déclencheraient plus jamais.
+         *
+         * S'abonner à sa propre branche, c'est se faire rejouer par le broker,
+         * à l'instant du démarrage, tout ce qu'on y a laissé — et pouvoir le
+         * corriger. Voir recoitEtatRetenu().
+         */
+        $filtres[] = self::RACINE_ETAT . '/+/' . self::FEUILLE_ETAT;
         return $filtres;
     }
 
@@ -396,19 +530,104 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return;
         }
 
+        /* Notre propre branche, rejouée par le broker au démarrage. Elle est
+         * reconnue avant tout le reste : personne d'autre n'écrit là. */
+        if ($nombre === 5 && $niveaux[$nombre - 1] === self::FEUILLE_ETAT
+            && implode('/', array_slice($niveaux, 0, 3)) === self::RACINE_ETAT) {
+            if ($_retained) {
+                $this->recoitEtatRetenu($_ctx, $niveaux[3], $_payload);
+            }
+            return;
+        }
+
         if ($niveaux[$nombre - 1] === self::SYS) {
-            $base = $this->base($niveaux, $nombre - 1);
+            $base = $this->base($_ctx, $niveaux, $nombre - 1, $_topic);
             if ($base !== '') {
                 $this->recoitSys($_ctx, $base, $_payload);
             }
             return;
         }
         if ($nombre >= 3 && $niveaux[$nombre - 2] === self::BT) {
-            $base = $this->base($niveaux, $nombre - 2);
+            $base = $this->base($_ctx, $niveaux, $nombre - 2, $_topic);
             if ($base !== '') {
                 $this->recoitBalise($_ctx, $base, $niveaux[$nombre - 1], $_payload);
             }
         }
+    }
+
+    /*
+     * UN ÉTAT QUE LE DÉMON PRÉCÉDENT A LAISSÉ SUR LE BROKER.
+     *
+     * Le message est retenu : il date d'avant l'arrêt, et il affirme une
+     * présence que plus personne ne vérifie. Deux cas, et deux seulement :
+     *
+     *   la balise est INCONNUE de l'inventaire — c'est le téléphone d'un
+     *   passant, adopté par personne, dont l'état ne sera jamais recalculé :
+     *   le message s'efface (charge utile vide sur un topic retenu, OASIS
+     *   3.1.1 §3.3.1.3). C'est le seul geste qui empêche le broker de garder
+     *   un état par appareil passé devant la maison, pour toujours ;
+     *
+     *   la balise est CONNUE et sa dernière vue remonte à plus que le délai
+     *   d'absence : on republie tout de suite une présence fausse, sans
+     *   attendre le battement. Jeedom lit « absent » dès le démarrage plutôt
+     *   que « présent, au salon » pour un objet parti depuis trois jours.
+     *
+     * Et un état encore frais n'est pas touché : le démon qui redémarre en
+     * quinze secondes ne doit pas faire clignoter la présence de la maison.
+     */
+    private function recoitEtatRetenu($_ctx, $_mac, $_payload) {
+        $mac = self::normaliseMac($_mac);
+        if ($mac === '') {
+            return;
+        }
+        $etat = $this->json($_payload);
+        if ($etat === null) {
+            /* Charge utile vide : c'est un effacement, le nôtre ou celui d'un
+             * démon précédent. Il n'y a plus rien à corriger. */
+            return;
+        }
+        if (isset($etat['presence']) && (int) $etat['presence'] === 0) {
+            return;
+        }
+
+        $maintenant = $this->maintenant($_ctx);
+        $reglages   = $this->reglages($_ctx);
+        $vue        = $this->horodate(isset($etat['seen']) ? $etat['seen'] : '');
+        if ($vue > 0 && ($maintenant - $vue) < $reglages['away']) {
+            return;
+        }
+
+        $cle     = 'ble:' . $mac;
+        $dossier = $this->dossier($_ctx, $cle);
+        if (empty($dossier)) {
+            $_ctx->publish($this->topicEtat($mac), '', 0, true);
+            $_ctx->log('debug', 'OpenMQTTGateway : état retenu périmé effacé pour une balise '
+                . 'inconnue (' . $cle . ') — le broker gardait une présence que plus personne '
+                . 'ne recalculait.');
+            return;
+        }
+
+        $etat['presence'] = 0;
+        $etat['nearest']  = '';
+        $texte = json_encode($etat, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($_ctx->publish($this->topicEtat($mac), $texte, 0, true) === true) {
+            $dossier['etat']      = $texte;
+            $dossier['etatQuand'] = $maintenant;
+            $dossier['proche']    = '';
+            $this->range($_ctx, $cle, $dossier);
+            $_ctx->log('info', 'OpenMQTTGateway : ' . $cle . ' — l\'état retenu annonçait une '
+                . 'présence vieille de plus que le délai d\'absence : démentie au démarrage.');
+        }
+    }
+
+    /* Une date « Y-m-d H:i:s » relue, et zéro si elle ne veut rien dire. Le
+     * message retenu peut venir d'une version antérieure, ou d'un tiers. */
+    private function horodate($_valeur) {
+        if (!is_string($_valeur) || trim($_valeur) === '') {
+            return 0;
+        }
+        $quand = strtotime($_valeur);
+        return ($quand === false) ? 0 : (float) $quand;
     }
 
     /*
@@ -531,14 +750,34 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
                     . ' passerelles atteint : « ' . $this->citation($_base) . ' » n\'est pas suivie.');
                 return;
             }
-            $dossier = array('base' => $_base);
+            $dossier = array('base' => $_base, 'env' => '', 'version' => '', 'ip' => '');
         }
-        $dossier['base']    = $_base;
-        $dossier['mac']     = $mac;
-        $dossier['env']     = $this->texte($sys, 'env');
-        $dossier['version'] = $this->texte($sys, 'version');
-        $dossier['ip']      = $this->texte($sys, 'ip');
-        $dossier['nom']     = self::dernierNiveau($_base);
+        $dossier['base'] = $_base;
+        $dossier['mac']  = $mac;
+        /*
+         * `ip`, `env` et `version` SONT COLLANTS, exactement comme le nom d'une
+         * balise l'est déjà.
+         *
+         * Un SYStoMQTT publié pendant une reconnexion Wi-Fi arrive sans son
+         * `ip` : le prendre tel quel effaçait l'adresse une fois sur deux, donc
+         * changeait la signature une fois sur deux, donc réémettait vingt
+         * modèles pour vingt messages — et l'utilisateur retrouvait un
+         * équipement dont le lien « ouvrir l'interface » disparaissait et
+         * revenait tout seul. Une valeur absente n'est pas une valeur nouvelle.
+         */
+        foreach (array('env', 'version', 'ip') as $champ) {
+            $valeur = $this->texte($sys, $champ);
+            if ($valeur !== '') {
+                $dossier[$champ] = $valeur;
+            } elseif (!isset($dossier[$champ])) {
+                $dossier[$champ] = '';
+            }
+        }
+        $dossier['nom'] = self::dernierNiveau($_base);
+        /* La date du dernier SYStoMQTT : c'est elle qui départage deux préfixes
+         * pour une même `mac` (voir baseRetenue) et elle qui fait périmer un
+         * préfixe qui ne sert plus. */
+        $dossier['vu'] = $this->maintenant($_ctx);
         $dossier['signature'] = implode('|', array($mac, $_base, $dossier['env'],
                                                    $dossier['version'], $dossier['ip']));
         $this->range($_ctx, 'gw:' . $slug, $dossier);
@@ -626,7 +865,12 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             if (count($dossier['champs']) >= self::MAX_CHAMPS) {
                 continue;
             }
-            $dossier['champs'][$champ] = true;
+            /* Le TYPE est retenu avec le champ, parce qu'il ne se devine pas
+             * d'un nom : un champ que personne n'a prévu devient une valeur
+             * générique NUMÉRIQUE quand la passerelle en publie un nombre, et
+             * textuelle sinon. La différence se voit sur le tableau de bord —
+             * une valeur numérique se trace, se compare et se moyenne. */
+            $dossier['champs'][$champ] = is_numeric($valeur) ? 'n' : 's';
         }
         if (isset($dossier['champs']['batt'])) {
             $dossier['pile'] = true;
@@ -672,6 +916,14 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         $dossier['gws'][$slug]['vu']    = $maintenant;
         $dossier['gws'][$slug]['rssi']  = $this->nombre($trame, 'rssi', null);
         $dossier['vu'] = $maintenant;
+        /* Combien de fois vue : avec `depuis`, c'est le faisceau qui distingue
+         * une balise de la maison d'un capteur du voisinage aperçu une fois.
+         * Borné, parce qu'un compteur qui grandit pendant des jours finit par
+         * peser plus que le dossier. */
+        $compte = (int) $this->nombre($dossier, 'compte', 0);
+        if ($compte < self::VUES_MIN) {
+            $dossier['compte'] = $compte + 1;
+        }
 
         $dossier['signature'] = $this->signatureBalise($dossier);
         $this->range($_ctx, $cle, $dossier);
@@ -687,7 +939,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      */
     private function ouvreBalise($_ctx, $_mac, $_adresse, $_maintenant) {
         if (!$this->inscrit($_ctx, 'index.ble', $_mac, self::MAX_BALISES)) {
-            $this->purgeCandidates($_ctx, $_maintenant, self::PEREMPTION);
+            $this->purgeBalises($_ctx, $_maintenant);
             if (!$this->inscrit($_ctx, 'index.ble', $_mac, self::MAX_BALISES)) {
                 $this->evince($_ctx);
                 if (!$this->inscrit($_ctx, 'index.ble', $_mac, self::MAX_BALISES)) {
@@ -707,6 +959,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             'gws'     => array(),
             'vu'      => $_maintenant,
             'depuis'  => $_maintenant,
+            'compte'  => 0,
             'pile'    => false,
             'decodee' => false,
         );
@@ -726,8 +979,13 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return true;
         }
         $table = self::table();
+        /* `track` et `presence` ne deviennent pas des commandes (voir
+         * champsPresence), mais ils PROUVENT que la passerelle a reconnu la
+         * balise : c'est à cela, et à rien d'autre, qu'un traceur se
+         * reconnaît. */
+        $presence = self::champsPresence();
         foreach (array_keys($_dossier['champs']) as $champ) {
-            if (isset($table[$champ])) {
+            if (isset($table[$champ]) || isset($presence[$champ])) {
                 return true;
             }
         }
@@ -753,7 +1011,16 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return;
         }
 
-        $modifie   = false;
+        $modifie = false;
+
+        /* Le faisceau, une fois acquis, ne se perd plus : une balise qui a
+         * mérité son équipement ne doit pas retomber dans la file d'adoption
+         * parce qu'elle s'est éloignée de deux mètres. Voir faisceau(). */
+        if (empty($dossier['faisceau']) && !empty($dossier['decodee'])
+            && $this->faisceau($dossier)) {
+            $dossier['faisceau'] = true;
+            $modifie = true;
+        }
         $confiance = $this->confiance($dossier, $_reglages);
         if ($this->texte($dossier, 'confiance') !== $confiance) {
             $dossier['confiance'] = $confiance;
@@ -771,7 +1038,34 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
          * affirmerait qu'un objet est dans une pièce où plus rien n'écoute. */
         $proche = '';
         if ($presente) {
-            $proche = $this->plusProche($dossier, $_maintenant, $_reglages['away']);
+            $proche = $this->plusProche($dossier, $_maintenant);
+        }
+
+        /*
+         * ON NE PUBLIE L'ÉTAT QUE DES BALISES `certain`.
+         *
+         * Une balise `guess` n'a aucun équipement dans Jeedom, donc aucun
+         * lecteur : publier son état, c'est déposer sur le broker de
+         * l'utilisateur un message RETENU, c'est-à-dire éternel, pour chaque
+         * téléphone qui passe devant la maison. Mesuré sur l'installation
+         * réelle : trente et un messages retenus pour un seul équipement.
+         *
+         * Et ce qui a pu être publié avant — parce que `bleAdoptAll` était
+         * coché, ou parce que la balise a perdu son faisceau — s'efface.
+         */
+        if ($confiance !== 'certain') {
+            if (isset($dossier['etat']) && $dossier['etat'] !== '') {
+                if ($_ctx->publish($this->topicEtat($_mac), '', 0, true) === true) {
+                    unset($dossier['etat'], $dossier['etatQuand'], $dossier['etatEchec']);
+                    $dossier['proche'] = '';
+                    $modifie = true;
+                }
+            }
+            if ($modifie) {
+                $this->range($_ctx, $cle, $dossier);
+            }
+            $this->emetBalise($_ctx, $_mac);
+            return;
         }
 
         $etat = array(
@@ -785,17 +1079,37 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         $texte = json_encode($etat, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $avant = isset($dossier['etat']) ? (string) $dossier['etat'] : '';
         $quand = $this->nombre($dossier, 'etatQuand', 0);
+        $echec = $this->nombre($dossier, 'etatEchec', 0);
 
         /* Un changement de présence ou de pièce part tout de suite ; un simple
          * rafraîchissement de la date attend la minute. Sans cette seconde
          * borne, « vue à » repartirait à chaque trame reçue, soit plusieurs
          * fois par seconde pour une information qui se lit à la minute. */
         $urgent = ($avant === '') || $this->changeEtat($avant, $etat);
-        if ($texte !== $avant && ($urgent || ($_maintenant - $quand) >= self::PERIODE_VUE)) {
+        /*
+         * ET LE GARDE-TEMPS BORNE AUSSI LES RÉESSAIS.
+         *
+         * Une publication qui échoue ne posait aucune date : le battement
+         * suivant réessayait, et celui d'après, pour chaque balise — sept mille
+         * deux cents tentatives en soixante secondes de broker injoignable,
+         * chacune journalisée, au moment précis où l'utilisateur est passé en
+         * debug pour comprendre sa panne. Une balise dont la dernière tentative
+         * a échoué attend donc PERIODE_ESSAI avant la suivante, urgence ou non :
+         * ce qu'elle a à dire n'arrivera pas plus vite sur un broker absent.
+         */
+        $reessaie = ($echec <= 0) || (($_maintenant - $echec) >= self::PERIODE_ESSAI);
+        if ($texte !== $avant && $reessaie
+            && ($urgent || ($_maintenant - $quand) >= self::PERIODE_VUE)) {
             if ($_ctx->publish($this->topicEtat($_mac), $texte, 0, true) === true) {
                 $dossier['etat']      = $texte;
                 $dossier['etatQuand'] = $_maintenant;
                 $dossier['proche']    = $proche;
+                if ($echec > 0) {
+                    unset($dossier['etatEchec']);
+                }
+                $modifie = true;
+            } else {
+                $dossier['etatEchec'] = $_maintenant;
                 $modifie = true;
             }
         }
@@ -824,8 +1138,15 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * dB sur celle qui est en place. Deux passerelles à égale distance feraient
      * sinon basculer le champ à chaque trame — plus d'une fois par seconde sur
      * la capture réelle.
+     *
+     * LA FRAÎCHEUR D'UNE PASSERELLE SE JUGE AVEC FRAICHEUR_PROCHE, et jamais
+     * avec le délai d'absence d'une BALISE : ce dernier se règle jusqu'à une
+     * journée, pour un traceur qui n'émet que de loin en loin, alors qu'une
+     * passerelle parle en permanence. Les confondre, c'était afficher « au
+     * salon » pendant tout ce délai après avoir débranché la passerelle du
+     * salon.
      */
-    private function plusProche($_dossier, $_maintenant, $_away) {
+    private function plusProche($_dossier, $_maintenant) {
         $sortant = isset($_dossier['proche']) ? (string) $_dossier['proche'] : '';
         $meilleur = null;
         $nom      = '';
@@ -837,7 +1158,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         sort($slugs, SORT_STRING);
         foreach ($slugs as $slug) {
             $vue = $_dossier['gws'][$slug];
-            if (($_maintenant - $this->nombre($vue, 'vu', 0)) >= $_away) {
+            if (($_maintenant - $this->nombre($vue, 'vu', 0)) >= self::FRAICHEUR_PROCHE) {
                 continue;
             }
             if (!isset($vue['rssi']) || !is_numeric($vue['rssi'])) {
@@ -865,21 +1186,84 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     /*
      * La confiance d'une balise, qui décide de ce que Jeedom en fait.
      *
-     *   `certain` la passerelle l'a RECONNUE — un modèle, ou au moins un champ
-     *             de mesure. C'est un capteur, l'équipement est créé.
-     *   `guess`   trame brute : c'est peut-être le téléphone d'un visiteur ou
-     *             la balise d'un voisin. Le modèle part quand même — sinon
-     *             personne ne saurait jamais qu'il y a là quelque chose à
-     *             adopter — mais il atterrit dans la file d'adoption.
+     *   `certain` la passerelle l'a RECONNUE **et** la balise est chez nous.
+     *             C'est un capteur de la maison, l'équipement est créé.
+     *   `guess`   tout le reste : trame brute, ou capteur reconnu mais qui
+     *             passait par là. Le modèle part quand même — sinon personne ne
+     *             saurait jamais qu'il y a là quelque chose à adopter — mais il
+     *             atterrit dans la file d'adoption.
+     *
+     * « DÉCODÉE » NE VEUT PAS DIRE « À MOI ».
+     *
+     * C'était pourtant la règle : un champ décodé, et l'équipement se créait
+     * tout seul. Or Theengs décode les thermomètres du voisin aussi bien que
+     * les miens. Deux cent soixante d'entre eux, vus une fois à −97 dBm à
+     * travers deux murs, remplissaient l'inventaire et fabriquaient deux cent
+     * cinquante et un équipements — après quoi la balise de la maison, faute de
+     * place, n'était plus jamais découverte.
+     *
+     * On exige donc un FAISCEAU plutôt qu'un champ (voir faisceau()), et le
+     * faisceau, une fois acquis, ne se perd plus.
      *
      * `bleAdoptAll` fait passer toutes les balises en `certain` : c'est le sens
      * du réglage, pour qui veut vraiment tout.
      */
     public function confiance($_dossier, $_reglages) {
-        if (!empty($_reglages['adoptAll']) || !empty($_dossier['decodee'])) {
+        if (!empty($_reglages['adoptAll'])) {
+            return 'certain';
+        }
+        if (!empty($_dossier['decodee']) && !empty($_dossier['faisceau'])) {
             return 'certain';
         }
         return 'guess';
+    }
+
+    /*
+     * LE FAISCEAU : cette balise décodée est-elle chez nous ?
+     *
+     * Deux indices, et l'un suffit — parce qu'ils ratrapent deux situations
+     * différentes :
+     *
+     *   UN SIGNAL AU-DESSUS DU PLANCHER. Une balise de la maison, même à
+     *   l'autre bout, se voit à −85 dBm ou mieux ; un capteur du voisinage, à
+     *   travers deux murs, non. C'est l'indice immédiat : un thermomètre qu'on
+     *   vient de déballer est reconnu à sa première trame.
+     *
+     *   OU BIEN LA DURÉE. Un signal peut être faible et la balise bien à nous —
+     *   la sonde du jardin, le capteur du garage. Mais une balise qui est là
+     *   depuis plusieurs minutes ET qu'on a vue plusieurs fois n'est pas
+     *   passée dans la rue. Les deux ensemble, jamais l'un seul : un passant
+     *   croisé trois fois en dix secondes n'habite pas ici, et une trame unique
+     *   ne dure pas.
+     *
+     * Le dossier porte déjà `depuis` et `vu` ; `compte` s'y ajoute, borné.
+     */
+    private function faisceau($_dossier) {
+        if ($this->meilleurRssi($_dossier) >= self::PLANCHER_RSSI) {
+            return true;
+        }
+        $duree = $this->nombre($_dossier, 'vu', 0) - $this->nombre($_dossier, 'depuis', 0);
+        return ($this->nombre($_dossier, 'compte', 0) >= self::VUES_MIN)
+            && ($duree >= self::DUREE_MIN);
+    }
+
+    /* Le meilleur signal reçu, toutes passerelles confondues. Une balise vue
+     * par trois passerelles est chez nous si l'une d'elles l'entend bien. */
+    private function meilleurRssi($_dossier) {
+        $meilleur = null;
+        if (!isset($_dossier['gws']) || !is_array($_dossier['gws'])) {
+            return -127.0;
+        }
+        foreach ($_dossier['gws'] as $vue) {
+            if (!isset($vue['rssi']) || !is_numeric($vue['rssi'])) {
+                continue;
+            }
+            $rssi = (float) $vue['rssi'];
+            if ($meilleur === null || $rssi > $meilleur) {
+                $meilleur = $rssi;
+            }
+        }
+        return ($meilleur === null) ? -127.0 : $meilleur;
     }
 
     /*
@@ -929,18 +1313,37 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         if (empty($dossier) || $this->texte($dossier, 'mac') === '') {
             return false;
         }
-        if ($this->texte($dossier, 'signature') === $this->texte($dossier, 'emis')) {
+        /*
+         * Deux préfixes pour une seule passerelle : l'identité étant la `mac`,
+         * les deux décriraient le MÊME équipement avec des topics différents —
+         * donc un modèle qui oscille et repart vers Jeedom sans fin. Un seul
+         * préfixe est retenu (voir baseRetenue), l'autre se tait.
+         *
+         * Ce qui a déjà été émis est marqué de la base retenue AU MOMENT DE
+         * L'ÉMISSION, et pas seulement de la signature : le jour où la
+         * passerelle est renommée et où le préfixe retenu change, la marque ne
+         * correspond plus, et le modèle repart avec les bons topics. Sans cela,
+         * une passerelle qui avait été écartée une fois restait marquée « à
+         * jour » et ne reprenait jamais la main — six capteurs lisant un topic
+         * mort et des boutons publiant dans le vide, sans une ligne de journal.
+         */
+        $base      = $this->texte($dossier, 'base');
+        $retenue   = $this->baseRetenue($_ctx, $this->texte($dossier, 'mac'));
+        $signature = $this->texte($dossier, 'signature');
+        $marque    = ($retenue === $base) ? $signature : ('passe|' . $retenue . '|' . $signature);
+        if ($marque === $this->texte($dossier, 'emis')) {
             return false;
         }
-        /* Deux préfixes pour une seule passerelle : le parc d'essai en comporte
-         * un (« …_ETAGEOMG_ESP32_BLE_ETAGE », doublé par une mauvaise saisie),
-         * et l'identité étant la `mac`, les deux décriraient le MÊME
-         * équipement avec des topics différents — donc un modèle qui oscille et
-         * repart vers Jeedom sans fin. Le préfixe le plus court l'emporte, à
-         * égalité le premier dans l'ordre alphabétique : le résultat ne dépend
-         * ni de l'ordre des messages, ni du moment où le démon a démarré. */
-        if (!$this->prefixeRetenu($_ctx, $dossier)) {
-            $dossier['emis'] = $this->texte($dossier, 'signature');
+        if ($retenue !== $base) {
+            /* Une seule fois, au moment où ce préfixe perd la main : c'est
+             * exactement la trace qui manquait quand un renommage tuait la
+             * passerelle en silence. */
+            if ($this->texte($dossier, 'emis') !== '') {
+                $_ctx->log('info', 'OpenMQTTGateway : la passerelle ' . $this->texte($dossier, 'mac')
+                    . ' publie désormais sous « ' . $this->citation($retenue) . ' » ; son ancien '
+                    . 'préfixe « ' . $this->citation($base) . ' » ne décrit plus rien et se taira.');
+            }
+            $dossier['emis'] = $marque;
             $this->range($_ctx, 'gw:' . $_slug, $dossier);
             return false;
         }
@@ -953,7 +1356,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return false;
         }
         $_ctx->emit($modele);
-        $dossier['emis'] = $this->texte($dossier, 'signature');
+        $dossier['emis'] = $marque;
         $this->range($_ctx, 'gw:' . $_slug, $dossier);
         $_ctx->log('info', 'OpenMQTTGateway : passerelle ' . $modele->name() . ' ('
             . $modele->uid() . ') — ' . $modele->countChannels() . ' canaux.');
@@ -967,6 +1370,27 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return false;
         }
         if ($this->texte($dossier, 'signature') === $this->texte($dossier, 'emis')) {
+            return false;
+        }
+        /*
+         * UNE ADRESSE ALÉATOIRE TROP JEUNE N'ENTRE PAS DANS LA FILE D'ADOPTION.
+         *
+         * Une adresse BLE aléatoire tourne toutes les quinze minutes : un seul
+         * téléphone dans la maison produit quatre-vingt-seize candidats par
+         * jour, tous distincts, tous inutiles — et la file, bornée, éjecte le
+         * traceur que l'utilisateur avait repéré la veille sans avoir eu le
+         * temps de l'adopter. On attend donc qu'une telle balise ait duré PLUS
+         * QUE LA PÉRIODE DE ROTATION : ce qui y a survécu ne tournait pas, et
+         * mérite d'être proposé.
+         *
+         * Rien n'est marqué comme émis : le modèle partira le jour où la balise
+         * aura assez duré. Et cela ne concerne que les candidates — une balise
+         * `certain` a mérité son équipement et part tout de suite.
+         */
+        if ($this->texte($dossier, 'confiance') !== 'certain'
+            && $this->texte($dossier, 'macType') === 'random'
+            && ($this->nombre($dossier, 'vu', 0) - $this->nombre($dossier, 'depuis', 0))
+               < self::ROTATION_ALEATOIRE) {
             return false;
         }
         $modele = $this->construitBalise($dossier);
@@ -1007,27 +1431,63 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         }
     }
 
-    /* Le préfixe retenu pour une `mac` donnée : le plus court, puis le premier
-     * dans l'ordre alphabétique. Voir emetPasserelle(). */
-    private function prefixeRetenu($_ctx, $_dossier) {
-        $mac  = $this->texte($_dossier, 'mac');
-        $base = $this->texte($_dossier, 'base');
+    /*
+     * LE PRÉFIXE RETENU POUR UNE `mac` DONNÉE : LE PLUS FRAIS.
+     *
+     * C'est la fraîcheur qui départage, et non la longueur. Renommer une
+     * passerelle dans son interface web lui donne un préfixe neuf sans changer
+     * sa `mac` ; l'ancien dossier, lui, restait en mémoire — et comme le nom
+     * d'usine (« OMG_ESP32_BLE_1A2B ») est toujours plus court qu'un nom choisi
+     * (« maison/salon/omg »), le mort l'emportait sur le vif à chaque
+     * battement. Les capteurs lisaient un topic que plus personne n'alimentait,
+     * les boutons publiaient dans le vide, et « relancer la découverte » ne
+     * réparait rien puisque l'arbitrage était le même. Tout utilisateur qui
+     * renomme sa passerelle était touché.
+     *
+     * La longueur ne tranche plus qu'entre préfixes ÉGALEMENT VIVANTS — à
+     * FRAICHEUR_GW près. C'est le cas du parc réel, dont un préfixe est
+     * dupliqué par une mauvaise saisie et où les deux publient pour de bon :
+     * là, il faut un arbitre stable, sans quoi les deux se voleraient
+     * l'équipement à chaque battement.
+     *
+     * Le résultat ne dépend ni de l'ordre des messages, ni du moment où le
+     * démon a démarré.
+     */
+    private function baseRetenue($_ctx, $_mac) {
+        if ($_mac === '') {
+            return '';
+        }
+        $candidates = array();
+        $fraicheur  = null;
         foreach ($this->passerelles($_ctx) as $slug) {
             $autre = $this->dossier($_ctx, 'gw:' . $slug);
-            if (empty($autre) || $this->texte($autre, 'mac') !== $mac) {
+            if (empty($autre) || $this->texte($autre, 'mac') !== $_mac) {
                 continue;
             }
-            $sonBase = $this->texte($autre, 'base');
-            if ($sonBase === $base) {
+            $base = $this->texte($autre, 'base');
+            if ($base === '') {
                 continue;
             }
-            $court = strlen($sonBase) < strlen($base)
-                  || (strlen($sonBase) === strlen($base) && strcmp($sonBase, $base) < 0);
-            if ($court) {
-                return false;
+            $vu = $this->nombre($autre, 'vu', 0);
+            if (!isset($candidates[$base]) || $vu > $candidates[$base]) {
+                $candidates[$base] = $vu;
+            }
+            if ($fraicheur === null || $vu > $fraicheur) {
+                $fraicheur = $vu;
             }
         }
-        return true;
+        $retenue = '';
+        foreach ($candidates as $base => $vu) {
+            if ($fraicheur !== null && ($fraicheur - $vu) > self::FRAICHEUR_GW) {
+                continue;
+            }
+            if ($retenue === ''
+                || strlen($base) < strlen($retenue)
+                || (strlen($base) === strlen($retenue) && strcmp($base, $retenue) < 0)) {
+                $retenue = $base;
+            }
+        }
+        return $retenue;
     }
 
     /* --------------------------------------------------------------------- */
@@ -1116,8 +1576,19 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         /* L'état du module Bluetooth et ses deux réglages, publiés par la
          * passerelle sur sa propre branche BTtoMQTT. Les millisecondes y sont
          * ramenées en secondes : « 55555 » ne veut rien dire à l'écran. */
+        /*
+         * LA RADIO BLUETOOTH N'EST PAS UNE PRISE ÉLECTRIQUE.
+         *
+         * `switch.state` porte le type générique ENERGY_STATE et le gabarit
+         * « core::prise » : sur le tableau de bord, la radio d'une passerelle
+         * prenait l'apparence d'un interrupteur de courant, avec le geste qui
+         * va avec. Une valeur générique numérique dit la même chose (1 ou 0)
+         * sans promettre une lampe. Voir le compte rendu : une famille de
+         * capacités « radio » (état + marche + arrêt, sans le gabarit de la
+         * prise) serait le bon remède, et elle appartient à capabilities.json.
+         */
         $modele->addChannel(new MqttbeChannel(array(
-            'key' => 'ble.state', 'capability' => 'switch.state', 'name' => 'Bluetooth',
+            'key' => 'ble.state', 'capability' => 'generic.numeric', 'name' => 'Bluetooth actif',
             'source' => array('topic' => $bt, 'selector' => array('type' => 'json', 'path' => 'enabled')),
         )));
         $modele->addChannel(new MqttbeChannel(array(
@@ -1133,22 +1604,36 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             'value'  => array('transform' => array('scale' => 0.001, 'round' => 0)),
         )));
 
-        /* Les actions, telles que la passerelle les attend sur ses deux topics
-         * de commande. `save:true` écrit le réglage en mémoire persistante :
-         * sans lui, couper le Bluetooth ne survivrait pas à une coupure de
-         * courant, et le réglage reviendrait tout seul. */
+        /*
+         * Les actions, telles que la passerelle les attend sur ses deux topics
+         * de commande.
+         *
+         * `save:true` A ÉTÉ RETIRÉ, et c'est le plus important de ce fichier
+         * après l'identité. Il écrit le réglage dans la mémoire persistante de
+         * la passerelle : un clic sur « Couper le Bluetooth » arrêtait la
+         * détection de présence de TOUTE LA MAISON — plus une balise, plus un
+         * traceur, plus une indication de pièce — et l'écrivait pour toujours,
+         * si bien qu'un redémarrage ne rattrapait rien. Sans lui, le pire d'un
+         * clic malheureux dure jusqu'à la prochaine coupure de courant.
+         *
+         * Et le nom dit ce que le bouton arrête vraiment : « Bluetooth » ne
+         * ressemble pas à une panne de domotique, « arrête la détection »,
+         * si.
+         */
         $modele->addChannel(new MqttbeChannel(array(
             'key' => 'restart', 'capability' => 'device.restart', 'name' => 'Redémarrer',
             'sink' => array('topic' => $base . '/' . self::CMDSYS, 'payload' => '{"cmd":"restart"}'),
         )));
         $modele->addChannel(new MqttbeChannel(array(
-            'key' => 'ble.on', 'capability' => 'switch.on', 'name' => 'Activer le Bluetooth',
-            'sink' => array('topic' => $base . '/' . self::CMDBT, 'payload' => '{"enabled":true,"save":true}'),
+            'key' => 'ble.on', 'capability' => 'generic.action',
+            'name' => 'Reprendre la détection Bluetooth',
+            'sink' => array('topic' => $base . '/' . self::CMDBT, 'payload' => '{"enabled":true}'),
             'links' => array('state' => 'ble.state'),
         )));
         $modele->addChannel(new MqttbeChannel(array(
-            'key' => 'ble.off', 'capability' => 'switch.off', 'name' => 'Couper le Bluetooth',
-            'sink' => array('topic' => $base . '/' . self::CMDBT, 'payload' => '{"enabled":false,"save":true}'),
+            'key' => 'ble.off', 'capability' => 'generic.action',
+            'name' => 'Arrêter la détection Bluetooth (toutes les balises)',
+            'sink' => array('topic' => $base . '/' . self::CMDBT, 'payload' => '{"enabled":false}'),
             'links' => array('state' => 'ble.state'),
         )));
         /* Un intervalle de zéro déclenche un scan immédiat : c'est la façon
@@ -1270,13 +1755,20 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
          * l'a reçue, et l'arrêt d'une passerelle ne fait pas taire le capteur. */
         $filtre = $this->filtreCommun($_dossier);
         if ($filtre !== '') {
-            $table  = self::table();
-            $unites = self::unitesGeneriques();
-            $champs = array_keys($_dossier['champs']);
+            $table    = self::table();
+            $unites   = self::unitesGeneriques();
+            $presence = self::champsPresence();
+            $champs   = array_keys($_dossier['champs']);
             foreach ($champs as $champ) {
                 /* Un capteur qui publie les deux ne publie pas deux
                  * températures : c'est la même, dans deux unités. */
                 if ($champ === 'tempf' && isset($_dossier['champs']['tempc'])) {
+                    continue;
+                }
+                /* Et une balise n'a qu'UNE commande de présence : celle que le
+                 * démon calcule, qui redescend quand la balise se tait. Voir
+                 * champsPresence(). */
+                if (isset($presence[$champ])) {
                     continue;
                 }
                 $cle = $champ;
@@ -1307,8 +1799,15 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
                      * exploitable dans un scénario qu'une donnée perdue — et le
                      * jour où la passerelle est mise à jour et décode un capteur
                      * de plus, ses champs apparaissent sans qu'on touche au
-                     * plugin. */
-                    $capacite = 'generic.value';
+                     * plugin.
+                     *
+                     * Mais un NOMBRE arrive en valeur numérique, et non en
+                     * chaîne : c'est la différence entre une donnée qu'on trace,
+                     * qu'on compare et qu'on moyenne, et un texte qu'on ne peut
+                     * que lire. Le type a été relevé sur la trame (voir
+                     * recoitBalise) parce qu'un nom de champ ne le dit pas. */
+                    $capacite = ($_dossier['champs'][$champ] === 'n')
+                              ? 'generic.numeric' : 'generic.value';
                     $unite    = isset($unites[$champ]) ? $unites[$champ] : '';
                     $nomCanal = $champ;
                 }
@@ -1416,16 +1915,56 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return;
         }
         $_ctx->remember(self::ID . ':purge', $_maintenant);
-        $this->purgeCandidates($_ctx, $_maintenant, self::PEREMPTION);
+        $this->purgeBalises($_ctx, $_maintenant);
+        $this->purgePasserelles($_ctx, $_maintenant);
+    }
+
+    /*
+     * ET LES PASSERELLES SE PÉRIMENT COMME LES BALISES.
+     *
+     * Rien ne les périmait : un préfixe abandonné — la passerelle renommée, le
+     * module remplacé, la mauvaise saisie corrigée — restait en mémoire pour
+     * toujours et continuait de peser dans l'arbitrage (voir baseRetenue) comme
+     * dans le plafond de MAX_PASSERELLES. Un dossier de passerelle qui n'a pas
+     * reçu de SYStoMQTT depuis un jour ne décrit plus rien.
+     */
+    private function purgePasserelles($_ctx, $_maintenant) {
+        $restantes = array();
+        $oubliees  = array();
+        foreach ($this->passerelles($_ctx) as $slug) {
+            $dossier = $this->dossier($_ctx, 'gw:' . $slug);
+            if (empty($dossier)) {
+                continue;
+            }
+            if (($_maintenant - $this->nombre($dossier, 'vu', 0)) >= self::PEREMPTION_GW) {
+                $_ctx->forget(self::ID . ':gw:' . $slug);
+                $oubliees[] = $this->citation($this->texte($dossier, 'base'));
+                continue;
+            }
+            $restantes[] = $slug;
+        }
+        if (!empty($oubliees)) {
+            $_ctx->remember(self::ID . ':index.gw', $restantes);
+            $_ctx->log('info', 'OpenMQTTGateway : préfixe(s) sans SYStoMQTT depuis plus d\'un '
+                . 'jour, oublié(s) : ' . implode(', ', $oubliees) . '.');
+        }
     }
 
     /*
      * Une balise vue une fois puis plus jamais n'encombre pas la file : elle se
-     * périme. Une balise DÉCODÉE, jamais — son silence est précisément ce que
-     * son équipement rapporte, et l'oublier ferait figer sa présence à la
-     * dernière valeur publiée.
+     * périme au bout de trois heures. UNE BALISE DÉCODÉE SE PÉRIME AUSSI, au
+     * bout de vingt-quatre heures.
+     *
+     * Elle ne se périmait jamais, au motif que le silence d'un capteur est
+     * justement ce que son équipement rapporte. C'est vrai du capteur de la
+     * maison — et faux des deux cent soixante thermomètres du voisinage que
+     * Theengs décode tout aussi bien : ceux-là remplissaient l'inventaire pour
+     * l'éternité, et la balise de la maison n'y trouvait plus de place. Un jour
+     * de silence est généreux pour un capteur qui parle toutes les minutes, et
+     * son équipement, lui, reste dans Jeedom avec sa dernière valeur : il
+     * repartira au premier message.
      */
-    private function purgeCandidates($_ctx, $_maintenant, $_delai) {
+    private function purgeBalises($_ctx, $_maintenant) {
         $restantes = array();
         $oubliees  = 0;
         foreach ($this->balises($_ctx) as $mac) {
@@ -1433,8 +1972,8 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             if (empty($dossier)) {
                 continue;
             }
-            if (empty($dossier['decodee'])
-                && ($_maintenant - $this->nombre($dossier, 'vu', 0)) >= $_delai) {
+            $delai = empty($dossier['decodee']) ? self::PEREMPTION : self::PEREMPTION_DECODEE;
+            if (($_maintenant - $this->nombre($dossier, 'vu', 0)) >= $delai) {
                 $this->oublie($_ctx, $mac, $dossier);
                 $oubliees++;
                 continue;
@@ -1444,24 +1983,38 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         if ($oubliees > 0) {
             $_ctx->remember(self::ID . ':index.ble', $restantes);
             $_ctx->log('debug', 'OpenMQTTGateway : ' . $oubliees
-                . ' balise(s) jamais décodée(s) oubliée(s), ' . count($restantes) . ' suivie(s).');
+                . ' balise(s) silencieuse(s) oubliée(s), ' . count($restantes) . ' suivie(s).');
         }
     }
 
-    /* Le plafond atteint et rien à périmer : la candidate vue il y a le plus
-     * longtemps cède la place. Évincer plutôt que refuser garde l'inventaire
-     * utile — ce qui passe maintenant intéresse plus que ce qui est passé hier —
-     * et une balise décodée n'est jamais évincée. */
+    /*
+     * Le plafond atteint et rien à périmer : une balise cède la place.
+     *
+     * L'ordre du sacrifice compte, et il ne peut pas être « la plus ancienne
+     * jamais décodée ». Les capteurs décodés du voisinage, vus une fois chacun,
+     * étaient jusqu'ici inévinçables : deux cent cinquante d'entre eux
+     * verrouillaient l'inventaire, et la balise de la maison, arrivée après,
+     * était refusée — définitivement, puisque rien ne libérait jamais de place.
+     *
+     * On évince donc d'abord ce qui n'a pas fait ses preuves (pas de faisceau,
+     * voir confiance()), et la plus ancienne d'entre elles ; une balise qui a
+     * mérité son équipement n'est sacrifiée qu'en dernier recours, quand il n'y
+     * a plus qu'elles. Ce qui passe maintenant intéresse plus que ce qui est
+     * passé hier.
+     */
     private function evince($_ctx) {
         $plusVieille = null;
         $quand = null;
+        $rang  = null;
         foreach ($this->balises($_ctx) as $mac) {
             $dossier = $this->dossier($_ctx, 'ble:' . $mac);
-            if (empty($dossier) || !empty($dossier['decodee'])) {
+            if (empty($dossier)) {
                 continue;
             }
+            $sonRang = empty($dossier['faisceau']) ? 0 : 1;
             $vu = $this->nombre($dossier, 'vu', 0);
-            if ($quand === null || $vu < $quand) {
+            if ($rang === null || $sonRang < $rang || ($sonRang === $rang && $vu < $quand)) {
+                $rang  = $sonRang;
                 $quand = $vu;
                 $plusVieille = $mac;
             }
@@ -1571,13 +2124,23 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * ensuite les topics de PUBLICATION des actions — un joker y ferait fermer
      * la connexion par le broker au premier appui sur un bouton.
      */
-    private function base($_niveaux, $_jusqua) {
+    private function base($_ctx, $_niveaux, $_jusqua, $_topic) {
         if ($_jusqua < 1) {
             return '';
         }
         $base = array();
         for ($i = 0; $i < $_jusqua; $i++) {
-            if (!preg_match(self::NIVEAU_VALIDE, $_niveaux[$i])) {
+            if (!preg_match(self::NIVEAU_VALIDE, $_niveaux[$i]) || trim($_niveaux[$i]) === '') {
+                /* ET ON LE DIT. Une passerelle écartée en silence est une
+                 * enquête sans issue : l'utilisateur voit son parc incomplet,
+                 * le journal du plugin est muet, et rien ne désigne le préfixe
+                 * fautif. Une plainte par heure suffit à le nommer sans noyer
+                 * le journal sous le trafic voisin. */
+                $this->plainte($_ctx, 'topic', 'préfixe de topic écarté : « '
+                    . $this->citation($_topic) . ' ». Un niveau contient un joker ou un '
+                    . 'caractère qui ne peut pas figurer dans un topic de publication — les '
+                    . 'actions de cette passerelle partiraient sur un topic que le broker '
+                    . 'refuse. Les lettres, chiffres, espaces, « . _ : - » sont acceptés.');
                 return '';
             }
             $base[] = $_niveaux[$i];

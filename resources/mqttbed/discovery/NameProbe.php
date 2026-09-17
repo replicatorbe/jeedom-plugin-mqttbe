@@ -233,6 +233,22 @@ class MqttbeNameProbe {
             return $cle;
         }
         if (count($this->entries) >= self::MAX_ENTRIES) {
+            /*
+             * Avant de refuser, faire de la place.
+             *
+             * Une entrée n'était jamais retirée : chaque nouveau bail DHCP
+             * change l'URL, donc la clé, et laisse une entrée morte derrière
+             * lui. Un parc qui tourne atteignait le plafond en quelques mois, et
+             * plus AUCUN appareil n'obtenait son nom — avec une plainte espacée
+             * de cinq minutes, donc une installation muette sur la cause.
+             *
+             * On sacrifie d'abord les sondes abandonnées, puis les plus
+             * anciennement interrogées : une entrée qui a rendu un nom
+             * récemment est celle qui sert.
+             */
+            $this->makeRoom();
+        }
+        if (count($this->entries) >= self::MAX_ENTRIES) {
             $this->refused++;
             $this->throttled('plafond', 'warning',
                 'sonde de nom : plafond de ' . self::MAX_ENTRIES . ' sondes atteint, « '
@@ -250,6 +266,55 @@ class MqttbeNameProbe {
             'over'     => false,
         );
         return $cle;
+    }
+
+    /**
+     * Libère un cinquième du plafond, des entrées les moins utiles aux plus.
+     *
+     * Ni les sondes en vol ni celles qui portent un nom obtenu récemment ne sont
+     * touchées : perdre un nom acquis pour faire de la place serait échanger un
+     * problème contre un autre.
+     */
+    private function makeRoom() {
+        $cible = (int) ceil(self::MAX_ENTRIES / 5);
+        $libere = 0;
+
+        /* D'abord les abandonnées : elles ne rendront rien tant qu'une relance
+         * de découverte ne les réarme pas, et une relance les recréera. */
+        foreach ($this->entries as $cle => $entree) {
+            if ($libere >= $cible) {
+                break;
+            }
+            if (!empty($entree['over']) && empty($entree['inflight'])) {
+                unset($this->entries[$cle]);
+                $libere++;
+            }
+        }
+        if ($libere >= $cible) {
+            return;
+        }
+
+        /* Puis les plus anciennement interrogées, sans nom connu. */
+        $candidats = array();
+        foreach ($this->entries as $cle => $entree) {
+            if (!empty($entree['inflight']) || $entree['name'] !== '') {
+                continue;
+            }
+            $candidats[$cle] = $entree['at'];
+        }
+        asort($candidats);
+        foreach (array_keys($candidats) as $cle) {
+            if ($libere >= $cible) {
+                break;
+            }
+            unset($this->entries[$cle]);
+            $libere++;
+        }
+        if ($libere > 0) {
+            $this->throttled('purge', 'info',
+                'sonde de nom : ' . $libere . ' entrée(s) libérée(s) pour faire de la place — '
+              . 'sondes abandonnées ou jamais abouties.');
+        }
     }
 
     /* Le nom connu pour cette clé, ou '' — jamais null : « pas encore obtenu »
@@ -532,8 +597,52 @@ class MqttbeNameProbe {
         if (!preg_match('#^https?://#i', $url)) {
             return false;
         }
-        $hote = parse_url($url, PHP_URL_HOST);
-        return is_string($hote) && $hote !== '';
+        /*
+         * L'hôte doit être une ADRESSE IP littérale, et rien d'autre.
+         *
+         * Cette URL est composée par un adapter à partir de ce qu'un appareil a
+         * annoncé sur le broker — et n'importe qui pouvant publier sur le topic
+         * d'annonce peut donc la choisir. Sans ce contrôle, le démon acceptait
+         * `attaquant.example.com`, `127.0.0.1:8080/admin`, `192.168.0.5:22` ou
+         * `1.2.3.4@evil.tld` : une requête sortante arbitraire depuis
+         * l'intérieur du réseau, renouvelée chaque jour, dont la réponse devient
+         * le nom d'un équipement.
+         *
+         * Un nom d'hôte est refusé : un appareil du réseau local s'annonce par
+         * son adresse, et refuser les noms supprime d'un coup la résolution DNS
+         * comme canal de sortie.
+         */
+        $parties = parse_url($url);
+        if (!is_array($parties) || !isset($parties['host'])) {
+            return false;
+        }
+        /* Un « user:pass@ » déguise l'hôte réel : parse_url le sépare, mais un
+         * lecteur humain — et certaines bibliothèques — s'y trompent. */
+        if (isset($parties['user']) || isset($parties['pass'])) {
+            return false;
+        }
+        $hote = trim($parties['host'], '[]');
+        if ($hote === '' || filter_var($hote, FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+        /* Le bouclage local n'est jamais un appareil à interroger : c'est
+         * Jeedom lui-même, et cibler ses propres services depuis une annonce
+         * MQTT n'a aucune raison d'être. */
+        if (filter_var($hote, FILTER_VALIDATE_IP, FILTER_FLAG_NO_RES_RANGE) === false) {
+            return false;
+        }
+        /*
+         * Et un port d'usage web, sinon rien.
+         *
+         * Aucun adapter ne compose de port : ils interrogent tous la page d'un
+         * appareil. Laisser passer un port arbitraire offrirait un balayage du
+         * réseau local à qui sait publier une annonce — « est-ce que le port 22
+         * de cette machine répond ? » se lit dans le journal du démon.
+         */
+        if (isset($parties['port']) && !in_array((int) $parties['port'], array(80, 443, 8080), true)) {
+            return false;
+        }
+        return true;
     }
 
     /*

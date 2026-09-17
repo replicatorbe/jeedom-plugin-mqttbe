@@ -814,10 +814,20 @@ class MqttbeDiscoveryEngine {
          * chaque appareil du parc, pour rien. C'est aussi pourquoi la boucle
          * n'a rien eu à changer : elle appelle déjà tick() à chaque tour.
          */
+        if (!$this->enabled) {
+            /*
+             * Arrêtée veut dire arrêtée : ni requête vers le réseau, ni
+             * consommation du drapeau de changement. La version précédente
+             * drainait ce drapeau AVANT ce test, donc un nom obtenu pendant
+             * l'arrêt était jeté — et comme une réponse identique ne lève plus
+             * le drapeau, il était perdu jusqu'au redémarrage du démon.
+             */
+            return;
+        }
         $this->probes->tick();
         $this->republish();
 
-        if (!$this->enabled || empty($this->active)) {
+        if (empty($this->active)) {
             return;
         }
         $maintenant = $this->now();
@@ -857,8 +867,10 @@ class MqttbeDiscoveryEngine {
      * le suivant identique ne partira pas.
      */
     private function republish() {
+        /* Le test d'activité est fait par l'appelant AVANT tout drainage : ici,
+         * un drapeau consommé est un drapeau traité. */
         $changes = $this->probes->drainChanged();
-        if (empty($changes) || !$this->enabled) {
+        if (empty($changes)) {
             return;
         }
         $changes = array_flip($changes);

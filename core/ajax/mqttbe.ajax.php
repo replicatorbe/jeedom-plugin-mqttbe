@@ -186,14 +186,24 @@ try {
          * découverte avait mis de côté.
          */
         $uid = init('uid');
-        $attente = cache::byKey('mqttbe::pending')->getValue(array());
-        if (!is_array($attente) || !isset($attente[$uid]['model'])) {
+        $enAttente = mqttbeDaemon::pendingModel($uid);
+        if ($enAttente === null) {
             throw new Exception(__("Ce candidat n'est plus dans la file : relancez la découverte.", __FILE__));
         }
         mqttbeFactory::loadDiscovery();
-        $modele = MqttbeDeviceModel::fromArray($attente[$uid]['model']);
-        if ($modele === null) {
-            throw new Exception(__('Modèle de périphérique illisible', __FILE__));
+        /* fromArray() lève quand le modèle est illisible, elle ne rend jamais
+         * null : le test « === null » d'avant était inatteignable. */
+        $modele = MqttbeDeviceModel::fromArray($enAttente);
+        /*
+         * Revalidé, comme le fait importModel. Le modèle vient du cache : il a
+         * pu y attendre une mise à jour du plugin, et ce que la découverte
+         * acceptait la semaine dernière n'est pas forcément ce que la fabrique
+         * saura écrire aujourd'hui. Mieux vaut un refus explicite qu'un
+         * équipement à moitié construit.
+         */
+        $motifs = $modele->validate();
+        if (!empty($motifs)) {
+            throw new Exception(__('Modèle refusé :', __FILE__) . ' ' . implode(' ; ', $motifs));
         }
         /*
          * L'adoption vaut décision : le modèle était « guess », il devient
@@ -203,6 +213,22 @@ try {
         $donnees = $modele->toArray();
         $donnees['identity']['confidence'] = 'certain';
         $compte = mqttbeFactory::applyData($donnees);
+        /*
+         * applyData() n'échoue jamais par exception : elle rend status =
+         * 'error' et les motifs dans messages[]. Ne pas regarder ce statut,
+         * c'était retirer le candidat de la file — donc le perdre — puis
+         * annoncer en vert « Équipement créé : sans nom — 0 commande(s) ».
+         */
+        if ($compte['status'] === 'error') {
+            $motifs = isset($compte['messages']) && is_array($compte['messages'])
+                    ? $compte['messages'] : array();
+            throw new Exception(__("L'adoption a échoué :", __FILE__) . ' '
+                . (empty($motifs) ? __('raison inconnue, voyez le journal du plugin.', __FILE__)
+                                  : implode(' ; ', $motifs))
+                . ' ' . __('Le candidat reste dans la file.', __FILE__));
+        }
+        /* Retiré de la file seulement maintenant : après une écriture réussie,
+         * et pas avant. */
         mqttbeDaemon::forgetPending($uid);
         ajax::success($compte);
     }
@@ -211,21 +237,39 @@ try {
         /* Écarté ne veut pas dire oublié : sans mémoire du refus, le candidat
          * reviendrait dans la file à la trame suivante, quelques secondes plus
          * tard, indéfiniment. */
-        mqttbeDaemon::ignoreUid(init('uid'));
+        $uid = init('uid');
+        mqttbeDaemon::ignoreUid($uid);
+        /* Le refus est écrit en configuration : il tient même si la file, elle,
+         * n'a pas pu être réécrite — le candidat ne reviendra pas. */
+        $ignores = mqttbeDaemon::ignoredUids();
+        if (!isset($ignores[(string) $uid])) {
+            throw new Exception(__("Le refus n'a pas pu être enregistré : l'appareil serait reproposé.", __FILE__));
+        }
         ajax::success(array('message' => __('Appareil écarté : il ne vous sera plus proposé.', __FILE__)));
     }
 
     if (init('action') == 'unignore') {
-        mqttbeDaemon::forgetIgnored(init('uid'));
+        $uid = init('uid');
+        mqttbeDaemon::forgetIgnored($uid);
+        $ignores = mqttbeDaemon::ignoredUids();
+        if (isset($ignores[(string) $uid])) {
+            throw new Exception(__("Le refus n'a pas pu être annulé.", __FILE__));
+        }
         ajax::success(array('message' => __('Appareil de nouveau proposé à la prochaine découverte.', __FILE__)));
     }
 
     if (init('action') == 'pending') {
         /* Ce que la découverte a vu sans le créer, quand la création
          * automatique est désactivée. */
-        $attente = cache::byKey('mqttbe::pending')->getValue(array());
+        $attente = mqttbeDaemon::pendingQueue();
+        if ($attente === null) {
+            /* La file n'a pas pu être lue. Répondre « vide » ferait croire que
+             * plus rien n'attend, et le refus d'un candidat invisible est
+             * impossible : mieux vaut le dire. */
+            throw new Exception(__("La file d'adoption n'a pas pu être lue : réessayez dans un instant.", __FILE__));
+        }
         $liste = array();
-        foreach (is_array($attente) ? $attente : array() as $uid => $candidat) {
+        foreach ($attente as $uid => $candidat) {
             $meta = isset($candidat['model']['meta']) ? $candidat['model']['meta'] : array();
             /* Le modèle complet n'a rien à faire dans la page : ce qui aide à
              * décider, c'est depuis quand on le voit et ce qu'on en sait. */
@@ -242,7 +286,10 @@ try {
                 ))),
             );
         }
-        usort($liste, function ($_a, $_b) { return $_b['seen'] - $_a['seen']; });
+        /* Plus de tri ici : la file arrive déjà dans l'ordre où l'on décide —
+         * présence durable et adresse stable d'abord, c'est-à-dire l'ordre
+         * même qui décide de ce qui reste quand elle déborde. Deux ordres
+         * différents diraient deux choses différentes du même candidat. */
         ajax::success(array('pending' => $liste, 'ignored' => mqttbeDaemon::ignoredUids()));
     }
 

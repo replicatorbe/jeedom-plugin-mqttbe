@@ -83,7 +83,13 @@ class MqttbeContexteEssaiOmg {
 
     public $broker = true;
 
+    /* Les TENTATIVES, et non les réussites : un broker injoignable n'en laisse
+     * aucune trace dans `publications`, et c'est précisément ce qu'on veut
+     * compter — chacune coûte un aller-retour et une ligne de journal. */
+    public $tentatives = 0;
+
     public function publish($_topic, $_payload, $_qos = 0, $_retain = false) {
+        $this->tentatives++;
         if (!$this->broker) {
             return false;
         }
@@ -169,6 +175,25 @@ class MqttbeContexteEssaiOmg {
             }
         }
         return $compte;
+    }
+
+    /* Ce qui RESTE sur le broker : le dernier message de chaque topic retenu,
+     * une charge utile vide effaçant l'entrée (OASIS 3.1.1 §3.3.1.3). C'est la
+     * vue qu'aurait un démon qui redémarre — ou l'utilisateur qui regarde son
+     * broker avec un explorateur MQTT. */
+    public function retenus() {
+        $vivants = array();
+        foreach ($this->publications as $publication) {
+            if (!$publication['retain']) {
+                continue;
+            }
+            if ($publication['payload'] === '') {
+                unset($vivants[$publication['topic']]);
+            } else {
+                $vivants[$publication['topic']] = $publication['payload'];
+            }
+        }
+        return $vivants;
     }
 }
 
@@ -275,7 +300,17 @@ function mqttbeCanalOmg($_modele, $_cle, $_capacite, $_description) {
 }
 
 /* Le parc entier rejoué d'un coup : passerelles, puis balises brutes, puis un
- * battement. C'est l'ordre du démarrage du démon. */
+ * battement. C'est l'ordre du démarrage du démon.
+ *
+ * Les trames sont rejouées DEUX FOIS, à une demi-heure d'intervalle, et ce
+ * n'est pas une commodité : la balise brute du parc porte une adresse
+ * ALÉATOIRE, qui tourne toutes les quinze minutes sur un téléphone ordinaire.
+ * L'adapter ne propose une telle balise à l'adoption qu'une fois qu'elle a
+ * survécu à la rotation — sans quoi un seul iPhone fabriquerait quatre-vingt-
+ * seize candidats par jour et chasserait de la file le traceur repéré la
+ * veille. Rejouer le parc à l'instant zéro, c'est donc le regarder avant qu'il
+ * ait quoi que ce soit à dire ; la demi-heure est ce que voit un démon qui
+ * tourne depuis le matin. */
 function mqttbeParcOmg($_reglages = null) {
     $passerelles = mqttbeLitJsonOmg('passerelles.json');
     $balises     = mqttbeLitJsonOmg('balises.json');
@@ -287,6 +322,9 @@ function mqttbeParcOmg($_reglages = null) {
     if ($_reglages !== null) {
         $ctx->pose('omg', $_reglages);
     }
+    mqttbeRejouePasserellesOmg($adapter, $ctx, $passerelles['passerelles']);
+    mqttbeRejoueBalisesOmg($adapter, $ctx, $balises['trames']);
+    $ctx->avance(1800);
     mqttbeRejouePasserellesOmg($adapter, $ctx, $passerelles['passerelles']);
     mqttbeRejoueBalisesOmg($adapter, $ctx, $balises['trames']);
     $adapter->onTick($ctx);
@@ -356,7 +394,11 @@ function mqttbeControlesOmg() {
         if (strpos($topic, '#') !== false) {
             $fautes[] = $topic . ' : joker « # », c\'est tout le broker qui traverserait le démon.';
         }
-        if (strpos($topic, 'SYStoMQTT') === false && strpos($topic, 'BTtoMQTT') === false) {
+        /* La branche « mqttbe/omg/ble/+/state » est la sienne : c'est là qu'il
+         * pose ce qu'il calcule, et s'y abonner est la seule façon de retrouver
+         * au démarrage ce que le démon précédent y a laissé. */
+        if (strpos($topic, 'SYStoMQTT') === false && strpos($topic, 'BTtoMQTT') === false
+            && strpos($topic, 'mqttbe/omg/ble/') !== 0) {
             $fautes[] = $topic . ' : ce filtre ne désigne pas OpenMQTTGateway.';
         }
     }
@@ -415,12 +457,18 @@ function mqttbeControlesOmg() {
             array('ip',           'generic.value',       $base . '/SYStoMQTT [ip]'),
             array('version',      'generic.value',       $base . '/SYStoMQTT [version]'),
             array('latest',       'generic.value',       $base . '/RLStoMQTT [latest_version]'),
-            array('ble.state',    'switch.state',        $base . '/BTtoMQTT [enabled]'),
+            /* Ni ENERGY_STATE, ni ENERGY_ON, ni ENERGY_OFF : la radio
+             * Bluetooth d'une passerelle n'est pas une prise électrique, et le
+             * gabarit « core::prise » lui en donnait l'apparence, avec le geste
+             * qui va avec. */
+            array('ble.state',    'generic.numeric',     $base . '/BTtoMQTT [enabled]'),
             array('ble.interval', 'generic.value',       $base . '/BTtoMQTT [interval]'),
             array('ble.duration', 'generic.value',       $base . '/BTtoMQTT [scanduration]'),
             array('restart',      'device.restart',      $base . '/commands/MQTTtoSYS/config [{"cmd":"restart"}]'),
-            array('ble.on',       'switch.on',           $base . '/commands/MQTTtoBT/config [{"enabled":true,"save":true}]'),
-            array('ble.off',      'switch.off',          $base . '/commands/MQTTtoBT/config [{"enabled":false,"save":true}]'),
+            /* Et sans `save:true` : voir le contrôle « couper le Bluetooth
+             * n'écrit pas la mémoire persistante ». */
+            array('ble.on',       'generic.action',      $base . '/commands/MQTTtoBT/config [{"enabled":true}]'),
+            array('ble.off',      'generic.action',      $base . '/commands/MQTTtoBT/config [{"enabled":false}]'),
             array('ble.scan',     'generic.action',      $base . '/commands/MQTTtoBT/config [{"interval":0}]'),
         );
         foreach ($attendus as $attendu) {
@@ -545,7 +593,11 @@ function mqttbeControlesOmg() {
         if ($ecart !== '') {
             $fautes[] = $ecart;
         }
-        $etat = $ctx->derniereEtat($mac);
+        /* L'état n'est publié que pour les balises `certain` — une candidate
+         * n'a aucun équipement, donc aucun lecteur. Pour regarder ce que dit
+         * l'état de CETTE balise-là, il faut donc qu'elle soit adoptée. */
+        $parcAdopte = mqttbeParcOmg(array('bleAdoptAll' => true));
+        $etat = $parcAdopte['ctx']->derniereEtat($mac);
         if ($etat === null) {
             $fautes[] = 'aucun état publié pour la balise : présence, pièce et date de dernière vue '
                       . 'n\'atteindraient jamais Jeedom.';
@@ -566,6 +618,11 @@ function mqttbeControlesOmg() {
     $adapterR = new MqttbeOpenMqttGateway();
     $ctxR = new MqttbeContexteEssaiOmg();
     $topicR = $reperes['SAM'] . '/BTtoMQTT/D2D2D2102030';
+    $adapterR->onMessage($topicR, '{"id":"D2:D2:D2:10:20:30","mac_type":1,"name":"BALISE-ESSAI 01",'
+        . '"manufacturerdata":"a705","rssi":-70,"txpower":0}', false, $ctxR);
+    /* L'adresse est aléatoire : la balise n'est proposée qu'une fois qu'elle a
+     * survécu à la période de rotation. Une demi-heure, et elle est là. */
+    $ctxR->avance(1800);
     $adapterR->onMessage($topicR, '{"id":"D2:D2:D2:10:20:30","mac_type":1,"name":"BALISE-ESSAI 01",'
         . '"manufacturerdata":"a705","rssi":-70,"txpower":0}', false, $ctxR);
     $adapterR->onTick($ctxR);
@@ -616,6 +673,11 @@ function mqttbeControlesOmg() {
     mqttbeRejouePasserellesOmg($adapterD, $ctxD, $parc['passerelles']['passerelles']);
     mqttbeRejoueBalisesOmg($adapterD, $ctxD, $parc['balises']['trames']);
     mqttbeRejoueBalisesOmg($adapterD, $ctxD, $decodees['trames']);
+    /* Une demi-heure plus tard, tout est encore là : voir mqttbeParcOmg(). */
+    $ctxD->avance(1800);
+    mqttbeRejouePasserellesOmg($adapterD, $ctxD, $parc['passerelles']['passerelles']);
+    mqttbeRejoueBalisesOmg($adapterD, $ctxD, $parc['balises']['trames']);
+    mqttbeRejoueBalisesOmg($adapterD, $ctxD, $decodees['trames']);
     $adapterD->onTick($ctxD);
     $modelesD = mqttbeModelesParUidOmg($ctxD);
     $fautes = array();
@@ -650,11 +712,18 @@ function mqttbeControlesOmg() {
         }
     }
     /* Le traceur n'est reconnu que par le nom d'un champ — `track` — et par le
-     * `model` que la passerelle lui donne. Aucun catalogue n'intervient. */
+     * `model` que la passerelle lui donne. Aucun catalogue n'intervient. Le
+     * champ lui-même ne devient PAS une commande : voir le contrôle « une seule
+     * commande de présence ». */
     if (isset($modelesD['ble:' . $reperes['TRACEUR']])) {
         $traceur = $modelesD['ble:' . $reperes['TRACEUR']];
-        $ecart = mqttbeCanalOmg($traceur, 'track', 'presence.detected',
-            'bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003006 [track]');
+        if ($traceur->confidence() !== 'certain') {
+            $fautes[] = 'le traceur n\'est reconnu que par le nom du champ « track » et par le '
+                      . 'modèle que la passerelle lui donne : sans cela, aucun catalogue ne le '
+                      . 'rattraperait.';
+        }
+        $ecart = mqttbeCanalOmg($traceur, 'state.presence', 'presence.detected',
+            'mqttbe/omg/ble/' . $reperes['TRACEUR'] . '/state [presence]');
         if ($ecart !== '') {
             $fautes[] = $ecart;
         }
@@ -767,7 +836,10 @@ function mqttbeControlesOmg() {
         $fautes[] = 'aucun modèle pour la balise aux champs inattendus.';
     } else {
         $bizarre = $modelesD['ble:a8b0c1003007'];
-        $ecart = mqttbeCanalOmg($bizarre, 'tilt', 'generic.value',
+        /* Générique, mais NUMÉRIQUE : « 37 » se trace, se compare et se
+         * moyenne ; « 37 » en chaîne de caractères ne fait rien de tout cela,
+         * et l'utilisateur ne le découvre qu'en voulant en tirer un graphique. */
+        $ecart = mqttbeCanalOmg($bizarre, 'tilt', 'generic.numeric',
             'bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003007 [tilt]');
         if ($ecart !== '') {
             $fautes[] = $ecart;
@@ -839,7 +911,10 @@ function mqttbeControlesOmg() {
     $fautes = array();
     $adapterA = new MqttbeOpenMqttGateway();
     $ctxA = new MqttbeContexteEssaiOmg();
-    $ctxA->pose('omg', array('bleAwayDelay' => 120, 'bleAdoptAll' => false));
+    /* La balise du parc est une candidate, et l'état n'est publié que pour ce
+     * qui a un équipement dans Jeedom : on l'adopte, puisque c'est son ABSENCE
+     * qu'on vient regarder. */
+    $ctxA->pose('omg', array('bleAwayDelay' => 120, 'bleAdoptAll' => true));
     mqttbeRejoueBalisesOmg($adapterA, $ctxA, $parc['balises']['trames']);
     $adapterA->onTick($ctxA);
     $etat = $ctxA->derniereEtat($reperes['BRUTE']);
@@ -1029,6 +1104,9 @@ function mqttbeControlesOmg() {
     $fautes = array();
     $adapterX = new MqttbeOpenMqttGateway();
     $ctxX = new MqttbeContexteEssaiOmg();
+    /* Tout adopté : c'est la seule façon pour qu'un passant ait un état retenu
+     * à effacer — sans quoi le contrôle de l'effacement ne mordrait plus. */
+    $ctxX->pose('omg', array('bleAdoptAll' => true));
     $adapterX->onMessage($reperes['ENTREE'] . '/BTtoMQTT/A8B0C1009999',
         '{"id":"A8:B0:C1:00:99:99","mac_type":1,"manufacturerdata":"a705","rssi":-95}', false, $ctxX);
     $adapterX->onMessage($reperes['ENTREE'] . '/BTtoMQTT/A8B0C1003001',
@@ -1310,6 +1388,616 @@ function mqttbeControlesOmg() {
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre,
         "le dépôt part sur GitHub : une capture brute y publierait la topologie du réseau "
         . "d'une maison.\n" . implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 25 ---
+     * RENOMMER UNE PASSERELLE NE LA TUE PAS.
+     *
+     * Même `mac`, préfixe neuf : l'ancien dossier restait en mémoire pour
+     * toujours et, son préfixe étant plus court, il l'emportait à chaque
+     * battement. Les six capteurs lisaient un topic mort, les boutons
+     * publiaient dans le vide, et « relancer la découverte » ne réparait rien
+     * puisque l'arbitrage était le même. Le nom d'usine étant toujours plus
+     * court qu'un nom choisi, tout utilisateur qui renomme sa passerelle était
+     * touché — sans une ligne de journal pour l'expliquer. */
+    $titre = 'une passerelle renommée reprend la main, et l\'ancien préfixe se périme';
+    $fautes = array();
+    $adapterN = new MqttbeOpenMqttGateway();
+    $ctxN = new MqttbeContexteEssaiOmg();
+    $sysN = json_encode(array('mac' => 'A8:B0:C1:00:10:01', 'env' => 'esp32dev-ble',
+                              'version' => 'v1.7.0', 'ip' => '192.0.2.10'));
+    $ancien  = 'bt/OMG';                     /* nom d'usine, court */
+    $nouveau = 'bt/OMG_SALON_ETAGE';         /* nom choisi, plus long */
+    for ($i = 0; $i < 3; $i++) {
+        $ctxN->avance(100);
+        $adapterN->onMessage($ancien . '/SYStoMQTT', $sysN, false, $ctxN);
+        $adapterN->onTick($ctxN);
+    }
+    $premier = end($ctxN->modeles);
+    if ($premier === false || $premier->channel('restart') === null
+        || $premier->channel('restart')->sinkTopic() !== $ancien . '/commands/MQTTtoSYS/config') {
+        $fautes[] = 'la passerelle n\'est pas décrite sous son premier préfixe.';
+    }
+    /* L'utilisateur la renomme : l'ancien préfixe se tait pour toujours. */
+    for ($i = 0; $i < 8; $i++) {
+        $ctxN->avance(100);
+        $adapterN->onMessage($nouveau . '/SYStoMQTT', $sysN, false, $ctxN);
+        $adapterN->onTick($ctxN);
+    }
+    $dernier = end($ctxN->modeles);
+    $restart = ($dernier === false) ? null : $dernier->channel('restart');
+    if ($restart === null || $restart->sinkTopic() !== $nouveau . '/commands/MQTTtoSYS/config') {
+        $fautes[] = 'après renommage, les ordres partent encore sur « '
+                  . ($restart === null ? '(aucun)' : $restart->sinkTopic()) . ' » : la passerelle '
+                  . 'ne les écoute plus, et le bouton « Redémarrer » ne fait plus rien.';
+    }
+    $temperature = ($dernier === false) ? null : $dernier->channel('temperature');
+    if ($temperature === null || strpos($temperature->sourceTopic(), $nouveau . '/') !== 0) {
+        $fautes[] = 'après renommage, les capteurs lisent encore « '
+                  . ($temperature === null ? '(aucun)' : $temperature->sourceTopic())
+                  . ' », que plus personne n\'alimente.';
+    }
+    $dit = false;
+    foreach ($ctxN->journal as $ligne) {
+        if (strpos($ligne, $nouveau) !== false && strpos($ligne, $ancien) !== false) {
+            $dit = true;
+        }
+    }
+    if (!$dit) {
+        $fautes[] = 'aucune ligne de journal ne nomme le changement de préfixe : l\'utilisateur '
+                  . 'voit son parc muet et n\'a rien à quoi se raccrocher.';
+    }
+    /* Et le préfixe mort ne reste pas en mémoire pour l'éternité. */
+    $ctxN->avance(90000);
+    $adapterN->onTick($ctxN);
+    if (in_array(MqttbeOpenMqttGateway::slug($ancien), $adapterN->passerelles($ctxN), true)) {
+        $fautes[] = 'le préfixe abandonné est encore en inventaire un jour plus tard : rien ne '
+                  . 'périme les passerelles, et chaque renommage en laisse un de plus.';
+    }
+    /* Deux préfixes VIVANTS, eux, ne se volent pas l'équipement d'un battement
+     * à l'autre : c'est le cas du parc réel, dont un préfixe est dupliqué. */
+    $adapterJ2 = new MqttbeOpenMqttGateway();
+    $ctxJ2 = new MqttbeContexteEssaiOmg();
+    for ($i = 0; $i < 20; $i++) {
+        $ctxJ2->avance(50);
+        $adapterJ2->onMessage('bt/OMG_A/SYStoMQTT', $sysN, false, $ctxJ2);
+        $adapterJ2->onMessage('bt/OMG_BBBBBBBB/SYStoMQTT', $sysN, false, $ctxJ2);
+        $adapterJ2->onTick($ctxJ2);
+    }
+    if (count($ctxJ2->modeles) !== 1) {
+        $fautes[] = count($ctxJ2->modeles) . ' modèles pour deux préfixes également vivants : '
+                  . 'ils se volent l\'équipement à chaque battement, et la base est réécrite en boucle.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 26 ---
+     * L'ÉTAT RETENU NE SURVIT PAS AU DÉMON POUR MENTIR.
+     *
+     * Le démon s'arrête, l'objet part, le démon repart : le message retenu dit
+     * toujours « présent, au salon », et comme l'inventaire est vide au
+     * redémarrage, plus personne ne le corrige. Les scénarios bâtis sur la
+     * présence ne se déclenchent plus jamais — et rien, dans Jeedom, ne le
+     * laisse voir. */
+    $titre = 'au démarrage, l\'état retenu périmé est démenti ou effacé';
+    $fautes = array();
+    $adapterE = new MqttbeOpenMqttGateway();
+    $ctxE = new MqttbeContexteEssaiOmg();
+    /* 1. Une balise INCONNUE de l'inventaire : le téléphone d'un passant, dont
+     *    l'état ne sera jamais recalculé. Son message s'efface. */
+    $vieux = date('Y-m-d H:i:s', (int) $ctxE->now() - 7200);
+    $adapterE->onMessage('mqttbe/omg/ble/a8b0c1009999/state',
+        json_encode(array('presence' => 1, 'nearest' => 'OMG_ESP32_BLE_SALON', 'seen' => $vieux)),
+        true, $ctxE);
+    $efface = false;
+    foreach ($ctxE->publications as $publication) {
+        if ($publication['topic'] === 'mqttbe/omg/ble/a8b0c1009999/state'
+            && $publication['payload'] === '' && $publication['retain']) {
+            $efface = true;
+        }
+    }
+    if (!$efface) {
+        $fautes[] = 'l\'état retenu d\'une balise inconnue n\'est pas effacé : le broker garde '
+                  . 'une présence que plus personne ne recalcule, et Jeedom la relit à chaque '
+                  . 'démarrage.';
+    }
+    /* 2. Une balise CONNUE, vue il y a deux heures : présence démentie tout de
+     *    suite, sans attendre le battement. */
+    $adapterE2 = new MqttbeOpenMqttGateway();
+    $ctxE2 = new MqttbeContexteEssaiOmg();
+    $adapterE2->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C1003001',
+        '{"id":"A8:B0:C1:00:30:01","mac_type":0,"tempc":21.4,"rssi":-60}', false, $ctxE2);
+    $adapterE2->onTick($ctxE2);
+    $ancienEtat = $ctxE2->derniereEtat('a8b0c1003001');
+    $ctxE2->avance(7200);
+    $adapterE2->onMessage('mqttbe/omg/ble/a8b0c1003001/state',
+        json_encode($ancienEtat), true, $ctxE2);
+    $etat = $ctxE2->derniereEtat('a8b0c1003001');
+    if ($ancienEtat === null || (int) $ancienEtat['presence'] !== 1) {
+        $fautes[] = 'la balise n\'a même pas été déclarée présente au départ.';
+    } elseif ($etat === null || (int) $etat['presence'] !== 0 || $etat['nearest'] !== '') {
+        $fautes[] = 'l\'état retenu vieux de deux heures n\'est pas démenti : Jeedom affiche « '
+                  . 'présent, ' . $ancienEtat['nearest'] . ' » pour un objet parti, et le scénario '
+                  . 'd\'absence ne se déclenche jamais.';
+    }
+    /* 3. Mais un état ENCORE FRAIS n'est pas touché : un démon qui redémarre en
+     *    quinze secondes ne doit pas faire clignoter la présence de la maison. */
+    $adapterE3 = new MqttbeOpenMqttGateway();
+    $ctxE3 = new MqttbeContexteEssaiOmg();
+    $frais = date('Y-m-d H:i:s', (int) $ctxE3->now() - 15);
+    $adapterE3->onMessage('mqttbe/omg/ble/a8b0c1003001/state',
+        json_encode(array('presence' => 1, 'nearest' => 'OMG_ESP32_BLE_SAM', 'seen' => $frais)),
+        true, $ctxE3);
+    if (!empty($ctxE3->publications)) {
+        $fautes[] = 'un état vieux de quinze secondes a été corrigé : le redémarrage du démon ne '
+                  . 'doit pas faire clignoter la présence.';
+    }
+    /* 4. Et un message qui n'est PAS retenu est notre propre écho : l'ignorer
+     *    est la seule façon de ne pas se répondre à soi-même sans fin. */
+    $adapterE4 = new MqttbeOpenMqttGateway();
+    $ctxE4 = new MqttbeContexteEssaiOmg();
+    $adapterE4->onMessage('mqttbe/omg/ble/a8b0c1009999/state',
+        json_encode(array('presence' => 1, 'nearest' => 'X', 'seen' => $vieux)), false, $ctxE4);
+    if (!empty($ctxE4->publications)) {
+        $fautes[] = 'un message non retenu a déclenché une correction : c\'est notre propre écho, '
+                  . 'et l\'adapter se répondrait à lui-même indéfiniment.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 27 ---
+     * UNE CANDIDATE NE LAISSE RIEN SUR LE BROKER.
+     *
+     * Une balise `guess` n'a aucun équipement dans Jeedom, donc aucun lecteur :
+     * publier son état, c'est déposer un message RETENU, c'est-à-dire éternel,
+     * pour chaque téléphone qui passe devant la maison. Mesuré sur
+     * l'installation réelle : trente et un messages retenus pour un seul
+     * équipement. */
+    $titre = 'seules les balises adoptées laissent un état sur le broker';
+    $fautes = array();
+    $adapterS = new MqttbeOpenMqttGateway();
+    $ctxS = new MqttbeContexteEssaiOmg();
+    $adapterS->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C1003001',
+        '{"id":"A8:B0:C1:00:30:01","mac_type":0,"tempc":21.4,"rssi":-60}', false, $ctxS);
+    for ($i = 0; $i < 30; $i++) {
+        $adresse = sprintf('7A00000000%02X', $i);
+        $adapterS->onMessage($reperes['ENTREE'] . '/BTtoMQTT/' . $adresse,
+            '{"id":"' . $adresse . '","mac_type":1,"manufacturerdata":"a705","rssi":-80}', false, $ctxS);
+        $ctxS->avance(1);
+        $adapterS->onTick($ctxS);
+    }
+    $retenus = $ctxS->retenus();
+    if (count($retenus) !== 1) {
+        $fautes[] = count($retenus) . ' messages retenus laissés sur le broker pour un seul '
+                  . 'équipement : chaque téléphone de passage y dépose un état qui ne sera jamais '
+                  . 'relu ni effacé.';
+    }
+    if (!isset($retenus['mqttbe/omg/ble/a8b0c1003001/state'])) {
+        $fautes[] = 'le capteur adopté, lui, n\'a pas d\'état : ses commandes de présence, de pièce '
+                  . 'et de dernière vue resteraient vides.';
+    }
+    /* Et le jour où la balise est adoptée, la publication démarre. */
+    $adapterS2 = new MqttbeOpenMqttGateway();
+    $ctxS2 = new MqttbeContexteEssaiOmg();
+    $ctxS2->pose('omg', array('bleAdoptAll' => true));
+    $adapterS2->onMessage($reperes['ENTREE'] . '/BTtoMQTT/7A0000000001',
+        '{"id":"7A0000000001","mac_type":1,"manufacturerdata":"a705","rssi":-80}', false, $ctxS2);
+    $adapterS2->onTick($ctxS2);
+    if (count($ctxS2->retenus()) !== 1) {
+        $fautes[] = 'une balise adoptée ne publie toujours pas son état : la confiance a changé, '
+                  . 'la publication doit démarrer.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 28 ---
+     * « DÉCODÉE » NE VEUT PAS DIRE « À MOI ».
+     *
+     * Theengs décode les thermomètres du voisin aussi bien que les miens. Deux
+     * cent soixante d'entre eux, vus une fois à −97 dBm à travers deux murs,
+     * remplissaient l'inventaire, fabriquaient deux cent cinquante et un
+     * équipements, et verrouillaient la place — après quoi la balise de la
+     * maison n'était plus jamais découverte. */
+    $titre = 'le voisinage décodé ne crée pas d\'équipement et ne verrouille pas l\'inventaire';
+    $fautes = array();
+    $adapterV = new MqttbeOpenMqttGateway();
+    $ctxV = new MqttbeContexteEssaiOmg();
+    $adapterV->onMessage($reperes['SAM'] . '/SYStoMQTT',
+        json_encode(array('mac' => 'A8:B0:C1:00:10:01', 'env' => 'esp32dev-ble')), false, $ctxV);
+    for ($i = 0; $i < 260; $i++) {
+        $adresse = sprintf('C0FFEE00%04X', $i);
+        $adapterV->onMessage($reperes['SAM'] . '/BTtoMQTT/' . $adresse,
+            '{"id":"' . $adresse . '","mac_type":0,"name":"ATC_' . $i . '","model":"LYWSD03MMC",'
+            . '"model_id":"LYWSD03MMC","tempc":21.5,"hum":55,"batt":88,"rssi":-97}', false, $ctxV);
+        $ctxV->avance(1);
+    }
+    $adapterV->onTick($ctxV);
+    $certains = 0;
+    foreach ($ctxV->modeles as $modele) {
+        if (strpos($modele->uid(), 'ble:') === 0 && $modele->confidence() === 'certain') {
+            $certains++;
+        }
+    }
+    if ($certains > 0) {
+        $fautes[] = $certains . ' équipement(s) créé(s) tout seuls pour des capteurs vus une fois à '
+                  . '-97 dBm : décoder n\'est pas posséder, et l\'utilisateur découvre deux cents '
+                  . 'équipements qu\'il n\'a jamais demandés.';
+    }
+    /* Et la balise DE LA MAISON, arrivée après, trouve sa place. */
+    $adapterV->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C1003001',
+        '{"id":"A8:B0:C1:00:30:01","mac_type":0,"tempc":21.4,"batt":86,"rssi":-62}', false, $ctxV);
+    $adapterV->onTick($ctxV);
+    if (!in_array('a8b0c1003001', $adapterV->balises($ctxV), true)) {
+        $fautes[] = 'la balise de la maison est refusée : l\'inventaire est verrouillé par des '
+                  . 'capteurs du voisinage qui ne s\'évincent ni ne se périment.';
+    }
+    $sienne = null;
+    foreach ($ctxV->modeles as $modele) {
+        if ($modele->uid() === 'ble:a8b0c1003001') {
+            $sienne = $modele;
+        }
+    }
+    if ($sienne === null || $sienne->confidence() !== 'certain') {
+        $fautes[] = 'un capteur entendu à -62 dBm n\'est pas reconnu comme étant de la maison : '
+                  . 'le plancher de signal ne sert alors à rien.';
+    }
+    /* Et une décodée se périme, elle aussi — plus tard, mais elle se périme. */
+    $adapterW = new MqttbeOpenMqttGateway();
+    $ctxW = new MqttbeContexteEssaiOmg();
+    $adapterW->onMessage($reperes['SAM'] . '/BTtoMQTT/C0FFEE000001',
+        '{"id":"C0FFEE000001","mac_type":0,"model":"LYWSD03MMC","tempc":21.5,"rssi":-97}', false, $ctxW);
+    $adapterW->onTick($ctxW);
+    $ctxW->avance(5 * 3600);
+    $adapterW->onTick($ctxW);
+    if (!in_array('c0ffee000001', $adapterW->balises($ctxW), true)) {
+        $fautes[] = 'une balise décodée est oubliée après cinq heures : le délai doit être plus '
+                  . 'généreux que celui d\'un passant, un capteur peut se taire une nuit.';
+    }
+    $ctxW->avance(20 * 3600);
+    $adapterW->onTick($ctxW);
+    if (in_array('c0ffee000001', $adapterW->balises($ctxW), true)) {
+        $fautes[] = 'une balise décodée muette depuis vingt-cinq heures est encore en inventaire : '
+                  . 'rien ne périme les décodées, et le voisinage s\'y accumule sans fin.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 29 ---
+     * BROKER INJOIGNABLE : LES RÉESSAIS SONT ESPACÉS.
+     *
+     * Une publication qui échoue ne posait aucune date : le battement suivant
+     * réessayait, et celui d'après — sept mille deux cents tentatives en
+     * soixante secondes, chacune journalisée, au moment précis où l'utilisateur
+     * est passé en debug pour comprendre sa panne. */
+    $titre = 'broker injoignable : les réessais sont bornés par le garde-temps';
+    $fautes = array();
+    $adapterB = new MqttbeOpenMqttGateway();
+    $ctxB = new MqttbeContexteEssaiOmg();
+    $ctxB->pose('omg', array('bleAdoptAll' => true));
+    for ($i = 0; $i < 120; $i++) {
+        $adresse = sprintf('C0FFEE0100%02X', $i);
+        $adapterB->onMessage($reperes['ENTREE'] . '/BTtoMQTT/' . $adresse,
+            '{"id":"' . $adresse . '","mac_type":0,"manufacturerdata":"a705","rssi":-80}', false, $ctxB);
+        $ctxB->avance(0.1);
+    }
+    $ctxB->broker = false;
+    $ctxB->tentatives = 0;
+    for ($s = 0; $s < 60; $s++) {
+        $ctxB->avance(1);
+        $adapterB->onTick($ctxB);
+    }
+    if ($ctxB->tentatives > 300) {
+        $fautes[] = $ctxB->tentatives . ' tentatives de publication en soixante secondes de panne '
+                  . 'pour 120 balises : l\'horodatage de tentative n\'est pas posé quand la '
+                  . 'publication échoue, et le garde-temps ne borne que les réussites.';
+    }
+    /* Mais le broker revenu, l'état repart — sans attendre. */
+    $ctxB->broker = true;
+    $ctxB->avance(120);
+    $adapterB->onTick($ctxB);
+    if (count($ctxB->publications) < 100) {
+        $fautes[] = 'le broker est revenu et seuls ' . count($ctxB->publications) . ' états sont '
+                  . 'partis : espacer les réessais ne doit pas revenir à les abandonner.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 30 ---
+     * LES TÉLÉPHONES NE CHASSENT PLUS LES VRAIES CANDIDATES.
+     *
+     * Une adresse BLE aléatoire tourne toutes les quinze minutes : un seul
+     * iPhone produit quatre-vingt-seize candidats par jour, et la file, bornée
+     * à cinquante, éjecte le traceur repéré la veille avant qu'on ait eu le
+     * temps de l'adopter. */
+    $titre = 'adresse aléatoire : aucune candidate avant la période de rotation';
+    $fautes = array();
+    $adapterT = new MqttbeOpenMqttGateway();
+    $ctxT = new MqttbeContexteEssaiOmg();
+    for ($quart = 0; $quart < 96; $quart++) {
+        $adresse = sprintf('7A%02X%02X%02X%02X%02X', $quart, $quart, $quart, $quart, $quart);
+        for ($k = 0; $k < 30; $k++) {
+            $ctxT->avance(30);
+            $adapterT->onMessage($reperes['ENTREE'] . '/BTtoMQTT/' . $adresse,
+                '{"id":"' . $adresse . '","mac_type":1,"manufacturerdata":"a705","rssi":-65}',
+                false, $ctxT);
+            $adapterT->onTick($ctxT);
+        }
+    }
+    $candidates = 0;
+    foreach ($ctxT->modeles as $modele) {
+        if ($modele->confidence() === 'guess') {
+            $candidates++;
+        }
+    }
+    if ($candidates > 0) {
+        $fautes[] = $candidates . ' candidate(s) proposée(s) en 24 h pour un seul téléphone : la '
+                  . 'file d\'adoption se remplit d\'adresses qui ne désigneront plus rien demain, '
+                  . 'et le traceur repéré la veille en est éjecté.';
+    }
+    /* Mais une adresse aléatoire qui DURE est bien une balise : elle est
+     * proposée. C'est le cas des traceurs, dont l'adresse ne tourne pas. */
+    $adapterT2 = new MqttbeOpenMqttGateway();
+    $ctxT2 = new MqttbeContexteEssaiOmg();
+    for ($i = 0; $i < 4; $i++) {
+        $adapterT2->onMessage($reperes['ENTREE'] . '/BTtoMQTT/D2D2D2102030',
+            '{"id":"D2:D2:D2:10:20:30","mac_type":1,"name":"BALISE-ESSAI 01",'
+            . '"manufacturerdata":"a705","rssi":-65}', false, $ctxT2);
+        $ctxT2->avance(600);
+        $adapterT2->onTick($ctxT2);
+    }
+    $propose = false;
+    foreach ($ctxT2->modeles as $modele) {
+        if ($modele->uid() === 'ble:d2d2d2102030') {
+            $propose = true;
+        }
+    }
+    if (!$propose) {
+        $fautes[] = 'une balise à adresse aléatoire vue pendant une demi-heure n\'est jamais '
+                  . 'proposée : le traceur de l\'utilisateur resterait invisible pour toujours.';
+    }
+    /* Une adresse PUBLIQUE, elle, est proposée tout de suite : elle est gravée
+     * dans le matériel et désignera encore l'appareil dans six mois. */
+    $adapterT3 = new MqttbeOpenMqttGateway();
+    $ctxT3 = new MqttbeContexteEssaiOmg();
+    $adapterT3->onMessage($reperes['ENTREE'] . '/BTtoMQTT/A8B0C1002002',
+        '{"id":"A8:B0:C1:00:20:02","mac_type":0,"manufacturerdata":"a705","rssi":-87}', false, $ctxT3);
+    $adapterT3->onTick($ctxT3);
+    if (empty($ctxT3->modeles)) {
+        $fautes[] = 'une balise à adresse publique n\'est pas proposée tout de suite : son adresse '
+                  . 'est stable, rien ne justifie de la faire attendre.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 31 ---
+     * LA PIÈCE NE MENT PAS PENDANT TOUT LE DÉLAI D'ABSENCE.
+     *
+     * La fraîcheur d'une PASSERELLE était jugée avec le délai d'absence d'une
+     * BALISE. Or ce délai se règle jusqu'à une journée, pour un traceur qui
+     * n'émet que de loin en loin : débrancher la passerelle du salon laissait
+     * « au salon » pendant tout ce temps, à l'endroit exact où l'utilisateur
+     * vient chercher son objet. */
+    $titre = 'la passerelle débranchée quitte le calcul de pièce en moins de deux minutes';
+    $fautes = array();
+    $adapterF = new MqttbeOpenMqttGateway();
+    $ctxF = new MqttbeContexteEssaiOmg();
+    /* Le délai d'absence au maximum : une journée. C'est un réglage légitime. */
+    $ctxF->pose('omg', array('bleAwayDelay' => 86400, 'bleAdoptAll' => true));
+    $proche = $reperes['SAM'] . '/BTtoMQTT/A8B0C1003001';
+    $loin   = $reperes['ETAGE'] . '/BTtoMQTT/A8B0C1003001';
+    for ($s = 0; $s < 60; $s++) {
+        $ctxF->avance(1);
+        $adapterF->onMessage($proche, '{"id":"A8:B0:C1:00:30:01","rssi":-55,"tempc":21}', false, $ctxF);
+        $adapterF->onMessage($loin, '{"id":"A8:B0:C1:00:30:01","rssi":-88,"tempc":21}', false, $ctxF);
+        $adapterF->onTick($ctxF);
+    }
+    $etat = $ctxF->derniereEtat('a8b0c1003001');
+    if ($etat === null || $etat['nearest'] !== 'OMG_ESP32_BLE_SAM') {
+        $fautes[] = 'la passerelle la plus proche n\'est pas celle qui entend le mieux.';
+    }
+    /* La passerelle du salon est débranchée ; l'autre continue de voir la balise. */
+    $depart = $ctxF->now();
+    $change = null;
+    for ($s = 0; $s < 600; $s++) {
+        $ctxF->avance(1);
+        $adapterF->onMessage($loin, '{"id":"A8:B0:C1:00:30:01","rssi":-88,"tempc":21}', false, $ctxF);
+        $adapterF->onTick($ctxF);
+        $etat = $ctxF->derniereEtat('a8b0c1003001');
+        if ($change === null && $etat !== null && $etat['nearest'] !== 'OMG_ESP32_BLE_SAM') {
+            $change = $ctxF->now() - $depart;
+        }
+    }
+    if ($change === null || $change > 120) {
+        $fautes[] = 'la pièce est restée fausse ' . ($change === null ? 'plus de 600' : $change)
+                  . ' s après le débranchement de la passerelle, alors que le délai d\'absence '
+                  . 'd\'une balise est de 86 400 s : la fraîcheur d\'une passerelle doit se juger '
+                  . 'avec une constante courte et fixe, et non avec le délai d\'un traceur.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 32 ---
+     * LES DRAPEAUX INTERNES DU DÉCODEUR NE SONT PAS DES COMMANDES.
+     *
+     * Le traceur Tile réel arrive avec `acts`, `cidc`, `cont`, `adv_type`,
+     * `mac_type` et `device` : six commandes visibles sur le tableau de bord,
+     * sans nom lisible ni sens pour personne. « cidc » ne veut rien dire, et sa
+     * valeur ne décrira jamais l'objet qu'on cherche. */
+    $titre = 'les drapeaux internes du décodeur ne deviennent pas des commandes';
+    $fautes = array();
+    $adapterG = new MqttbeOpenMqttGateway();
+    $ctxG = new MqttbeContexteEssaiOmg();
+    $adapterG->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C1003006',
+        '{"id":"A8:B0:C1:00:30:06","mac_type":0,"adv_type":3,"brand":"Tile","model":"Tracker",'
+        . '"model_id":"TILE","type":"TRACK","track":true,"acts":1,"cidc":false,"cont":true,'
+        . '"device":"tracker","rssi":-70}', false, $ctxG);
+    $adapterG->onTick($ctxG);
+    $tile = end($ctxG->modeles);
+    if ($tile === false) {
+        $fautes[] = 'aucun modèle pour le traceur.';
+    } else {
+        foreach (array('acts', 'cidc', 'cont', 'adv_type', 'mac_type', 'device') as $interne) {
+            if ($tile->channel($interne) !== null) {
+                $fautes[] = 'le champ « ' . $interne . ' » a produit une commande visible : c\'est '
+                          . 'un drapeau interne du décodeur, il ne décrit pas l\'appareil.';
+            }
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 33 ---
+     * UNE SEULE COMMANDE DE PRÉSENCE.
+     *
+     * « Présence » (calculée avec le délai d'absence) et « Traceur » (le champ
+     * `track` de la trame) étaient toutes deux visibles et historisées, toutes
+     * deux en PRESENCE. La seconde ne redescend JAMAIS, puisqu'une balise qui
+     * part cesse d'émettre : un scénario avait une chance sur deux de choisir
+     * celle qui ne se déclencherait pas. */
+    $titre = 'une seule commande de présence, et c\'est celle qui redescend';
+    $fautes = array();
+    $adapterQ = new MqttbeOpenMqttGateway();
+    $ctxQ = new MqttbeContexteEssaiOmg();
+    $adapterQ->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C1003006',
+        '{"id":"A8:B0:C1:00:30:06","mac_type":0,"brand":"Tile","model":"Tracker",'
+        . '"model_id":"TILE","track":true,"presence":true,"rssi":-70}', false, $ctxQ);
+    $adapterQ->onTick($ctxQ);
+    $traceur = end($ctxQ->modeles);
+    if ($traceur === false) {
+        $fautes[] = 'aucun modèle pour le traceur.';
+    } else {
+        $presences = array();
+        foreach ($traceur->channels() as $canal) {
+            if ($canal->capability() === 'presence.detected') {
+                $presences[] = $canal->key();
+            }
+        }
+        if (count($presences) !== 1) {
+            $fautes[] = count($presences) . ' commandes de présence sur le même équipement ('
+                      . implode(', ', $presences) . ') : celle qui vient de la trame ne redescend '
+                      . 'jamais, et un scénario a une chance sur deux de choisir la mauvaise.';
+        } elseif ($presences[0] !== 'state.presence') {
+            $fautes[] = 'la présence conservée est « ' . $presences[0] . ' » : c\'est la présence '
+                      . 'CALCULÉE qu\'il faut garder, elle seule sait qu\'une balise est partie.';
+        }
+        /* Le traceur reste reconnu pour autant : `track` est ce qui le décode. */
+        if ($traceur->confidence() !== 'certain') {
+            $fautes[] = 'le traceur n\'est plus reconnu : écarter le champ de sa commande ne doit '
+                      . 'pas le faire retomber dans la file d\'adoption.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 34 ---
+     * « COUPER LE BLUETOOTH » N'EST PLUS UN PIÈGE.
+     *
+     * Action visible sur le tableau de bord, charge utile
+     * `{"enabled":false,"save":true}` : un clic arrêtait la détection de
+     * présence de toute la maison ET l'écrivait en mémoire persistante, si bien
+     * qu'un redémarrage ne rattrapait rien. */
+    $titre = 'couper le Bluetooth n\'écrit pas la mémoire persistante, et ne se déguise pas en prise';
+    $fautes = array();
+    $vocab = json_decode(file_get_contents(mqttbeRacine() . '/core/config/capabilities.json'), true);
+    $connues = (is_array($vocab) && isset($vocab['capabilities'])) ? $vocab['capabilities'] : array();
+    $passerelleM = isset($modeles['omg:a8b0c1001001']) ? $modeles['omg:a8b0c1001001'] : null;
+    if ($passerelleM === null) {
+        $fautes[] = 'aucun modèle de passerelle.';
+    } else {
+        foreach (array('ble.on', 'ble.off') as $cle) {
+            $canal = $passerelleM->channel($cle);
+            if ($canal === null) {
+                $fautes[] = 'canal « ' . $cle . ' » absent.';
+                continue;
+            }
+            if (strpos($canal->sinkPayload(), 'save') !== false) {
+                $fautes[] = 'canal « ' . $cle . ' » : charge utile « ' . $canal->sinkPayload()
+                          . ' » — `save:true` écrit le réglage en mémoire persistante, et un '
+                          . 'redémarrage ne rattrape pas le clic malheureux.';
+            }
+            $generique = isset($connues[$canal->capability()]['generic_type'])
+                       ? $connues[$canal->capability()]['generic_type'] : '';
+            if (strpos($generique, 'ENERGY') === 0) {
+                $fautes[] = 'canal « ' . $cle . ' » : type générique « ' . $generique . ' » — sur '
+                          . 'le tableau de bord, la radio Bluetooth prend l\'apparence d\'une prise '
+                          . 'électrique, avec le geste qui va avec.';
+            }
+        }
+        $etatBle = $passerelleM->channel('ble.state');
+        $generique = ($etatBle === null || !isset($connues[$etatBle->capability()]['generic_type']))
+                   ? '' : $connues[$etatBle->capability()]['generic_type'];
+        if (strpos($generique, 'ENERGY') === 0) {
+            $fautes[] = 'canal « ble.state » : type générique « ' . $generique . ' ».';
+        }
+        /* Et le nom dit ce que le bouton arrête vraiment. */
+        $off = $passerelleM->channel('ble.off');
+        if ($off !== null && stripos($off->name(), 'détection') === false) {
+            $fautes[] = 'le bouton s\'appelle « ' . $off->name() . ' » : rien n\'y dit qu\'il '
+                      . 'arrête la détection de présence de toute la maison.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 35 ---
+     * DEUX POINTS COURTS.
+     *
+     * La signature de passerelle avalait `ip`, `env` et `version` sans la
+     * protection « collante » que la branche balise s'était donnée : un
+     * SYStoMQTT qui perd son `ip` une fois sur deux — ce que fait toute
+     * reconnexion Wi-Fi — réémettait vingt modèles pour vingt messages. Et un
+     * nom de passerelle contenant un espace, parfaitement légal en MQTT et
+     * saisissable dans l'interface d'OpenMQTTGateway, était abandonné sans une
+     * ligne de journal. */
+    $titre = 'champs de passerelle collants, et un nom avec un espace n\'est pas perdu en silence';
+    $fautes = array();
+    $adapterC = new MqttbeOpenMqttGateway();
+    $ctxC = new MqttbeContexteEssaiOmg();
+    for ($i = 0; $i < 20; $i++) {
+        $ctxC->avance(100);
+        $charge = array('mac' => 'A8:B0:C1:00:10:01', 'env' => 'esp32dev-ble', 'version' => 'v1.7.0');
+        if ($i % 2 === 0) {
+            $charge['ip'] = '192.0.2.10';
+        }
+        $adapterC->onMessage('bt/OMG_A/SYStoMQTT', json_encode($charge), false, $ctxC);
+        $adapterC->onTick($ctxC);
+    }
+    if (count($ctxC->modeles) !== 1) {
+        $fautes[] = count($ctxC->modeles) . ' modèles réémis pour vingt SYStoMQTT dont seul le '
+                  . 'champ `ip` va et vient : une valeur absente n\'est pas une valeur nouvelle, '
+                  . 'et la base serait réécrite à chaque reconnexion Wi-Fi.';
+    }
+    $dernierC = end($ctxC->modeles);
+    if ($dernierC !== false && $dernierC->meta('ip') !== '192.0.2.10') {
+        $fautes[] = 'l\'adresse IP est perdue quand un message ne la porte pas : « '
+                  . $dernierC->meta('ip') . ' ».';
+    }
+    /* Un nom avec un espace : accepté, et l'équipement décrit. */
+    $adapterA2 = new MqttbeOpenMqttGateway();
+    $ctxA2 = new MqttbeContexteEssaiOmg();
+    $adapterA2->onMessage('bt/OMG Salon/SYStoMQTT',
+        json_encode(array('mac' => 'A8:B0:C1:00:10:02', 'env' => 'esp32dev-ble', 'ip' => '192.0.2.11')),
+        false, $ctxA2);
+    $adapterA2->onTick($ctxA2);
+    $espace = end($ctxA2->modeles);
+    if ($espace === false) {
+        $fautes[] = 'la passerelle « bt/OMG Salon » est abandonnée : l\'espace est légal dans un '
+                  . 'nom de topic MQTT, et l\'interface d\'OpenMQTTGateway le laisse saisir.';
+    } elseif ($espace->channel('restart') === null
+              || $espace->channel('restart')->sinkTopic() !== 'bt/OMG Salon/commands/MQTTtoSYS/config') {
+        $fautes[] = 'les ordres ne partent pas sur le bon topic pour une passerelle nommée avec un '
+                  . 'espace.';
+    }
+    /* Ce qui reste refusé — un joker, qui ferait fermer la connexion par le
+     * broker au premier appui sur un bouton — est REFUSÉ EN LE DISANT. */
+    $adapterA3 = new MqttbeOpenMqttGateway();
+    $ctxA3 = new MqttbeContexteEssaiOmg();
+    $adapterA3->onMessage('bt/+/SYStoMQTT',
+        json_encode(array('mac' => 'A8:B0:C1:00:10:03')), true, $ctxA3);
+    if (!empty($ctxA3->modeles)) {
+        $fautes[] = 'un préfixe contenant un joker a produit un équipement : le broker fermerait '
+                  . 'la connexion au premier appui sur un bouton.';
+    }
+    $nomme = false;
+    foreach ($ctxA3->journal as $ligne) {
+        if (strpos($ligne, 'bt/+/SYStoMQTT') !== false) {
+            $nomme = true;
+        }
+    }
+    if (!$nomme) {
+        $fautes[] = 'un préfixe écarté ne laisse aucune trace nommant le topic : l\'utilisateur '
+                  . 'voit son parc incomplet et le journal du plugin reste muet.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
     return $resultats;
 }

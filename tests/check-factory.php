@@ -776,8 +776,8 @@ function mqttbeControlesFabrique() {
     $eq = eqLogic::byLogicalId('essai:nom1', 'mqttbe');
     if (!is_object($eq)) {
         $fautes[] = 'aucun équipement créé pour essai:nom1.';
-    } elseif ($eq->getName() !== 'Machin 1234 chaudiere') {
-        $fautes[] = 'nom composé attendu « Machin 1234 chaudiere », obtenu « ' . $eq->getName() . ' ».';
+    } elseif ($eq->getName() !== 'Machin 1234 — chaudiere') {
+        $fautes[] = 'nom composé attendu « Machin 1234 — chaudiere », obtenu « ' . $eq->getName() . ' ».';
     }
 
     /* Sonde muette : le nom technique seul, exactement comme avant. */
@@ -857,13 +857,27 @@ function mqttbeControlesFabrique() {
         }
     }
 
+    /* Le nom lu dans l'appareil doit SURVIVRE à un message qui ne le porte pas.
+     * Le démon ne l'envoie pas dans tous ses messages — la première émission
+     * précède la réponse de la sonde, et une sonde qui échoue abandonne. Sans
+     * mémoire, l'équipement était renommé en nom technique à chaque redémarrage
+     * du démon, puis renommé de nouveau une seconde plus tard. */
+    mqttbeFactory::applyData(mqttbeModele('essai:nomgarde', 'Machin 7777', $canaux, 'e-n-1',
+        array('device_name' => 'buanderie')));
+    mqttbeFactory::applyData(mqttbeModele('essai:nomgarde', 'Machin 7777', $canaux, 'e-n-2'));
+    $eq = eqLogic::byLogicalId('essai:nomgarde', 'mqttbe');
+    if (is_object($eq) && $eq->getName() !== 'Machin 7777 — buanderie') {
+        $fautes[] = 'le nom lu dans l\'appareil a été perdu au message suivant ; obtenu « '
+                  . $eq->getName() . ' ».';
+    }
+
     /* Contre-épreuve : sans retouche, la fabrique DOIT pouvoir enrichir le nom,
      * sinon la sonde ne servirait jamais à rien. */
     mqttbeFactory::applyData(mqttbeModele('essai:libre', 'Machin 8888', $canaux, 'e-l-1'));
     mqttbeFactory::applyData(mqttbeModele('essai:libre', 'Machin 8888', $canaux, 'e-l-2',
         array('device_name' => 'cave')));
     $eq = eqLogic::byLogicalId('essai:libre', 'mqttbe');
-    if (is_object($eq) && $eq->getName() !== 'Machin 8888 cave') {
+    if (is_object($eq) && $eq->getName() !== 'Machin 8888 — cave') {
         $fautes[] = 'sans retouche, le nom aurait dû s\'enrichir ; obtenu « ' . $eq->getName() . ' ».';
     }
 

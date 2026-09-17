@@ -24,6 +24,17 @@ is why a Shelly 1 fitted with two temperature probes is discovered with both of
 them, while a bare Shelly 1 — which reports exactly the same model code — is
 discovered without them.
 
+**OpenMQTTGateway gateways, and what they hear over Bluetooth, are read
+directly.** A gateway becomes a device — its firmware, its network, its state,
+and a way to restart it — and each Bluetooth sensor it decodes becomes one too:
+temperature, humidity, pressure, battery level, and for a tracker the signal
+strength as heard by every gateway, along with the one that hears it best. That
+is what lets you tell which room an object is in, with nothing else to install.
+
+None of this goes through third-party software. OpenMQTTGateway publishes on its
+own topics and the plugin reads them: a Home Assistant may be running next door,
+or not at all, and it makes no difference. That is precisely the point of MQTT.
+
 **Everything else is created by hand**, and the plugin is built for that: any
 device that publishes over MQTT can become a full Jeedom device, as long as you
 supply the topics yourself. How to do it is described below.
@@ -83,9 +94,9 @@ asking. On a large installation, that is a lot of devices at once.
 
 If you would rather look before letting it happen, **untick "Create devices"** in
 the configuration, under *Discovery*, before starting the daemon. Discovery keeps
-recognising devices but creates nothing: the plugin page then tells you how many
-devices were seen and which ones. Tick the box again once you are happy with what
-you see.
+recognising devices but creates nothing: everything it sees goes into the
+adoption queue, where you decide device by device. Tick the box again once you
+are happy with what you see.
 
 The neighbouring box, **"Automatic discovery"**, is more drastic: untick it and
 nothing is recognised at all — only the commands you typed in yourself are still
@@ -128,6 +139,77 @@ A word on that refresh, since the worry is a fair one: **your edits survive.** A
 renamed command, a corrected unit, something you hid, history you turned on —
 none of it is overwritten. Discovery only refreshes the plumbing: the topic being
 listened to and the path to the value inside the incoming message.
+
+## Bluetooth gateways
+
+An OpenMQTTGateway gateway listens to everything within range and publishes it on
+the broker. The plugin draws two very different things from that.
+
+**The gateway itself** becomes a device: its firmware, its address on the
+network, its free memory, its uptime, how many devices it can see, and two
+actions — restart it, switch its Bluetooth radio off.
+
+**The sensors it decodes** each become a device, carrying the readings they
+actually publish: temperature, humidity, pressure, battery level. Here too
+nothing is copied from a catalog — what arrives is what gets created.
+
+The **tracker** deserves a word, being the most useful case and the least
+obvious. A tracker measures nothing: it merely exists. What the plugin makes of
+it is the signal strength as each gateway hears it, plus two commands that answer
+the real questions: **which gateway hears it best** — in practice, which room it
+is in — and **whether it is present**, which turns to absent once no gateway has
+heard it for a while. That delay is set in the plugin configuration, under
+*Discovery*.
+
+Several gateways do not make several devices: the same tracker heard by three
+gateways stays one device, with three signal readings.
+
+### What the plugin does not create on its own
+
+A Bluetooth gateway also hears a visitor's phone, the neighbour's watch and the
+earbuds in a passing car. Creating a device for each of them would fill Jeedom in
+one evening, and most of those devices would fall silent within the quarter hour:
+such devices change their address regularly, on purpose, so as not to be tracked.
+
+So the plugin creates what it **recognises** — a sensor publishing a temperature
+is a sensor — and **sets the rest aside** rather than guessing. That is what the
+adoption queue is for.
+
+## The adoption queue
+
+When discovery sees something without knowing what it is, it neither creates it
+nor throws it away: it holds it, and the plugin page shows a banner — *"n
+device(s) seen and not created"*. Click it to open the list and decide device by
+device.
+
+Every row gives you what you need to decide, rather than a bare identifier:
+
+- **the address type.** *public* never changes: that is the mark of a beacon or a
+  sensor, and the device you create will keep working. *random* changes roughly
+  every fifteen minutes: that is the mark of a passing phone or watch, and the
+  device would fall silent at the next change;
+- **how long it has been seen.** Something belonging to the house has been there
+  for days, a passer-by for two minutes. It is the most reliable clue;
+- **how many gateways hear it.** Heard by three gateways, it is inside your home;
+  heard by one, at the edge, it may well be out in the street;
+- **how many commands** creating it would produce.
+
+Two buttons per row. **Create** builds the device straight away, without asking
+the device anything again: everything needed was set aside already. **Ignore**
+drops it, and it will not be offered to you any more.
+
+**Ignoring is not final.** Ignored devices are listed at the bottom of the same
+window, under their name, with the date they were refused and a button to put
+them back in circulation. They will reappear in the queue at their next
+announcement.
+
+The queue looks after itself: a device that has not shown up for a week drops
+out, and if it overflows, the passers-by are the ones to go — a device seen for a
+long time, with a stable address, keeps its place.
+
+Finally, the queue is not only about Bluetooth. It also receives what discovery
+did not create for another reason: automatic creation is unticked, or the device
+ceiling has been reached.
 
 ## The other settings
 
@@ -210,6 +292,30 @@ are not:
 A command that carries fine settings says so, so that nobody looks elsewhere for
 the explanation of an unexpected value.
 
+### Your devices' names
+
+A discovered device is first named after its technical identifier — “Shelly 1
+55670C” — which is unique, and tells you nothing. So the plugin reads, from the
+device itself, the name you gave it in its own app, and appends it:
+**“Shelly 1 55670C boiler”**.
+
+If the device does not answer, asks for authentication or has no name, the
+technical name stays exactly as before: a failure never degrades what already
+works. And once you rename a device yourself, discovery never touches that name
+again — it only keeps the plumbing up to date, meaning the topics it listens to.
+
+Reading the name means one request to the device. If you would rather Jeedom did
+not reach out on your network, untick “Read the name from the device” in the
+plugin configuration.
+
+### Your devices' addresses
+
+Every discovered device shows the device's address, as a link, on its tile and
+in its panel. It is the shortest way to tell which one you are holding: open its
+page, recognise it, and come back to name it in Jeedom knowing what it is. The
+address is refreshed at every discovery — a new DHCP lease does not leave a dead
+link behind.
+
 ## When something goes wrong
 
 **Two logs**, both read from **Analysis → Logs**:
@@ -248,27 +354,3 @@ configuration — if you have just re-enabled discovery, save first.
 **If a device does not show on the Dashboard** although it is plainly there on the
 plugin page, it is missing its parent object. See above: it is by far the most
 common cause.
-
-### Your devices' names
-
-A discovered device is first named after its technical identifier — “Shelly 1
-55670C” — which is unique, and tells you nothing. So the plugin reads, from the
-device itself, the name you gave it in its own app, and appends it:
-**“Shelly 1 55670C boiler”**.
-
-If the device does not answer, asks for authentication or has no name, the
-technical name stays exactly as before: a failure never degrades what already
-works. And once you rename a device yourself, discovery never touches that name
-again — it only keeps the plumbing up to date, meaning the topics it listens to.
-
-Reading the name means one request to the device. If you would rather Jeedom did
-not reach out on your network, untick “Read the name from the device” in the
-plugin configuration.
-
-### Your devices' addresses
-
-Every discovered device shows the device's address, as a link, on its tile and
-in its panel. It is the shortest way to tell which one you are holding: open its
-page, recognise it, and come back to name it in Jeedom knowing what it is. The
-address is refreshed at every discovery — a new DHCP lease does not leave a dead
-link behind.

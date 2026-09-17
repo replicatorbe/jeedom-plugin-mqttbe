@@ -24,6 +24,18 @@ vraiment. C'est pourquoi un Shelly 1 équipé de deux sondes de température est
 découvert avec ses deux sondes, alors qu'un Shelly 1 nu, qui porte pourtant
 exactement le même code de modèle, est découvert sans elles.
 
+**Les passerelles OpenMQTTGateway et ce qu'elles entendent en Bluetooth sont
+lues directement.** Une passerelle devient un équipement — sa version, son
+réseau, son état, et de quoi la redémarrer — et les capteurs Bluetooth qu'elle
+décode en deviennent chacun un : température, humidité, pression, niveau de
+pile, et pour un traceur la puissance du signal reçue par chaque passerelle,
+ainsi que celle qui l'entend le mieux. C'est ce qui permet de savoir dans quelle
+pièce se trouve un objet, sans rien installer de plus.
+
+Cette lecture ne passe par aucun logiciel tiers. OpenMQTTGateway publie sur ses
+propres topics, le plugin les lit : un Home Assistant peut tourner à côté, ou
+pas du tout, cela ne change rien. C'est précisément l'intérêt de MQTT.
+
 **Tout le reste se crée à la main**, et le plugin s'y prête : n'importe quel
 appareil qui publie sur MQTT peut devenir un équipement Jeedom complet, à
 condition d'indiquer soi-même les topics. La marche à suivre est décrite plus
@@ -89,8 +101,8 @@ rien demander. Sur un parc fourni, cela fait beaucoup d'équipements d'un coup.
 Si vous préférez regarder avant de laisser faire, **décochez « Créer les
 équipements »** dans la configuration, section *Découverte*, avant de démarrer le
 démon. La découverte continue de reconnaître les appareils, mais elle ne crée
-rien : la page du plugin affiche alors combien d'appareils ont été vus et
-lesquels. Vous recochez la case quand le résultat vous convient.
+rien : tout ce qu'elle voit passe dans la file d'adoption, où vous décidez
+appareil par appareil. Vous recochez la case quand le résultat vous convient.
 
 La case voisine, **« Découverte automatique »**, est plus radicale : décochée,
 plus rien n'est reconnu du tout, et seules les commandes que vous avez saisies à
@@ -134,6 +146,78 @@ survivent.** Une commande renommée, une unité corrigée, un affichage masqué,
 historique activé — rien de tout cela n'est réécrit. La découverte ne rafraîchit
 que ce qui relève de la tuyauterie : le topic écouté et le chemin de la valeur
 dans le message reçu.
+
+## Les passerelles Bluetooth
+
+Une passerelle OpenMQTTGateway écoute tout ce qui passe à portée et le publie
+sur le broker. Le plugin en tire deux choses très différentes.
+
+**La passerelle elle-même** devient un équipement : sa version, son adresse sur
+le réseau, sa mémoire libre, son temps de fonctionnement, le nombre d'appareils
+qu'elle voit, et deux actions — la redémarrer, couper sa radio Bluetooth.
+
+**Les capteurs qu'elle décode** deviennent chacun un équipement, avec les
+mesures qu'ils publient réellement : température, humidité, pression, niveau de
+pile. Là encore, rien n'est recopié d'un catalogue — ce qui arrive est ce qui
+est créé.
+
+Le cas du **traceur** mérite un mot, parce que c'est le plus utile et le moins
+évident. Un traceur ne mesure rien : il se contente d'exister. Ce que le plugin
+en fait, c'est la puissance du signal telle que chaque passerelle l'entend, plus
+deux commandes qui répondent aux vraies questions : **la passerelle qui l'entend
+le mieux** — donc, en pratique, la pièce où il se trouve — et **sa présence**,
+qui passe à absent quand plus aucune passerelle ne l'a entendu depuis un
+moment. Ce délai se règle dans la configuration du plugin, section *Découverte*.
+
+Plusieurs passerelles ne font pas plusieurs équipements : le même traceur entendu
+par trois passerelles reste un seul équipement, avec trois mesures de signal.
+
+### Ce que le plugin ne crée pas tout seul
+
+Une passerelle Bluetooth entend aussi le téléphone d'un visiteur, la montre du
+voisin et les écouteurs de la voiture qui passe. Créer un équipement pour chacun
+remplirait Jeedom en une soirée, et la plupart de ces équipements deviendraient
+muets dans le quart d'heure : ces appareils-là changent d'adresse régulièrement,
+exprès, pour ne pas être suivis.
+
+Le plugin crée donc ce qu'il **reconnaît** — un capteur qui publie une
+température est un capteur — et **met le reste de côté** au lieu de deviner.
+C'est l'objet de la file d'adoption.
+
+## La file d'adoption
+
+Quand la découverte voit quelque chose sans savoir ce que c'est, elle ne crée
+rien et ne jette rien : elle le met en attente, et la page du plugin affiche un
+bandeau — *« n appareil(s) vu(s) et pas créé(s) »*. Cliquez dessus pour ouvrir la
+liste et décider appareil par appareil.
+
+Chaque ligne donne ce qu'il faut pour trancher, et non un identifiant nu :
+
+- **le type d'adresse.** *public* ne change jamais : c'est la marque d'une
+  balise ou d'un capteur, et l'équipement créé restera valable. *random* change
+  toutes les quinze minutes environ : c'est la marque d'un téléphone ou d'une
+  montre de passage, et l'équipement deviendrait muet au prochain changement ;
+- **depuis combien de temps on le voit.** Un objet de la maison est là depuis des
+  jours, un passant depuis deux minutes. C'est le critère le plus sûr ;
+- **combien de passerelles l'entendent.** Vu par trois passerelles, il est chez
+  vous ; vu par une seule, en bordure, il passe peut-être dans la rue ;
+- **le nombre de commandes** que la création produirait.
+
+Deux boutons par ligne. **Créer** fabrique l'équipement immédiatement, sans rien
+redemander à l'appareil : tout ce qu'il faut a déjà été mis de côté. **Ignorer**
+l'écarte, et il ne vous sera plus proposé.
+
+**Écarter n'est pas définitif.** Les appareils écartés sont listés en bas de la
+même fenêtre, sous leur nom, avec la date du refus et un bouton pour les remettre
+dans le circuit. Ils reparaîtront dans la file à leur prochaine annonce.
+
+La file s'entretient toute seule : un appareil qui ne s'est plus manifesté depuis
+une semaine en sort, et si elle déborde, ce sont les passants qui partent — un
+appareil vu depuis longtemps, avec une adresse stable, garde sa place.
+
+Enfin, la file n'est pas réservée au Bluetooth. Elle reçoit aussi ce que la
+découverte n'a pas créé pour une autre raison : la création automatique est
+décochée, ou le plafond d'équipements est atteint.
 
 ## Les autres réglages
 

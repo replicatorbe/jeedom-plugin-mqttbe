@@ -113,7 +113,34 @@ if (!isConnect('admin')) {
                 <input type="checkbox" class="configKey" data-l1key="discovery::probeNames" checked />
             </div>
             <div class="col-sm-7">
-                <span class="help-block" style="margin:0;">{{Le nom que vous avez donné à l'appareil dans son application s'ajoute au nom technique : « Shelly 1 55670C chaudiere » plutôt que « Shelly 1 55670C ». Cela demande une requête vers l'appareil ; décochez si vous préférez que Jeedom ne sollicite rien sur votre réseau. En cas d'échec le nom technique reste, et un nom que vous avez corrigé n'est jamais remplacé.}}</span>
+                <span class="help-block" style="margin:0;">{{Le nom que vous avez donné à l'appareil dans son application s'ajoute au nom technique : « Shelly 1 55670C chaudiere » plutôt que « Shelly 1 55670C ». Cela demande une requête vers l'appareil ; décochez si vous préférez que Jeedom ne sollicite rien sur votre réseau. En cas d'échec le nom technique reste, et un nom que vous avez corrigé n'est jamais remplacé. Le nom n'est relu qu'une fois par jour : pour voir l'effet tout de suite après avoir coché cette case, enregistrez puis utilisez « Relancer la découverte ».}}</span>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="col-sm-3 control-label">{{Adopter toutes les balises Bluetooth}}</label>
+            <div class="col-sm-2">
+                <input type="checkbox" class="configKey" data-l1key="discovery::bleAdoptAll" />
+            </div>
+            <div class="col-sm-7">
+                <span class="help-block" style="margin:0;">{{Décochée, seules les balises que la passerelle sait décoder — un thermomètre, un traceur reconnu — deviennent des équipements ; les autres attendent votre décision. Cochée, tout ce qui passe devient un équipement, y compris les téléphones des visiteurs : sur une passerelle placée près d'une entrée, cela représente vite des dizaines d'équipements par jour.}}</span>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="col-sm-3 control-label">{{Délai d'absence d'une balise (s)}}</label>
+            <div class="col-sm-2">
+                <input class="configKey form-control" data-l1key="discovery::bleAwayDelay" placeholder="300" />
+            </div>
+            <div class="col-sm-7">
+                <span class="help-block" style="margin:0;">{{Silence au bout duquel une balise Bluetooth est déclarée absente. C'est la définition même de la présence de vos traceurs : trop court, un objet posé dans un tiroir clignotera entre présent et absent ; trop long, vous apprendrez tard qu'il est parti. Un traceur n'émet pas en continu, d'où les cinq minutes par défaut.}}</span>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="col-sm-3 control-label">{{Plafond d'équipements découverts}}</label>
+            <div class="col-sm-2">
+                <input class="configKey form-control" data-l1key="discovery::maxDevices" placeholder="250" />
+            </div>
+            <div class="col-sm-7">
+                <span class="help-block" style="margin:0;">{{Au-delà de ce nombre, la découverte cesse de créer et met les appareils suivants en attente de votre décision. La découverte se fonde sur ce qui circule sur le broker, et rien n'oblige ce qui circule à être honnête. 0 retire le plafond.}}</span>
             </div>
         </div>
         <div class="form-group">

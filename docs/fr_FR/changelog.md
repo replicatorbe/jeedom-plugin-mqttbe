@@ -3,8 +3,10 @@
 ## 0.1 — 17 septembre 2026
 
 Première version. Elle apporte la liaison avec le broker, la découverte
-automatique des Shelly de première génération, et la création manuelle
-d'équipements pour tout le reste.
+automatique des Shelly de première génération et des passerelles
+OpenMQTTGateway — avec les capteurs et traceurs Bluetooth qu'elles entendent —,
+une file d'adoption pour ce que la découverte voit sans le reconnaître, et la
+création manuelle d'équipements pour tout le reste.
 
 ### La liaison avec le broker
 
@@ -67,10 +69,63 @@ d'équipements pour tout le reste.
   place. Seule la plomberie — topic écouté et chemin de la valeur — est remise à
   jour.
 - La création automatique peut être désactivée : la découverte reconnaît alors
-  les appareils et les signale sur la page du plugin sans rien créer, le temps de
-  regarder ce qu'elle trouve.
+  les appareils sans rien créer, et les dépose dans la file d'adoption, le temps
+  de regarder ce qu'elle trouve.
 - Les équipements découverts ne reçoivent pas d'objet parent : le rangement dans
   les pièces vous appartient, et il faut le faire pour les voir sur le Dashboard.
+
+### Les passerelles OpenMQTTGateway et le Bluetooth
+
+- Les passerelles OpenMQTTGateway sont découvertes et créées, avec leur version,
+  leur adresse, leur mémoire libre, leur temps de fonctionnement, le nombre
+  d'appareils entendus, et deux actions : redémarrer la passerelle, couper sa
+  radio Bluetooth.
+- Les capteurs Bluetooth que la passerelle décode deviennent chacun un
+  équipement, avec les mesures qu'ils publient réellement : température,
+  humidité, pression, niveau de pile.
+- Un traceur, qui ne mesure rien, reçoit la puissance du signal telle que chaque
+  passerelle l'entend, la passerelle qui l'entend le mieux — c'est-à-dire, en
+  pratique, la pièce où il se trouve — et sa présence, qui passe à absent quand
+  plus aucune passerelle ne l'a entendu depuis un délai réglable.
+- Un même appareil entendu par plusieurs passerelles reste un seul équipement :
+  les passerelles sont des points d'écoute, pas des propriétaires.
+- Cette lecture ne dépend d'aucun logiciel tiers. OpenMQTTGateway publie sur ses
+  propres topics, et c'est eux que le plugin lit : un Home Assistant peut tourner
+  à côté, ou pas du tout, cela ne change rien.
+
+### La file d'adoption
+
+- Ce que la découverte voit sans le reconnaître n'est ni créé ni jeté : il est
+  mis en attente, et la page du plugin propose de l'examiner. C'est ce qui permet
+  d'écouter une passerelle Bluetooth sans que le téléphone d'un visiteur devienne
+  un équipement.
+- Chaque candidat est présenté avec ce qui permet de trancher : le type
+  d'adresse — une adresse aléatoire change toutes les quinze minutes, une adresse
+  publique jamais —, depuis combien de temps on le voit, combien de passerelles
+  l'entendent, et le nombre de commandes que la création produirait.
+- Écarter un appareil est réversible : les appareils écartés sont listés sous
+  leur nom, avec la date du refus, et un bouton les remet dans le circuit.
+- La file s'entretient seule : un candidat qui ne s'est plus manifesté depuis une
+  semaine en sort, et quand elle déborde, ce sont les passants qui partent — un
+  appareil vu depuis longtemps, avec une adresse stable, garde sa place.
+- Un plafond d'équipements issus de la découverte évite qu'un appareil bavard,
+  ou malveillant, remplisse Jeedom : au-delà, les appareils sont proposés au lieu
+  d'être créés.
+
+### Le nom et l'adresse des appareils
+
+- Un équipement découvert ne s'appelle plus seulement par son identifiant
+  technique : le plugin lit sur l'appareil le nom que son propriétaire lui a
+  donné et l'ajoute — « Shelly 1 55670C chaudiere ». Si l'appareil ne répond pas,
+  demande une authentification ou n'a pas de nom, le nom technique reste seul.
+- Un nom changé à la main n'est plus jamais réécrit par une découverte
+  ultérieure.
+- Cette lecture peut être désactivée pour que Jeedom ne sollicite rien sur le
+  réseau.
+- L'adresse de chaque appareil découvert s'affiche, cliquable, sur sa vignette et
+  dans son panneau : c'est le moyen le plus court de savoir lequel on tient. Elle
+  est tenue à jour à chaque découverte, pour qu'un nouveau bail DHCP ne laisse pas
+  un lien mort.
 
 ### Ce qui n'est pas encore là
 

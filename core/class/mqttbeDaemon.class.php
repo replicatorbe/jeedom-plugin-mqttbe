@@ -46,6 +46,24 @@ class mqttbeDaemon {
     const TIMEOUT_RCV     = 300;
     const DELAY_HEARTBEAT = 45;
 
+    /* La file d'adoption : ce que la découverte a vu sans le créer. */
+    const PENDING_KEY = 'mqttbe::pending';
+
+    /* Au-delà, la file cesse d'être une liste qu'on regarde et devient un
+     * fouillis. Elle est coupée au plus intéressant, jamais au plus récent. */
+    const PENDING_MAX = 50;
+
+    /* Un candidat qu'on n'a pas revu depuis une semaine n'est plus un candidat,
+     * c'est un souvenir. Le garder, c'est le laisser prendre la place d'un
+     * appareil bien présent le jour où la file déborde. */
+    const PENDING_TTL = 604800;
+
+    /* Ce que vaut une adresse stable, dans la seule unité que la file
+     * connaisse : des secondes de présence. Une adresse publique est gravée
+     * dans le matériel et désignera le même appareil dans six mois ; une
+     * adresse aléatoire aura changé dans le quart d'heure. */
+    const PENDING_STABLE_BONUS = 3600;
+
     /**
      * URL que le démon appellera pour parler à Jeedom.
      *
@@ -778,6 +796,10 @@ class mqttbeDaemon {
 
         $avant = self::countDiscovered();
 
+        /* Lus une fois pour tout le lot : la liste des refus ne change pas
+         * pendant qu'on traite vingt-cinq modèles. */
+        $ignores = self::ignoredUids();
+
         foreach ($_models as $donnees) {
             try {
                 $modele = MqttbeDeviceModel::fromArray($donnees);
@@ -791,24 +813,56 @@ class mqttbeDaemon {
                     continue;
                 }
                 /*
-                 * Deux raisons de mettre en attente plutôt que de créer.
+                 * L'équipement existe-t-il déjà ? La question passe avant
+                 * toutes les autres.
                  *
-                 * La première est un choix global : la création automatique est
-                 * décochée, l'utilisateur veut regarder avant.
+                 * Un candidat adopté repasse ici à chaque redémarrage du démon,
+                 * à chaque « relancer la découverte », dès qu'une passerelle de
+                 * plus voit la balise — et le démon continue de l'annoncer
+                 * « guess » : l'adoption n'a forcé la confiance que du côté de
+                 * Jeedom. Sans cette question, il repartait indéfiniment dans
+                 * la file, et surtout son équipement n'était PLUS JAMAIS mis à
+                 * jour : une mesure nouvellement décodée ou une passerelle
+                 * supplémentaire ne devenait jamais une commande, puisque plus
+                 * aucun modèle ne passait par la fabrique.
                  *
-                 * La seconde tient au modèle lui-même. Une passerelle Bluetooth
-                 * voit tout ce qui passe, y compris le téléphone d'un visiteur
-                 * dont l'adresse change toutes les quinze minutes. Quand
-                 * l'adapter dit « guess » — je vois quelque chose, je ne sais
-                 * pas ce que c'est — créer un équipement serait présumer à la
-                 * place de l'utilisateur. « probable » reste créé : c'est
-                 * « je sais ce que c'est, je ne le connais pas encore tout à
-                 * fait », le cas d'un Shelly annoncé dont l'état complet n'est
-                 * pas encore arrivé.
+                 * findByIdentity() reconnaît aussi les alias : un appareil qui
+                 * s'annonce par un autre chemin reste le même équipement.
                  */
-                if (!$auto || $modele->confidence() === 'guess') {
-                    self::rememberPending($modele);
-                    continue;
+                $existe = mqttbeFactory::findByIdentity($modele) !== null;
+
+                if (!$existe) {
+                    /*
+                     * Un refus vaut aussi contre la création, et pas seulement
+                     * contre la mise en file. Sinon l'appareil écarté était
+                     * créé d'office dès que sa confiance montait — la
+                     * passerelle s'est mise à le décoder — ou dès que
+                     * l'utilisateur cochait « adopter toutes les balises » :
+                     * tous les refus passés étaient balayés d'un coup.
+                     */
+                    if (isset($ignores[$modele->uid()])) {
+                        continue;
+                    }
+                    /*
+                     * Deux raisons de mettre en attente plutôt que de créer.
+                     *
+                     * La première est un choix global : la création automatique
+                     * est décochée, l'utilisateur veut regarder avant.
+                     *
+                     * La seconde tient au modèle lui-même. Une passerelle
+                     * Bluetooth voit tout ce qui passe, y compris le téléphone
+                     * d'un visiteur dont l'adresse change toutes les quinze
+                     * minutes. Quand l'adapter dit « guess » — je vois quelque
+                     * chose, je ne sais pas ce que c'est — créer un équipement
+                     * serait présumer à la place de l'utilisateur. « probable »
+                     * reste créé : c'est « je sais ce que c'est, je ne le
+                     * connais pas encore tout à fait », le cas d'un Shelly
+                     * annoncé dont l'état complet n'est pas encore arrivé.
+                     */
+                    if (!$auto || $modele->confidence() === 'guess') {
+                        self::rememberPending($modele);
+                        continue;
+                    }
                 }
                 $compte = mqttbeFactory::apply($modele);
                 if ($compte['status'] !== 'unchanged') {
@@ -881,13 +935,8 @@ class mqttbeDaemon {
         message::add('mqttbe', $texte, null, 'discovery');
     }
 
-    /**
-     * Met de côté un modèle en attente d'adoption.
-     *
-     * La liste est bornée et vit dans le cache : ce sont des candidats, pas des
-     * données à conserver. Une file qui grossirait sans limite sur un broker
-     * partagé finirait par peser plus lourd que les équipements eux-mêmes.
-     */
+    /* ------------------------------------------------------ file d'adoption */
+
     /**
      * Identifiants que l'utilisateur a explicitement écartés.
      *
@@ -898,52 +947,351 @@ class mqttbeDaemon {
      */
     public static function ignoredUids() {
         $brut = config::byKey('discovery::ignored', 'mqttbe', '');
-        $liste = json_decode((string) $brut, true);
-        return is_array($liste) ? $liste : array();
+        /*
+         * config::byKey() décode le JSON lui-même (core/class/config.class.php,
+         * is_json) : ce qui arrive ici est DÉJÀ un tableau. Le redécoder
+         * revenait à faire json_decode('Array') — donc null, donc une liste de
+         * refus éternellement vide : aucun refus ne tenait, chaque nouveau
+         * refus effaçait les précédents, le plafond ne servait à rien, le
+         * bandeau « n appareil(s) écarté(s) » ne s'affichait jamais, et la
+         * conversion du tableau en chaîne laissait une alerte PHP 8 dans
+         * /var/www/html/log/http.error. La chaîne reste acceptée : c'est ce que
+         * rendent un cœur qui ne décode pas et une valeur écrite à la main.
+         */
+        $liste = is_array($brut) ? $brut : json_decode((string) $brut, true);
+        if (!is_array($liste)) {
+            return array();
+        }
+        /*
+         * Forme rendue : uid => array('at' => horodatage, 'name' => nom vu).
+         *
+         * Le nom est gardé avec le refus parce que c'est la seule chose qui
+         * rende la liste des écartés lisible. Un identifiant de balise —
+         * « omg:ble:d4a3f2118c07 » — ne dit rien de ce qu'on a refusé, et
+         * revenir sur un refus demande de reconnaître ce sur quoi on revient :
+         * la file, elle, n'a plus l'entrée, elle a été retirée au moment du
+         * refus.
+         *
+         * Deux formes antérieures sont relues plutôt que jetées, parce qu'un
+         * refus est une décision et qu'une décision ne se perd pas sur un
+         * détail de forme : la liste plate ["uid", ...], et uid => horodatage.
+         * Ni l'une ni l'autre ne porte de nom ; l'entrée reste valide, elle
+         * s'affichera par son identifiant, comme avant.
+         */
+        $propre = array();
+        foreach ($liste as $cle => $valeur) {
+            if (is_int($cle) && is_string($valeur)) {
+                if ($valeur !== '') {
+                    $propre[$valeur] = array('at' => 0, 'name' => '');
+                }
+                continue;
+            }
+            $uid = (string) $cle;
+            if ($uid === '') {
+                continue;
+            }
+            if (is_array($valeur)) {
+                $propre[$uid] = array(
+                    'at'   => isset($valeur['at']) && is_numeric($valeur['at']) ? (int) $valeur['at'] : 0,
+                    'name' => isset($valeur['name']) ? (string) $valeur['name'] : '',
+                );
+                continue;
+            }
+            $propre[$uid] = array(
+                'at'   => is_numeric($valeur) ? (int) $valeur : 0,
+                'name' => '',
+            );
+        }
+        return $propre;
     }
 
+    /**
+     * Écarte un candidat, et retient sous quel nom on l'a vu.
+     *
+     * Le nom n'est pas demandé à l'appelant : la file l'a déjà, et le prendre
+     * là où il est évite qu'une page puisse décider de ce qui s'inscrit en
+     * configuration. Il est lu avant le retrait, sans quoi il n'y aurait plus
+     * rien à lire.
+     */
     public static function ignoreUid($_uid) {
+        $uid = (string) $_uid;
+        $nom = self::pendingName($uid);
         $liste = self::ignoredUids();
-        $liste[(string) $_uid] = time();
+        $liste[$uid] = array('at' => time(), 'name' => $nom);
         /* Bornée : une maison très passante pourrait sinon faire enfler la
          * configuration sans fin. Les plus anciens refus sortent en premier. */
         if (count($liste) > 500) {
-            asort($liste);
+            uasort($liste, array(__CLASS__, 'compareIgnored'));
             $liste = array_slice($liste, -500, null, true);
         }
         config::save('discovery::ignored', json_encode($liste), 'mqttbe');
-        self::forgetPending($_uid);
+        self::forgetPending($uid);
+    }
+
+    /* Ordre croissant de date de refus : array_slice(-N) garde la fin, donc
+     * les refus les plus récents. Un refus sans date — relu d'une version
+     * antérieure — sort en premier, c'est aussi le plus ancien. */
+    private static function compareIgnored($_a, $_b) {
+        $a = isset($_a['at']) ? (int) $_a['at'] : 0;
+        $b = isset($_b['at']) ? (int) $_b['at'] : 0;
+        if ($a === $b) {
+            return 0;
+        }
+        return $a < $b ? -1 : 1;
+    }
+
+    /** Le nom sous lequel la file connaît ce candidat, ou '' si elle l'ignore. */
+    private static function pendingName($_uid) {
+        $verrou = self::pendingLock(false);
+        try {
+            $attente = self::pendingRead();
+        } finally {
+            self::pendingUnlock($verrou);
+        }
+        if (!is_array($attente)) {
+            return '';
+        }
+        $uid = (string) $_uid;
+        return isset($attente[$uid]['name']) ? (string) $attente[$uid]['name'] : '';
     }
 
     public static function forgetIgnored($_uid) {
         $liste = self::ignoredUids();
         unset($liste[(string) $_uid]);
+        /* Le tableau vide s'encode « [] » : relu, il redonne bien un tableau
+         * vide, et non la chaîne « [] » prise pour un refus. */
         config::save('discovery::ignored', json_encode($liste), 'mqttbe');
     }
 
-    /** Retire un candidat de la file, adopté ou écarté. */
-    public static function forgetPending($_uid) {
+    /**
+     * Verrou de la file d'adoption.
+     *
+     * Le cache de Jeedom écrit son fichier sans verrou ni renommage atomique
+     * (core/class/cache.class.php, FileCache::save() : un file_put_contents()
+     * nu). Un lecteur qui tombe au milieu de l'écriture lit un fichier
+     * tronqué, unserialize() échoue, et la file paraît VIDE. Mesuré sur
+     * l'installation, file réelle de 110 Ko, un écrivain et un lecteur : 607
+     * lectures vides sur 45 742, soit plus d'une sur cent, et jusqu'à 3,4 %
+     * selon la charge. Le callback du démon écrit jusqu'à vingt-cinq fois par
+     * lot, c'est-à-dire précisément pendant que l'administrateur ouvre la
+     * modale.
+     *
+     * flock sur un fichier du dossier temporaire du plugin, comme
+     * mqttbeRouting::lock() : même dossier, même raison, et le cœur n'offre
+     * aucune opération atomique sur le cache.
+     */
+    private static function pendingLock($_exclusif = true) {
+        $fichier = @fopen(jeedom::getTmpFolder('mqttbe') . '/pending.lock', 'c');
+        if ($fichier === false) {
+            return null;
+        }
+        if (!@flock($fichier, $_exclusif ? LOCK_EX : LOCK_SH)) {
+            fclose($fichier);
+            return null;
+        }
+        return $fichier;
+    }
+
+    private static function pendingUnlock($_verrou) {
+        if ($_verrou === null) {
+            return;
+        }
+        @flock($_verrou, LOCK_UN);
+        fclose($_verrou);
+    }
+
+    /**
+     * Lit la file sans rien en interpréter.
+     *
+     * Rend null quand on ne sait pas ce qu'elle contient : cache inaccessible,
+     * ou valeur d'un autre type que le tableau attendu. « Je ne sais pas »
+     * n'est pas « elle est vide » — réécrire par-dessus une file inconnue
+     * l'effacerait, et c'est exactement ce qui se produisait.
+     */
+    private static function pendingRead() {
         try {
-            $attente = cache::byKey('mqttbe::pending')->getValue(array());
-            if (is_array($attente)) {
-                unset($attente[(string) $_uid]);
-                cache::set('mqttbe::pending', $attente);
-            }
+            $valeur = cache::byKey(self::PENDING_KEY)->getValue(null);
         } catch (Throwable $e) {
-            /* Sans conséquence : la file est un cache, elle se reconstruit. */
+            return null;
+        }
+        /* Jamais écrite, ou vidée : là, on sait, et la file est bien vide. */
+        if ($valeur === null || $valeur === '') {
+            return array();
+        }
+        return is_array($valeur) ? $valeur : null;
+    }
+
+    /**
+     * Écarte les candidats périmés.
+     *
+     * Sans péremption, un passant aperçu une fois il y a trois semaines gardait
+     * sa place à vie et participait à l'éviction : il faisait sortir de la file
+     * un appareil que l'on voit tous les jours.
+     */
+    private static function pendingPrune($_attente) {
+        $limite = time() - self::PENDING_TTL;
+        $propre = array();
+        foreach ($_attente as $uid => $candidat) {
+            if (!is_array($candidat)) {
+                continue;
+            }
+            $vu = isset($candidat['seen']) ? (int) $candidat['seen'] : 0;
+            if ($vu <= 0) {
+                /* Entrée d'une version antérieure, sans date : datée de
+                 * maintenant plutôt que jetée sur un détail de forme. */
+                $candidat['seen'] = time();
+                $propre[$uid] = $candidat;
+                continue;
+            }
+            if ($vu < $limite) {
+                continue;
+            }
+            $propre[$uid] = $candidat;
+        }
+        return $propre;
+    }
+
+    /**
+     * Ce qu'un candidat vaut quand la file déborde, en secondes de présence.
+     *
+     * Le critère est celui que la modale affiche déjà : depuis combien de temps
+     * on le voit, et son adresse tiendra-t-elle. Seule « random » dit d'une
+     * adresse qu'elle ne durera pas ; ne rien savoir du type n'est pas une
+     * accusation et ne retire rien.
+     */
+    private static function pendingScore($_candidat) {
+        $premier = isset($_candidat['first']) ? (int) $_candidat['first'] : 0;
+        $vu      = isset($_candidat['seen'])  ? (int) $_candidat['seen']  : 0;
+        $duree   = ($premier > 0 && $vu > $premier) ? $vu - $premier : 0;
+
+        $type = '';
+        if (isset($_candidat['model']['meta']['address_type'])) {
+            $type = strtolower(trim((string) $_candidat['model']['meta']['address_type']));
+        }
+        return $duree + ($type === 'random' ? 0 : self::PENDING_STABLE_BONUS);
+    }
+
+    /**
+     * Ordre croissant d'intérêt : le moins intéressant en tête.
+     *
+     * array_slice(-N) garde la FIN du tableau : trier ainsi puis couper garde
+     * les meilleurs. La coupe précédente, elle, prétendait garder les cinquante
+     * derniers insérés — sauf que réaffecter une clé existante ne la déplace
+     * pas en fin de tableau en PHP : le traceur vu depuis des heures sortait
+     * donc en premier, au profit du téléphone d'un passant arrivé à l'instant.
+     */
+    private static function comparePending($_a, $_b) {
+        $sa = self::pendingScore($_a);
+        $sb = self::pendingScore($_b);
+        if ($sa !== $sb) {
+            return $sa < $sb ? -1 : 1;
+        }
+        /* À égalité, le plus récemment vu passe devant : il est encore là. */
+        $va = isset($_a['seen']) ? (int) $_a['seen'] : 0;
+        $vb = isset($_b['seen']) ? (int) $_b['seen'] : 0;
+        if ($va === $vb) {
+            return 0;
+        }
+        return $va < $vb ? -1 : 1;
+    }
+
+    /**
+     * La file telle qu'on peut la montrer : périmés écartés, meilleurs d'abord.
+     *
+     * Rend null quand la file n'a pas pu être lue. La page doit alors le dire :
+     * afficher « rien n'attend » serait affirmer le contraire de ce qu'on sait.
+     */
+    public static function pendingQueue() {
+        $verrou = self::pendingLock(false);
+        try {
+            $attente = self::pendingRead();
+        } finally {
+            self::pendingUnlock($verrou);
+        }
+        if ($attente === null) {
+            return null;
+        }
+        $attente = self::pendingPrune($attente);
+        uasort($attente, array(__CLASS__, 'comparePending'));
+        /* Le plus intéressant d'abord : c'est l'ordre dans lequel on décide. */
+        return array_reverse($attente, true);
+    }
+
+    /**
+     * Le modèle mis de côté pour ce candidat, ou null s'il n'y en a plus.
+     *
+     * Lu sous le même verrou que le reste : l'adoption ne doit pas tomber sur
+     * une file à moitié écrite et répondre « ce candidat n'est plus là » alors
+     * qu'il y est.
+     */
+    public static function pendingModel($_uid) {
+        $verrou = self::pendingLock(false);
+        try {
+            $attente = self::pendingRead();
+        } finally {
+            self::pendingUnlock($verrou);
+        }
+        if (!is_array($attente)) {
+            return null;
+        }
+        $uid = (string) $_uid;
+        return isset($attente[$uid]['model']) && is_array($attente[$uid]['model'])
+             ? $attente[$uid]['model'] : null;
+    }
+
+    /**
+     * Retire un candidat de la file, adopté ou écarté.
+     *
+     * Rend false quand rien n'a pu être écrit : l'appelant doit alors savoir
+     * que le candidat est toujours là.
+     */
+    public static function forgetPending($_uid) {
+        $verrou = self::pendingLock();
+        try {
+            $attente = self::pendingRead();
+            if ($attente === null) {
+                mqttbe::logger('warning', __("File d'adoption illisible : le candidat n'en a pas été retiré.", __FILE__));
+                return false;
+            }
+            $avant = count($attente);
+            unset($attente[(string) $_uid]);
+            $attente = self::pendingPrune($attente);
+            if (count($attente) === $avant) {
+                /* Rien à retirer, rien à périmer : ne pas réécrire une file
+                 * inchangée, c'est une occasion de moins de la corrompre. */
+                return true;
+            }
+            cache::set(self::PENDING_KEY, $attente);
+            return true;
+        } catch (Throwable $e) {
+            mqttbe::logger('debug', __("File d'adoption non enregistrée : ", __FILE__) . $e->getMessage());
+            return false;
+        } finally {
+            self::pendingUnlock($verrou);
         }
     }
 
+    /**
+     * Met de côté un modèle en attente d'adoption.
+     *
+     * La liste est bornée et vit dans le cache : ce sont des candidats, pas des
+     * données à conserver. Une file qui grossirait sans limite sur un broker
+     * partagé finirait par peser plus lourd que les équipements eux-mêmes.
+     */
     private static function rememberPending($_modele) {
         /* Ce que l'utilisateur a écarté ne revient pas le déranger. */
         $ignores = self::ignoredUids();
         if (isset($ignores[$_modele->uid()])) {
             return;
         }
+        $verrou = self::pendingLock();
         try {
-            $attente = cache::byKey('mqttbe::pending')->getValue(array());
-            if (!is_array($attente)) {
-                $attente = array();
+            $attente = self::pendingRead();
+            if ($attente === null) {
+                /* File illisible : on ne sait pas ce qu'elle contient, et la
+                 * réécrire avec ce seul candidat effacerait tous les autres. */
+                mqttbe::logger('warning', __("File d'adoption illisible : le candidat n'y a pas été ajouté.", __FILE__));
+                return;
             }
             $connu = isset($attente[$_modele->uid()]) ? $attente[$_modele->uid()] : array();
             $attente[$_modele->uid()] = array(
@@ -953,16 +1301,22 @@ class mqttbeDaemon {
                 /* Depuis quand on le voit, et non seulement la dernière fois :
                  * c'est la durée de présence qui distingue un objet de la
                  * maison d'un passant, et c'est elle qui permet de décider. */
-                'first'    => isset($connu['first']) ? $connu['first'] : time(),
+                'first'    => isset($connu['first']) ? (int) $connu['first'] : time(),
                 'seen'     => time(),
                 'channels' => $_modele->countChannels(),
             );
-            if (count($attente) > 50) {
-                $attente = array_slice($attente, -50, null, true);
+            $attente = self::pendingPrune($attente);
+            if (count($attente) > self::PENDING_MAX) {
+                /* Trier AVANT de couper : sans tri, la coupe sortait le
+                 * candidat qu'il fallait justement garder. */
+                uasort($attente, array(__CLASS__, 'comparePending'));
+                $attente = array_slice($attente, -self::PENDING_MAX, null, true);
             }
-            cache::set('mqttbe::pending', $attente);
+            cache::set(self::PENDING_KEY, $attente);
         } catch (Throwable $e) {
             mqttbe::logger('debug', __("File d'adoption non enregistrée : ", __FILE__) . $e->getMessage());
+        } finally {
+            self::pendingUnlock($verrou);
         }
     }
 

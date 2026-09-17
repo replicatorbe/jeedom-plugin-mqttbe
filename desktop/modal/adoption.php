@@ -31,6 +31,19 @@ if (!isConnect('admin')) {
  * appareils qui écrivent ce qu'ils veulent.
  */
 ?>
+<style>
+/* L'en-tête reste visible pendant qu'on fait défiler : à la trentième ligne,
+   on ne sait plus quelle colonne dit quoi, et la file d'adoption est justement
+   longue quand elle sert. `background: inherit` suit le thème clair ou sombre
+   sans le nommer. */
+#table_mqttbePending thead th,
+#table_mqttbeIgnored thead th {
+    position: sticky;
+    top: 0;
+    background: inherit;
+    z-index: 1;
+}
+</style>
 <div id="div_mqttbeAdoption">
 
     <div class="alert alert-info" style="margin:0 0 10px 0;padding:8px 12px;">
@@ -97,7 +110,7 @@ if (!isConnect('admin')) {
             <table id="table_mqttbeIgnored" class="table table-bordered table-condensed">
                 <thead>
                     <tr>
-                        <th>{{Identifiant}}</th>
+                        <th>{{Appareil écarté}}</th>
                         <th style="width:20%;">{{Écarté}}</th>
                         <th style="width:20%;">{{Revenir en arrière}}</th>
                     </tr>

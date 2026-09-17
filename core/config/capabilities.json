@@ -264,6 +264,16 @@
             "isVisible": 1,
             "order": 901
         },
+        "generic.numeric": {
+            "name": "Valeur",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "",
+            "isVisible": 0,
+            "isHistorized": 0,
+            "order": 99
+        },
         "generic.slider": {
             "name": "Réglage",
             "type": "action",
@@ -280,7 +290,7 @@
             "subType": "string",
             "generic_type": "GENERIC_INFO",
             "unit": "",
-            "isVisible": 1,
+            "isVisible": 0,
             "isHistorized": 0,
             "order": 900
         },

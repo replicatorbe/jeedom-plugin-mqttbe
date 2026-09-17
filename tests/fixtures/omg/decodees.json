@@ -23,7 +23,11 @@
         "  - open : un contact ;",
         "  - track : un traceur, qui n'est reconnu que par ce nom de champ ;",
         "  - un champ `a.b`, illégal comme chemin JSON, et un sous-objet : tous deux",
-        "    écartés sans que l'appareil le soit."
+        "    écartés sans que l'appareil le soit.",
+        "",
+        "`track` prouve que la passerelle a reconnu le traceur, mais ne devient pas une",
+        "commande : il ne redescend jamais, puisqu'une balise qui part cesse d'emettre.",
+        "La seule presence exposee est celle que le demon CALCULE."
     ],
     "trames": {
         "bt/OMG_ESP32_BLE_SAM/BTtoMQTT/A8B0C1003001": [
@@ -64,7 +68,7 @@
             "tempc": "sensor.temperature",
             "moi": "sensor.humidity",
             "lux": "sensor.luminosity",
-            "fer": "generic.value",
+            "fer": "generic.numeric",
             "batt": "battery.level"
         },
         "ble:a8b0c1003004": {
@@ -77,7 +81,7 @@
             "open": "contact.open"
         },
         "ble:a8b0c1003006": {
-            "track": "presence.detected"
+            "state.presence": "presence.detected"
         }
     }
 }

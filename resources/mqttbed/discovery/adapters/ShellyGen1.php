@@ -513,7 +513,12 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
                  * quelqu'un renomme son appareil, et le bouton « relancer la
                  * découverte » redemande tout de suite.
                  */
-                'probe'        => ($ip === '') ? array() : array(
+                /* L'adresse vient de l'annonce, donc du réseau : on ne
+                 * compose une URL que si c'en est réellement une. Le moteur
+                 * refuse déjà ce qui n'est pas une IP, mais une adresse fautive
+                 * ne doit pas non plus arriver jusqu'à lui — elle n'a rien à
+                 * faire dans le modèle. */
+                'probe'        => (filter_var($ip, FILTER_VALIDATE_IP) === false) ? array() : array(
                     'type' => 'http.json',
                     'url'  => 'http://' . $ip . '/settings',
                     'path' => 'name',

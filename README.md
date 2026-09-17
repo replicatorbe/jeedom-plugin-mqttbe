@@ -17,14 +17,17 @@ et les critères d'acceptation.
 | 0 | Socle du dépôt, conformité Jeedom, intégration continue | fait |
 | 1 | Client MQTT, démon, page de configuration, test de connexion | fait |
 | 2 | Modèle de périphérique, capacités, fabrique, routage, équipements manuels | fait |
-| 3 | Shelly Gen2 / Gen3 / Gen4 | repoussé |
+| 3 | Shelly Gen2 / Gen3 / Gen4 | repoussé, faute de matériel |
 | 4 | Shelly Gen1 | fait |
-| 5 | Explorateur de topics, adoption, reprise en main | à venir |
+| 4 bis | Passerelles OpenMQTTGateway et balises Bluetooth | fait, hors plan initial |
+| 5 | Explorateur de topics, adoption, reprise en main | file d'adoption faite, explorateur à venir |
 | 6 à 8 | Tasmota, Zigbee2MQTT, Home Assistant Discovery | à venir |
 | 9 à 10 | JSON générique, version 1.0 | à venir |
 
 Les jalons 0, 1, 2 et 4 ont été éprouvés sur un Mosquitto 1.5.7 et un parc Shelly
-Gen1 réel : 22 appareils, 198 commandes créées sans saisie.
+Gen1 réel : 22 appareils, 198 commandes créées sans saisie. Le jalon 4 bis l'a
+été sur des captures anonymisées d'un parc de cinq passerelles — dont une au
+préfixe dupliqué — rejouées hors ligne par `tests/check-omg.php`.
 
 **Le jalon 3 est repoussé volontairement**, et le 4 traité avant lui. La
 découverte des Shelly Gen2+ repose entièrement sur une conversation RPC avec
@@ -33,6 +36,20 @@ l'un hors tension, l'autre sur pile et endormi. On peut écrire l'adapter, on ne
 peut pas le prouver, et son critère d'acceptation est précisément qu'un Shelly
 moderne apparaisse tout seul. Le parc Gen1, lui, est nombreux et vivant, donc
 entièrement vérifiable : il est passé devant.
+
+**Le jalon 4 bis n'était prévu nulle part.** OpenMQTTGateway n'apparaissait
+qu'au détour du critère d'acceptation du jalon 8, comme un sous-produit du Home
+Assistant Discovery. Or ces passerelles publient sur leurs propres topics —
+`<préfixe>/SYStoMQTT` et `<préfixe>/BTtoMQTT/<adresse>` — parfaitement lisibles
+sans qu'aucun Home Assistant ne tourne. L'adapter natif a donc été écrit en
+avance, sans toucher une ligne du noyau, du modèle ni de la fabrique : c'est
+exactement le test que le jalon 6 devait faire passer, et il passe déjà.
+
+**Le jalon 5 n'est fait qu'à moitié**, et c'est la moitié dont les passerelles
+Bluetooth avaient besoin : la file d'adoption, sa fenêtre, les refus qui
+survivent au vidage du cache, et le retour sur un refus. L'explorateur de
+topics, la création d'une commande depuis une feuille de JSON et l'export d'un
+équipement en modèle réutilisable restent à écrire.
 
 ## Structure
 
@@ -48,12 +65,14 @@ core/config/        mqttbe.config.ini    valeurs par défaut, section [mqttbe]
                     capabilities.json    vocabulaire de capacités → type Jeedom
                     catalog/             noms commerciaux, décoratif uniquement
 core/i18n/          traductions en_US
-desktop/            page principale et son JS
+desktop/php/        page principale du plugin
+desktop/modal/      adoption.php — la file d'adoption
+desktop/js/         mqttbe.js — page, file d'adoption, états en direct
 resources/mqttbed/  le démon, processus autonome
   core/             boucle, journal, configuration, liaison Jeedom, routeur
   mqtt/             interface de transport et son implémentation
-  discovery/        moteur de découverte, modèle, canaux
-    adapters/       ShellyGen1.php — le seul adapter existant à ce jour
+  discovery/        moteur de découverte, modèle, canaux, sondes de nom
+    adapters/       ShellyGen1.php, OpenMqttGateway.php
   lib/              php-mqtt/client, psr/log, myclabs/php-enum (MIT, figés)
 tests/              contrôles hors ligne et banc de routage
 docs/               ARCHITECTURE.md, ROADMAP.md, documentation fr_FR et en_US
@@ -73,13 +92,35 @@ php tests/run.php          # contrôles hors ligne, code de retour non nul si é
 php tests/bench-routage.php # banc de routage : 10 000 messages, exactitude puis latence
 ```
 
-`tests/run.php` regroupe six sections : conformité aux conventions du cœur,
+`tests/run.php` regroupe dix sections : conformité aux conventions du cœur,
 contrat démon ↔ Jeedom, clés de configuration, vocabulaire des capacités, moteur
-de découverte, découverte Shelly Gen1. Ce qu'elles attrapent n'a rien d'exotique —
-une propriété sans souligné, un nom de commande écrit différemment de part et
-d'autre du démon, un type générique inventé — mais aucun de ces défauts ne se voit
-à la relecture ni au `php -l`, et tous se manifestent bien plus tard sous la forme
-d'un symptôme qui ne désigne pas sa cause.
+de découverte, sondes de nom, découverte Shelly Gen1, découverte
+OpenMQTTGateway, écriture en base de la fabrique, table de routage. Chacune est
+aussi exécutable seule — `php tests/check-omg.php`, par exemple.
+
+Ce qu'elles attrapent n'a rien d'exotique — une propriété sans souligné, un nom
+de commande écrit différemment de part et d'autre du démon, un type générique
+inventé — mais aucun de ces défauts ne se voit à la relecture ni au `php -l`, et
+tous se manifestent bien plus tard sous la forme d'un symptôme qui ne désigne
+pas sa cause.
+
+Deux sections méritent qu'on dise ce qu'elles couvrent, parce qu'un banc d'un
+seul appareil ne les couvrirait pas :
+
+- **les sondes de nom** rejouent le vrai moteur devant un exécuteur HTTP de
+  papier et une horloge qu'on avance à la main. Elles vérifient qu'aucune
+  requête n'est faite sur le chemin d'un message — vingt-deux appareils éteints,
+  ce sont vingt-deux expirations pendant lesquelles plus rien n'est routé —,
+  qu'un appareil muet n'est pas resondé en boucle, et qu'un nom déjà obtenu
+  n'est jamais effacé par un échec ultérieur ;
+- **la découverte OpenMQTTGateway** rejoue des captures anonymisées d'un parc de
+  cinq passerelles (`tests/fixtures/omg`). Elle vérifie que le RSSI, qui change
+  à chaque trame, ne provoque aucune réécriture en base ; qu'un champ `name`
+  présent une trame sur deux ne fait pas osciller le modèle ; que l'inventaire
+  du démon est plafonné et périmé, faute de quoi il enfle toute la nuit ; que la
+  passerelle au préfixe dupliqué ne crée pas d'équipement fantôme ; et qu'une
+  balise silencieuse finit par être déclarée absente au lieu d'affirmer
+  éternellement qu'un objet parti depuis trois jours est au salon.
 
 Un contrôle dont les fichiers n'existent pas encore est annoncé « non vérifiable »
 et ne fait pas échouer la suite.
@@ -123,6 +164,11 @@ widget, visibilité et historisation.
 
 Le critère de réussite de l'architecture est explicite : ajouter Tasmota (jalon 6)
 ne doit modifier **aucune ligne** du noyau, du modèle ou de la fabrique.
+`OpenMqttGateway.php` en est la première preuve : deuxième adapter, écrit après
+coup, il n'a demandé aucune retouche du contrat. Les deux réglages qui lui sont
+propres — délai d'absence et adoption de toutes les balises — lui parviennent
+par l'ordre `discovery`, que le démon reçoit déjà, et non par une lecture de la
+configuration du cœur : le démon ne le charge pas.
 
 ## Trois pièges à ne pas réintroduire
 

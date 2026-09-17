@@ -55,6 +55,17 @@ class mqttbeFactory {
      * modèle est par ailleurs inchangé. L'adresse sert à ouvrir l'appareil
      * depuis Jeedom — c'est souvent le seul moyen de savoir lequel des dix-sept
      * « Shelly 1 » du couloir on est en train de configurer. */
+    /*
+     * Le nom lu dans l'appareil, mémorisé.
+     *
+     * Le démon ne le porte pas dans tous ses messages : la première émission
+     * d'un appareil arrive avant que la sonde n'ait répondu, et une sonde qui
+     * échoue quatre fois abandonne. Sans cette mémoire, l'équipement était
+     * renommé en nom technique à chaque redémarrage du démon, puis renommé de
+     * nouveau une seconde plus tard — deux écritures et deux événements par
+     * appareil, sur dix-sept Shelly. Un vide n'efface jamais un nom acquis.
+     */
+    const CONF_DEVICE_NAME  = 'mqttbe::deviceName';
     const CONF_IP           = 'mqttbe::ip';
     const CONF_FIRMWARE     = 'mqttbe::firmware';
     const CONF_CONFIG_URL   = 'mqttbe::configUrl';
@@ -456,6 +467,23 @@ class mqttbeFactory {
         return $change;
     }
 
+    /**
+     * Le nom technique contient-il déjà le nom de l'appareil ?
+     *
+     * La comparaison se fait sur la forme réduite — minuscules, sans séparateurs
+     * — parce qu'un appareil jamais renommé porte son propre nom d'hôte :
+     * « Shelly EM 777B35 » et « shellyemtableauelectrique » se ressemblent assez
+     * pour que la redite saute aux yeux, alors qu'une comparaison littérale ne
+     * la voit pas.
+     */
+    private static function containsName($_technique, $_appareil) {
+        $reduit = function ($_texte) {
+            return preg_replace('/[^a-z0-9]+/', '', mb_strtolower((string) $_texte, 'UTF-8'));
+        };
+        $a = $reduit($_appareil);
+        return $a !== '' && strpos($reduit($_technique), $a) !== false;
+    }
+
     private static function applyEqLogic($_eqLogic, $_isNew, $_uid, $_identity, $_meta, $_model) {
         /* L'identifiant d'hier est exactement un des chemins par lesquels
          * l'appareil peut se représenter : un adapter qui change de clé entre
@@ -540,8 +568,17 @@ class mqttbeFactory {
          * existe déjà.
          */
         $deviceName = self::str($_meta, 'device_name');
-        if ($deviceName !== '' && stripos($desired, $deviceName) === false) {
-            $desired .= ' ' . $deviceName;
+        if ($deviceName !== '') {
+            $_eqLogic->setConfiguration(self::CONF_DEVICE_NAME, $deviceName);
+        } else {
+            /* Rien dans ce message : on reprend ce qu'on savait déjà. */
+            $deviceName = (string) $_eqLogic->getConfiguration(self::CONF_DEVICE_NAME, '');
+        }
+        if ($deviceName !== '' && !self::containsName($desired, $deviceName)) {
+            /* Un tiret cadratin plutôt qu'une espace : « Shelly EM 777B35
+             * shellyemtableauelectrique » se lit comme un seul mot, et la
+             * vignette le tronque au pire endroit. */
+            $desired .= ' — ' . $deviceName;
         }
         $generated = $_eqLogic->getConfiguration(self::CONF_GENERATED, array());
         if (!is_array($generated)) {

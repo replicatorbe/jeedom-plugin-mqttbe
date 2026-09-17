@@ -62,9 +62,25 @@ try {
  * au cache. Lus ici pour n'offrir le retour en arrière que s'il y a de quoi
  * revenir. */
 $ignoredCount = 0;
-$ignoredList = json_decode((string) config::byKey('discovery::ignored', 'mqttbe', ''), true);
-if (is_array($ignoredList)) {
-    $ignoredCount = count($ignoredList);
+/* Lus par le plugin et non redécodés ici : config::byKey() rend déjà un
+ * tableau (core/class/config.class.php, is_json), si bien que le json_decode()
+ * d'avant travaillait sur la chaîne « Array » et rendait null — le bandeau
+ * « n appareil(s) écarté(s) » ne s'affichait donc jamais, et le retour sur un
+ * refus n'avait aucune porte d'entrée. Une seule lecture, au même endroit que
+ * celle du démon : les deux ne peuvent plus diverger. */
+if (class_exists('mqttbeDaemon') && method_exists('mqttbeDaemon', 'ignoredUids')) {
+    try {
+        $ignoredCount = count(mqttbeDaemon::ignoredUids());
+    } catch (Throwable $e) {
+        $ignoredCount = 0;
+    }
+} else {
+    /* La classe du plugin n'a pas pu être chargée : la page doit s'afficher
+     * quand même — c'est justement alors qu'on vient la consulter — et le
+     * décompte reste juste, tableau comme chaîne. */
+    $ignoredRaw = config::byKey('discovery::ignored', 'mqttbe', '');
+    $ignoredList = is_array($ignoredRaw) ? $ignoredRaw : json_decode((string) $ignoredRaw, true);
+    $ignoredCount = is_array($ignoredList) ? count($ignoredList) : 0;
 }
 
 /*
@@ -79,6 +95,7 @@ $mqttbeAdapters = array(
     'tasmota'       => 'Tasmota',
     'zigbee2mqtt'   => 'Zigbee2MQTT',
     'homeassistant' => 'Home Assistant Discovery',
+    'omg'           => 'OpenMQTTGateway',
 );
 sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
 ?>
@@ -144,13 +161,26 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
          * compte affiché plus haut n'ouvrait rien. Ce n'est pas une alerte —
          * rien n'est cassé — mais une question, et une question doit pouvoir
          * être ouverte.
+         *
+         * Il ne dépend d'aucun des deux réglages. Il était gardé par
+         * $discoveryEnabled, et c'était un cul-de-sac : la
+         * file survit à l'arrêt de la découverte — elle vit dans le cache, une
+         * semaine — et ses candidats restent parfaitement adoptables, l'adoption
+         * n'interrogeant plus l'appareil. Découverte décochée, la seule porte
+         * d'entrée de la file disparaissait donc, avec des appareils dedans et
+         * plus rien pour les atteindre, y compris pour les écarter.
          */
-        if ($discoveryEnabled && count($pending) > 0) {
+        if (count($pending) > 0) {
             echo '<div class="alert alert-info cursor mqttbeAction" data-action="openAdoption" style="margin:5px;padding:6px 10px;"';
             echo ' title="{{Ouvrir la liste et décider appareil par appareil}}">';
             echo '<i class="fas fa-question-circle"></i> ';
             echo '<b>' . count($pending) . ' {{appareil(s) vu(s) et pas créé(s)}}</b> — ';
             echo '{{la découverte ne sait pas ce qu\'ils sont et attend votre décision : une balise de la maison mérite un équipement, le téléphone d\'un visiteur non.}} ';
+            if (!$discoveryEnabled) {
+                /* Dire pourquoi la liste ne bougera plus, sans laisser croire
+                 * qu'elle est hors d'usage : ce qui y est reste décidable. */
+                echo '{{La découverte est arrêtée : la liste ne s\'allongera plus, mais ces appareils-là peuvent encore être créés ou écartés.}} ';
+            }
             echo '<a class="cursor"><b>{{Examiner la liste}}</b></a>';
             echo '</div>';
         } elseif ($ignoredCount > 0) {
@@ -178,7 +208,7 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
             echo '<li>{{Indiquez son topic de base, par exemple shellies/shelly1pm-D8BFC01A0805 : il servira à préremplir le topic des commandes.}}</li>';
             echo '<li>{{Dans l\'onglet « Commandes », ajoutez une information pour lire une valeur, une action pour publier un message, puis enregistrez.}}</li>';
             echo '</ol>';
-            echo '<span class="help-block" style="margin:8px 0 0 0;">{{La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle ne connaît pour l\'instant que les Shelly Gen1.}}</span>';
+            echo '<span class="help-block" style="margin:8px 0 0 0;">{{La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\'instant les Shelly Gen1 et les passerelles OpenMQTTGateway.}}</span>';
             echo '</div>';
         }
         echo '<div class="input-group" style="margin:5px;">';

@@ -158,9 +158,10 @@ function printEqLogic(_eqLogic) {
     while (champIp.firstChild !== null) {
       champIp.removeChild(champIp.firstChild)
     }
-    if (/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(ip) || /^[0-9a-fA-F:]{2,45}$/.test(ip)) {
+    var hote = mqttbeUrlHost(ip)
+    if (hote !== null) {
       var lien = document.createElement('a')
-      lien.href = 'http://' + ip
+      lien.href = 'http://' + hote
       lien.target = '_blank'
       lien.rel = 'noopener'
       lien.title = '{{Ouvrir la page de l\'appareil}}'
@@ -251,9 +252,37 @@ function mqttbeAdoptionAjax(_data, _success, _failure) {
  * durée de présence qui sépare l'objet de la maison du passant. Les paliers
  * gardent le nombre petit ; la date exacte, elle, reste en infobulle.
  */
+/*
+ * L'adresse, si c'en est une, sous la forme qui va dans une URL.
+ *
+ * La vignette contrôle l'adresse par filter_var côté serveur ; le panneau se
+ * contentait d'une expression laxiste qui acceptait « deadbeef » et fabriquait
+ * un lien mort. Et une adresse IPv6 doit être entourée de crochets, sans quoi
+ * l'URL est invalide. Rend null quand ce n'est pas une adresse : on affiche
+ * alors le texte, ce qui renseigne sans rien promettre.
+ */
+function mqttbeUrlHost(_adresse) {
+  var a = String(_adresse || '').trim()
+  if (/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(a)) {
+    var parts = a.split('.')
+    for (var i = 0; i < parts.length; i++) {
+      if (parseInt(parts[i], 10) > 255) { return null }
+    }
+    return a
+  }
+  /* IPv6 : au moins deux groupes hexadécimaux séparés par des deux-points. */
+  if (/^[0-9a-fA-F:]{2,45}$/.test(a) && a.indexOf(':') !== -1) {
+    return '[' + a + ']'
+  }
+  return null
+}
+
 function mqttbeDurationText(_seconds) {
   var s = Math.floor(_seconds)
   if (!isFinite(s) || s < 0) { s = 0 }
+  /* Sous dix secondes, « 0 s » se lit comme une valeur manquante. « À l'instant »
+     dit la même chose et ne laisse pas croire à une erreur d'affichage. */
+  if (s < 10) { return '{{à l\'instant}}' }
   if (s < 90) { return s + ' s' }
   if (s < 5400) { return Math.floor(s / 60) + ' min' }
   if (s < 172800) { return Math.floor(s / 3600) + ' h' }
@@ -549,23 +578,48 @@ function mqttbeRenderIgnored(_map) {
     label.textContent = '{{Appareils écartés}} (' + uids.length + ')'
   }
 
+  /* Le refus porte une date et le nom sous lequel l'appareil a été vu. Les
+     refus d'une version antérieure n'ont ni l'un ni l'autre : lus quand même,
+     ils s'affichent par leur identifiant. */
+  var refusal = function (_uid) {
+    var brut = map[_uid]
+    if (brut !== null && typeof brut === 'object') {
+      return { at: parseInt(init(brut.at, 0), 10) || 0, name: String(init(brut.name, '')).trim() }
+    }
+    return { at: parseInt(brut, 10) || 0, name: '' }
+  }
+
   /* Le refus le plus récent en premier : c'est celui qu'on vient de regretter. */
   uids.sort(function (_a, _b) {
-    return (parseInt(map[_b], 10) || 0) - (parseInt(map[_a], 10) || 0)
+    return refusal(_b).at - refusal(_a).at
   })
 
   var now = Math.floor(Date.now() / 1000)
   for (var i = 0; i < uids.length; i++) {
     var uid = String(uids[i])
-    var when = parseInt(map[uid], 10)
+    var refus = refusal(uid)
+    var when = refus.at
 
     var tr = document.createElement('tr')
     tr.setAttribute('data-uid', uid)
 
     var tdUid = document.createElement('td')
-    /* La file ne garde rien d'un appareil écarté : son identifiant est tout ce
-       dont on dispose, et c'est par lui qu'on le reconnaît. */
-    tdUid.textContent = uid
+    /* Le nom d'abord, l'identifiant en dessous : « omg:ble:d4a3f2118c07 » ne
+       dit pas ce qu'on a refusé, et revenir sur un refus demande de reconnaître
+       ce sur quoi on revient. Sans nom retenu — refus d'une version antérieure
+       — l'identifiant reste seul, c'est tout ce dont on dispose. */
+    if (refus.name !== '') {
+      var fort = document.createElement('b')
+      fort.textContent = refus.name
+      tdUid.appendChild(fort)
+      var petit = document.createElement('div')
+      petit.className = 'help-block'
+      petit.style.margin = '0'
+      petit.textContent = uid
+      tdUid.appendChild(petit)
+    } else {
+      tdUid.textContent = uid
+    }
     tr.appendChild(tdUid)
 
     var tdWhen = document.createElement('td')
@@ -603,30 +657,66 @@ function mqttbeAdoptionLoad(_keepStatus) {
   })
 }
 
-/* Ce que la fabrique a réellement écrit, et non « c'est fait » : un équipement
-   créé sans commande est un échec silencieux, et il vaut mieux l'apprendre
-   ici. */
+/* Ce que la fabrique a réellement écrit, et non « c'est fait ».
+ *
+ * La phrase est composée à partir du statut rendu par la fabrique — créé, mis à
+ * jour, déjà à jour — et non affirmée d'avance. Annoncer « Équipement créé »
+ * quoi qu'il arrive faisait afficher en vert « Équipement créé : sans nom —
+ * 0 commande(s) » sur une adoption qui venait d'échouer. Un équipement créé
+ * sans aucune commande reste un échec silencieux, et il vaut mieux l'apprendre
+ * ici. */
 function mqttbeAdoptionReport(_result) {
   var result = init(_result, {})
   var cmd = init(result.cmd, {})
   var created = parseInt(init(cmd.created, 0), 10) || 0
   var updated = parseInt(init(cmd.updated, 0), 10) || 0
+  var removed = parseInt(init(cmd.removed, 0), 10) || 0
   var failed = parseInt(init(cmd.failed, 0), 10) || 0
+  var status = String(init(result.status, '')).trim()
   var name = String(init(result.name, '')).trim()
+  if (name === '') { name = '{{sans nom}}' }
 
-  var texte = '{{Équipement créé :}} ' + (name === '' ? '{{sans nom}}' : name)
-  texte += ' — ' + created + ' {{commande(s) créée(s)}}'
-  if (updated > 0) { texte += ', ' + updated + ' {{mise(s) à jour}}' }
-  if (failed > 0) { texte += ', ' + failed + ' {{refusée(s) par la base}}' }
-  texte += '. {{Rechargez la page du plugin pour le voir apparaître parmi les équipements.}}'
-  mqttbeAdoptionStatus(texte, failed > 0 ? 'warning' : 'success')
+  var texte
+  if (status === 'created') {
+    texte = '{{Équipement créé :}} ' + name
+  } else if (status === 'updated') {
+    texte = '{{Équipement mis à jour :}} ' + name
+  } else if (status === 'unchanged') {
+    texte = '{{Équipement déjà à jour :}} ' + name
+  } else {
+    /* Statut inattendu : le rapporter tel quel plutôt que de décider à sa
+       place ce qui vient de se passer. */
+    texte = name + ' — ' + (status === '' ? '{{résultat inconnu}}' : status)
+  }
+
+  var detail = []
+  if (created > 0) { detail.push(created + ' {{commande(s) créée(s)}}') }
+  if (updated > 0) { detail.push(updated + ' {{mise(s) à jour}}') }
+  if (removed > 0) { detail.push(removed + ' {{supprimée(s)}}') }
+  if (failed > 0) { detail.push(failed + ' {{refusée(s) par la base}}') }
+  texte += detail.length > 0
+    ? ' — ' + detail.join(', ')
+    : ' — {{aucune commande touchée}}'
+
+  /* Un équipement neuf sans la moindre commande ne servira à rien : ce n'est
+     pas une réussite, même si rien n'a été refusé. */
+  var muet = (status === 'created' && created === 0)
+  if (status === 'created') {
+    texte += '. {{Rechargez la page du plugin pour le voir apparaître parmi les équipements.}}'
+  } else {
+    texte += '.'
+  }
+  if (muet) {
+    texte += ' {{Aucune commande n\'a été créée : le modèle ne décrivait rien d\'exploitable.}}'
+  }
+  mqttbeAdoptionStatus(texte, (failed > 0 || muet || status === '') ? 'warning' : 'success')
 }
 
 function mqttbeAdopt(_button) {
   var uid = _button.getAttribute('data-uid')
   var row = _button.closest('tr')
   mqttbeAdoptionBusy(row, true)
-  mqttbeAdoptionStatus('{{Création en cours…}}', 'info')
+  mqttbeAdoptionStatus('{{Adoption en cours…}}', 'info')
   mqttbeAdoptionAjax({ action: 'adopt', uid: uid }, function (_result) {
     /* Le candidat a quitté la file côté serveur : la ligne s'en va aussi,
        plutôt que de recharger une page dont le reste n'a pas bougé. */
