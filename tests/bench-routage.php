@@ -54,7 +54,7 @@ class MqttbeCollecteur {
 }
 
 function mqttbeRouteurNeuf($_exclusions = '') {
-    $config = new MqttbeConfig(array('host' => '192.168.0.179', 'exclude' => $_exclusions));
+    $config = new MqttbeConfig(array('host' => '192.0.2.1', 'exclude' => $_exclusions));
     return new MqttbeRouter($config);
 }
 

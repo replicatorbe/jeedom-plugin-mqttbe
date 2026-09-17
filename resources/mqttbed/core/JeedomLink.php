@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /* =============================================================================
@@ -46,6 +46,14 @@
 class MqttbeJeedomLink {
 
     const QUEUE_MAX         = 1000;   // messages en attente, au-delà on jette les plus vieux
+    /*
+     * Et surtout : un plafond en ÉLÉMENTS. Compter les messages ne protège de
+     * rien, puisqu'un message `values` en contient jusqu'à cinq cents : mille
+     * messages pleins font cinq cent mille valeurs, mesurées à 194 Mo. Le démon
+     * était tué par l'OOM killer avant d'atteindre les 300 s au bout desquelles
+     * il se serait arrêté proprement.
+     */
+    const ITEMS_MAX         = 20000;  // ~8 Mo, et cinq minutes de silence à 60 valeurs/s
     const VALUES_MAX        = 500;    // valeurs groupées dans un même message `values`
     /* Modèles groupés dans un même message `discovered`. Bien plus bas que
      * VALUES_MAX : une valeur pèse trois clés, un modèle de périphérique pèse
@@ -181,13 +189,19 @@ class MqttbeJeedomLink {
      * file, c'est ne jamais l'envoyer.
      */
     public function sendNow($_message) {
-        $body = json_encode(array($_message));
+        /* Même précaution que dans start() : un corps vide serait accepté par
+         * Jeedom avec un HTTP 200, et le démon conclurait à tort au succès. */
+        $body = json_encode(array($_message), JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($body === false) {
+            MqttbeLog::error('message non sérialisable (' . json_last_error_msg() . ')');
+            return false;
+        }
         $ch = curl_init($this->url());
         curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
-            CURLOPT_HTTPHEADER     => array('Content-Type: application/json'),
+            CURLOPT_HTTPHEADER     => $this->headers(),
             CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
             CURLOPT_TIMEOUT        => self::TIMEOUT,
             CURLOPT_SSL_VERIFYPEER => false,
@@ -265,12 +279,28 @@ class MqttbeJeedomLink {
         $this->inFlight = $this->queue;
         $this->queue    = array();
 
+        /*
+         * JSON_INVALID_UTF8_SUBSTITUTE, et non json_encode() nu : un seul octet
+         * non-UTF-8 dans une charge utile — un nom d'appareil en ISO-8859-1, une
+         * trame binaire — faisait rendre `false` à json_encode, curl postait un
+         * corps VIDE, Jeedom répondait 200, et les valeurs saines du même lot
+         * disparaissaient sans un mot. L'octet fautif devient U+FFFD ; ses
+         * voisines arrivent.
+         */
+        $corps = json_encode($this->inFlight, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($corps === false) {
+            MqttbeLog::error('lot non sérialisable (' . json_last_error_msg() . '), '
+                           . count($this->inFlight) . ' message(s) abandonné(s)');
+            $this->inFlight = array();
+            return;
+        }
+
         $ch = curl_init($this->url());
         curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode($this->inFlight),
-            CURLOPT_HTTPHEADER     => array('Content-Type: application/json'),
+            CURLOPT_POSTFIELDS     => $corps,
+            CURLOPT_HTTPHEADER     => $this->headers(),
             CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
             CURLOPT_TIMEOUT        => self::TIMEOUT,
             CURLOPT_SSL_VERIFYPEER => false,
@@ -346,17 +376,32 @@ class MqttbeJeedomLink {
     }
 
     private function enforceQueueLimit() {
-        $excess = count($this->queue) - self::QUEUE_MAX;
+        $elements = 0;
+        foreach ($this->queue as $message) {
+            $elements += isset($message['items']) ? count($message['items'])
+                       : (isset($message['models']) ? count($message['models']) : 1);
+        }
+
+        $excess = 0;
+        while (count($this->queue) > self::QUEUE_MAX || $elements > self::ITEMS_MAX) {
+            $vieux = array_shift($this->queue);
+            if ($vieux === null) {
+                break;
+            }
+            $elements -= isset($vieux['items']) ? count($vieux['items'])
+                       : (isset($vieux['models']) ? count($vieux['models']) : 1);
+            $excess++;
+        }
         if ($excess <= 0) {
             return;
         }
-        array_splice($this->queue, 0, $excess);
         $this->dropped += $excess;
 
         /* Une ligne de journal par message jeté ferait, sur une panne longue,
          * exactement ce qu'on cherche à éviter : remplir le disque. */
         if ((time() - $this->lastDropLog) >= self::DROP_LOG_PERIOD) {
-            MqttbeLog::warning('file d\'envoi saturée (' . self::QUEUE_MAX . ' messages), '
+            MqttbeLog::warning('file d\'envoi saturée (' . self::QUEUE_MAX . ' messages ou '
+                             . self::ITEMS_MAX . ' valeurs), '
                              . $this->dropped . ' message(s) abandonné(s) depuis le début de l\'incident');
             $this->lastDropLog = time();
         }
@@ -395,10 +440,26 @@ class MqttbeJeedomLink {
         }
     }
 
+    /**
+     * URL de rappel — sans la clé d'API.
+     *
+     * Elle voyageait dans la chaîne de requête, donc en clair dans le journal
+     * d'accès d'Apache (format `combined`), plusieurs fois par seconde sur un
+     * broker bavard, et dans tout mandataire placé devant Jeedom. Elle passe
+     * maintenant par un en-tête. L'identifiant du démon, lui, n'est pas un
+     * secret et reste dans l'URL : c'est commode pour lire un journal.
+     */
     private function url() {
         return $this->callback
              . (strpos($this->callback, '?') === false ? '?' : '&')
-             . 'apikey=' . urlencode($this->apikey)
-             . '&uid=' . urlencode($this->uid);
+             . 'uid=' . urlencode($this->uid);
+    }
+
+    /** En-têtes communs à tous les envois, clé d'API comprise. */
+    private function headers() {
+        return array(
+            'Content-Type: application/json',
+            'X-Mqttbe-Apikey: ' . $this->apikey,
+        );
     }
 }

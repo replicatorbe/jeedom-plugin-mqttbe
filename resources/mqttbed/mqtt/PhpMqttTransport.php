@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 use PhpMqtt\Client\ConnectionSettings;
@@ -211,6 +211,17 @@ class MqttbePhpMqttTransport implements MqttbeTransport {
     public function publish($_topic, $_payload, $_qos = 0, $_retain = false) {
         if (!$this->isConnected()) {
             $this->lastError = 'non connecté au broker';
+            return false;
+        }
+        /*
+         * MQTT 3.1.1 §3.3.2 interdit les jokers dans un topic de publication, et
+         * un broker qui en reçoit ferme la connexion pour violation de
+         * protocole. Le topic peut venir d'un appareil du réseau : on refuse ici
+         * plutôt que de se faire expulser à chaque appui sur un bouton.
+         */
+        if ($_topic === '' || strpbrk((string) $_topic, '+#') !== false) {
+            $this->lastError = 'topic de publication invalide (vide ou contenant un joker)';
+            MqttbeLog::error('publication refusée sur « ' . $_topic . ' » : ' . $this->lastError);
             return false;
         }
         try {

@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /* Le routeur est une dépendance de la boucle et d'elle seule : le point
@@ -46,6 +46,10 @@ class MqttbeLoop {
     const RETRY_BASE        = 2;       // secondes avant la première nouvelle tentative
     const RETRY_MAX         = 60;      // plafond du recul progressif
     const REPORT_PERIOD     = 300;     // résumé d'activité dans le journal
+    /* Durée au-delà de laquelle une liaison est jugée saine. En deçà, le recul
+     * progressif est conservé plutôt que remis à zéro : un broker qui accepte
+     * puis expulse ne doit pas nous faire boucler toutes les deux secondes. */
+    const CONNECTION_STABLE = 60;
 
     private $config;
     private $transport;
@@ -123,6 +127,25 @@ class MqttbeLoop {
         $this->discovery->onModel(array($this->link, 'pushDiscovered'));
         $this->discovery->onPublish(array($this, 'discoveryPublish'));
         $this->discovery->onSubscribe(array($this, 'syncDiscoverySubscriptions'));
+        /*
+         * Le vocabulaire des capacités, chargé AVANT les adapters.
+         *
+         * Sans lui, MqttbeChannel::validate() saute son contrôle et un canal
+         * dont la capacité est mal orthographiée traverse tout le système :
+         * côté Jeedom, la fabrique retombe sur `generic.value` et crée une
+         * commande texte sans type générique, sans que rien ne désigne l'adapter
+         * fautif. C'est précisément la panne que ce contrôle existe pour éviter.
+         * Le fichier absent laisse le contrôle inactif, comme avant.
+         */
+        $vocabulaire = __DIR__ . '/../../../core/config/capabilities.json';
+        if (MqttbeChannel::loadCapabilities($vocabulaire)) {
+            MqttbeLog::debug('vocabulaire des capacités chargé ('
+                           . count(MqttbeChannel::vocabulary()) . ' capacités)');
+        } else {
+            MqttbeLog::warning('vocabulaire des capacités introuvable ou illisible : '
+                             . 'les capacités des adapters ne seront pas contrôlées');
+        }
+
         $this->discovery->loadAdapters(__DIR__ . '/../discovery/adapters');
     }
 
@@ -268,15 +291,31 @@ class MqttbeLoop {
 
     private function brokerLost($_reason) {
         MqttbeLog::warning('liaison avec le broker perdue : ' . $_reason);
+        /* Lu AVANT disconnect(), qui remet l'horodatage à zéro. */
+        $depuis = $this->transport->connectedSince();
         $this->transport->disconnect();
         if ($this->brokerOk || !$this->brokerAnnounced) {
             $this->brokerOk        = false;
             $this->brokerAnnounced = true;
             $this->link->push(array('cmd' => 'brokerDown', 'message' => $_reason));
         }
-        /* Le recul repart de zéro : la liaison fonctionnait il y a une seconde,
-         * rien ne dit que le broker est durablement absent. */
-        $this->attempts = 0;
+        /*
+         * Le recul ne repart de zéro que si la liaison a réellement tenu.
+         *
+         * Le remettre à zéro à chaque perte suppose que la connexion précédente
+         * était saine. Or un broker peut accepter puis expulser aussitôt — un
+         * autre client portant le même identifiant, une session fantôme, un
+         * pare-feu qui coupe l'établi. Dans ce cas le cycle « connecté,
+         * déconnecté, deux secondes, on recommence » ne ralentissait jamais :
+         * mesuré à douze reconnexions et dix-neuf appels à Jeedom en vingt
+         * secondes, soit près de cent mille requêtes par jour, avec le voyant
+         * d'état qui clignote et Apache qui rejoue le cœur trois fois par
+         * seconde. L'utilisateur ne voyait pas « le broker refuse ma session »,
+         * il voyait « le plugin est instable ».
+         */
+        if ($depuis > 0 && (time() - $depuis) >= self::CONNECTION_STABLE) {
+            $this->attempts = 0;
+        }
         $this->scheduleRetry();
     }
 

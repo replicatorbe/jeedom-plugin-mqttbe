@@ -328,6 +328,11 @@ Points de conception :
 - `channels[].key` est stable et **unique par périphérique** : il devient le
   `logicalId` de la commande. Le nom, lui, peut changer sans casser le lien.
 - `links` exprime le lien action → info que Jeedom attend (`cmd.value`).
+- `fingerprint` est accompagnée, sur l'équipement, de `mqttbe::cmdCount` : le
+  nombre de commandes attendues. L'empreinte seule ne dit pas qu'une commande a
+  été supprimée entre-temps — par l'utilisateur, ou par l'enregistrement d'une
+  page ouverte pendant qu'une découverte en créait une. La fabrique concluait
+  alors « inchangé » et ne la recréait jamais.
 - `fingerprint` rend la découverte idempotente : empreinte identique = aucune
   écriture en base. Indispensable, puisque les messages retenus sont rejoués à
   chaque démarrage du démon.

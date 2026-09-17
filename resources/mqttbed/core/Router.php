@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /* =============================================================================
@@ -518,10 +518,20 @@ class MqttbeRouter {
                 $cmdId = $target['cmdId'];
                 $sent  = isset($this->lastSent[$cmdId]) ? $this->lastSent[$cmdId] : 0.0;
 
-                /* minInterval d'abord : c'est une limite de débit, elle
-                 * s'applique aussi à une valeur qui a changé et à une
-                 * réémission de keepalive. */
-                if ($target['minInterval'] > 0 && ($start - $sent) < $target['minInterval']) {
+                /*
+                 * La limite de débit ne s'applique qu'à une valeur INCHANGÉE.
+                 *
+                 * Jeter un changement d'état laisserait Jeedom sur l'ancienne
+                 * valeur indéfiniment : un état MQTT n'est publié qu'au moment
+                 * où il change, et personne ne le républiera. Un relais qui
+                 * fait on puis off dans la même fenêtre resterait « on » pour
+                 * Jeedom, et les scénarios qui s'y fient se tromperaient. Une
+                 * limite de débit sert à calmer un capteur bavard, pas à perdre
+                 * un état.
+                 */
+                $inchangee = isset($this->lastValue[$cmdId]) && $this->lastValue[$cmdId] === $value;
+                if ($target['minInterval'] > 0 && $inchangee
+                 && ($start - $sent) < $target['minInterval']) {
                     $this->ignored++;
                     continue;
                 }
@@ -627,6 +637,17 @@ class MqttbeRouter {
      * topics engendrés, donc un cache qui ne servait déjà à rien.
      */
     private function remember($_topic, $_list) {
+        /*
+         * Un topic MQTT peut légalement peser 65 535 octets, et la clé du cache
+         * est le topic entier. Un publieur qui encode un état dans ses topics
+         * remplissait 242 Mo de mémoire résidente avec des entrées qui ne
+         * servaient à rien — PHP ne rendant pas cette mémoire au système même
+         * après la purge. Au-delà de 512 octets, le topic est déjà engendré :
+         * le mettre en cache coûte plus que le parcours de filtres économisé.
+         */
+        if (strlen($_topic) > 512) {
+            return;
+        }
         if ($this->cacheCount >= self::CACHE_MAX) {
             $this->cache      = array();
             $this->cacheCount = 0;

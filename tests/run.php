@@ -25,6 +25,10 @@ require_once __DIR__ . '/check-config.php';
 require_once __DIR__ . '/check-capabilities.php';
 require_once __DIR__ . '/check-discovery.php';
 require_once __DIR__ . '/check-shelly-gen1.php';
+/* Ces deux-là ne lisent pas les sources : ils font tourner les classes qui
+ * écrivent en base, sur le cœur de papier de tests/faux-coeur.php. */
+require_once __DIR__ . '/check-factory.php';
+require_once __DIR__ . '/check-routing.php';
 
 $sections = array(
     'Conformité aux conventions du cœur Jeedom' => mqttbeControlesClasses(),
@@ -33,6 +37,8 @@ $sections = array(
     'Vocabulaire des capacités'                 => mqttbeControlesCapacites(),
     'Moteur de découverte'                      => mqttbeControlesDecouverte(),
     'Découverte Shelly Gen1'                    => mqttbeControlesShellyGen1(),
+    'Fabrique : écriture en base'               => mqttbeControlesFabrique(),
+    'Table de routage'                          => mqttbeControlesRoutage(),
 );
 
 $tous = array();

@@ -25,6 +25,31 @@ function mqttbeAppelsByKey($_code) {
     $nombre = count($tokens);
     $appels = array();
 
+    /* Table « nom de constante => valeur » pour les const de classe à valeur
+     * littérale, seules capables de nommer une clé de configuration. */
+    $_constantes = array();
+    for ($i = 0; $i < $nombre - 4; $i++) {
+        if (!is_array($tokens[$i]) || $tokens[$i][0] !== T_CONST) {
+            continue;
+        }
+        $suite = array();
+        for ($j = $i + 1; $j < $nombre && count($suite) < 3; $j++) {
+            if (!mqttbeEstBlanc($tokens[$j])) {
+                $suite[] = $j;
+            }
+        }
+        if (count($suite) < 3) {
+            continue;
+        }
+        $nom = $tokens[$suite[0]];
+        $egal = $tokens[$suite[1]];
+        $valeur = $tokens[$suite[2]];
+        if (is_array($nom) && $nom[0] === T_STRING && $egal === '='
+            && is_array($valeur) && $valeur[0] === T_CONSTANT_ENCAPSED_STRING) {
+            $_constantes[$nom[1]] = stripslashes(substr($valeur[1], 1, -1));
+        }
+    }
+
     for ($i = 0; $i < $nombre; $i++) {
         if (!is_array($tokens[$i]) || $tokens[$i][0] !== T_STRING
             || strtolower($tokens[$i][1]) !== 'config') {
@@ -77,16 +102,40 @@ function mqttbeAppelsByKey($_code) {
             }
         }
 
-        $litteral = function ($_argument) {
-            if (count($_argument) !== 1 || !is_array($_argument[0])
-                || $_argument[0][0] !== T_CONSTANT_ENCAPSED_STRING) {
+        /*
+         * Un argument littéral, ou une constante de classe déclarée dans le
+         * même fichier.
+         *
+         * Nommer une clé par une constante est une meilleure pratique que de
+         * répéter la chaîne : sans cette résolution, le contrôle déclarait
+         * « hors de portée » chaque fois qu'on faisait bien, et devenait donc
+         * de moins en moins utile à mesure que le code s'améliorait.
+         */
+        $litteral = function ($_argument) use ($_constantes) {
+            if (count($_argument) !== 1 || !is_array($_argument[0])) {
                 return null;
             }
-            return stripslashes(substr($_argument[0][1], 1, -1));
+            if ($_argument[0][0] === T_CONSTANT_ENCAPSED_STRING) {
+                return stripslashes(substr($_argument[0][1], 1, -1));
+            }
+            return null;
+        };
+        /* self::MA_CLE / static::MA_CLE : trois jetons, dont le dernier nomme
+         * une constante que le fichier déclare. */
+        $constante = function ($_argument) use ($_constantes) {
+            if (count($_argument) !== 3 || !is_array($_argument[2])) {
+                return null;
+            }
+            $nom = $_argument[2][1];
+            return isset($_constantes[$nom]) ? $_constantes[$nom] : null;
+        };
+        $resoudre = function ($_argument) use ($litteral, $constante) {
+            $valeur = $litteral($_argument);
+            return $valeur !== null ? $valeur : $constante($_argument);
         };
         $appels[] = array(
-            'cle'    => isset($arguments[0]) ? $litteral($arguments[0]) : null,
-            'plugin' => isset($arguments[1]) ? $litteral($arguments[1]) : null,
+            'cle'    => isset($arguments[0]) ? $resoudre($arguments[0]) : null,
+            'plugin' => isset($arguments[1]) ? $resoudre($arguments[1]) : null,
             'ligne'  => $tokens[$i][2],
         );
     }

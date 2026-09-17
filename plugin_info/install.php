@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -44,6 +44,23 @@ function mqttbe_install() {
  * plugins ». Tout ce qui s'y trouve doit être hors ligne et rapide.
  */
 function mqttbe_update() {
+
+    /*
+     * Rechiffrement du mot de passe du broker.
+     *
+     * Le chiffrement dépend de la déclaration `$_encryptConfigKey`, apparue
+     * après les premières versions : une valeur enregistrée avant est restée en
+     * clair dans la table `config`. La réécrire suffit à la faire chiffrer, et
+     * l'opération est sans effet si elle l'est déjà.
+     */
+    try {
+        $motDePasse = config::byKey('broker::password', 'mqttbe', '');
+        if ($motDePasse !== '') {
+            config::save('broker::password', $motDePasse, 'mqttbe');
+        }
+    } catch (Throwable $e) {
+        log::add('mqttbe', 'warning', __('Rechiffrement du mot de passe :', __FILE__) . ' ' . $e->getMessage());
+    }
     try {
         mqttbe_ensureClientId();
         config::save('api::mqttbe::mode', 'localhost', 'core');

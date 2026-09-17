@@ -3,8 +3,8 @@
     "name": "MQTT BE",
     "pluginVersion": "0.1",
     "description": {
-        "fr_FR": "Relie Jeedom à un broker MQTT et découvre tout seul les équipements qui s'y annoncent : les Shelly d'abord, Gen1 comme Gen2 et suivantes, puis les Tasmota, les passerelles Zigbee2MQTT et tout matériel parlant Home Assistant Discovery. Il ne demande que l'adresse du broker : les équipements et leurs commandes sont créés à partir de ce qui circule réellement sur les topics, sans modèle à écrire ni topic à saisir à la main.",
-        "en_US": "Connects Jeedom to an MQTT broker and discovers by itself the devices announcing themselves on it: Shelly first, Gen1 as well as Gen2 and later, then Tasmota, Zigbee2MQTT gateways and any hardware speaking Home Assistant Discovery. It only asks for the broker address: devices and their commands are built from what actually flows on the topics, with no template to write and no topic to type in by hand."
+        "fr_FR": "Relie Jeedom à un broker MQTT et découvre tout seul les équipements qui s'y annoncent. Les Shelly Gen1 sont reconnus aujourd'hui : le plugin interroge l'appareil au lieu de chercher sa fiche dans un catalogue, et crée ses commandes avec leurs unités et leurs types génériques, énergies converties en kWh comprises. Les Shelly Gen2 et suivantes, Tasmota, Zigbee2MQTT et le Home Assistant Discovery viendront ensuite. La création manuelle reste possible pour tout le reste. Il ne demande que l'adresse du broker et n'installe aucune dépendance.",
+        "en_US": "Connects Jeedom to an MQTT broker and discovers by itself the devices announcing themselves on it. Shelly Gen1 devices are recognised today: the plugin asks the device what it can do rather than looking its model up in a catalogue, and builds commands with their units and Jeedom generic types, energy readings converted to kWh included. Shelly Gen2 and later, Tasmota, Zigbee2MQTT and Home Assistant Discovery will follow. Anything else can still be created by hand. It only asks for the broker address and installs no dependency."
     },
     "licence": "AGPL",
     "author": "sMug (Jérôme Fafchamps)",
@@ -14,11 +14,12 @@
     "index": "mqttbe",
     "hasDependency": 0,
     "hasOwnDeamon": 1,
-    "maxDependancyInstallTime": 5,
     "eventjs": 0,
     "issue": "https://github.com/replicatorbe/jeedom-plugin-mqttbe/issues",
     "documentation": "https://github.com/replicatorbe/jeedom-plugin-mqttbe/blob/master/docs/#language#/index.md",
+    "documentation_beta": "https://github.com/replicatorbe/jeedom-plugin-mqttbe/blob/beta/docs/#language#/index.md",
     "changelog": "https://github.com/replicatorbe/jeedom-plugin-mqttbe/blob/master/docs/#language#/changelog.md",
+    "changelog_beta": "https://github.com/replicatorbe/jeedom-plugin-mqttbe/blob/beta/docs/#language#/changelog.md",
     "language": [
         "fr_FR",
         "en_US"

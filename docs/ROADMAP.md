@@ -139,6 +139,12 @@ qui valide toute l'approche.
   en plus `total`, `counters` et `timestamp`. C'est cette différence qui décide,
   pas le nombre d'entrées — sinon la moitié du parc se retrouverait avec une
   commande de puissance bloquée à zéro.
+- **Reste à faire sur les lampes Gen1** : les commandes de couleur ne sont pas
+  encore émises. Le verrou côté plugin est levé — `#red#`, `#green#` et `#blue#`
+  sont désormais substitués à partir de la couleur choisie dans Jeedom, qui la
+  donne en hexadécimal alors que le Gen1 attend trois entiers — mais l'adapter
+  ne produit pas encore les canaux correspondants, faute d'avoir pu les éprouver
+  sur du matériel réel : aucun RGBW2 ni Duo n'est présent sur le parc d'essai.
 - Le catalogue de modèles ne sert donc qu'à embellir (nom commercial, icône) et
   à corriger les rares cas où `info` ment. Son absence n'empêche jamais la
   découverte.

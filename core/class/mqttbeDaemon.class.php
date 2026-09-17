@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*
@@ -127,6 +127,21 @@ class mqttbeDaemon {
         return $out;
     }
 
+    /**
+     * Le démon vit-il, sans rien décider ?
+     *
+     * Plus sûr que state(), qui ne consulte que le cache : on vérifie aussi que
+     * le processus existe. Mais on ne nettoie rien et on n'attend rien.
+     */
+    public static function alive() {
+        $cuid = self::cachedValue(self::CACHE_UID, '0:0');
+        if ($cuid === '0:0') {
+            return false;
+        }
+        list($cpid, ) = array_map('intval', explode(':', $cuid));
+        return $cpid > 0 && @posix_getsid($cpid) !== false;
+    }
+
     public static function state() {
         try {
             return cache::byKey(self::CACHE_UID)->getValue('0:0') !== '0:0';
@@ -214,9 +229,16 @@ class mqttbeDaemon {
 
     /** Rappel du coeur : état affiché sur la page de configuration du plugin. */
     public static function info() {
+        /*
+         * Lecture seule, volontairement : check() peut décider d'arrêter le
+         * démon, et stop() attend jusqu'à huit secondes. Or le cœur appelle
+         * deamon_info() à chaque affichage de la page de configuration : la
+         * page se figeait. La remise en ordre appartient au cron, qui est là
+         * pour cela.
+         */
         $return = array(
             'log'        => 'mqttbed',
-            'state'      => self::check() ? 'ok' : 'nok',
+            'state'      => self::alive() ? 'ok' : 'nok',
             'launchable' => 'ok',
         );
         if (trim(config::byKey('broker::host', 'mqttbe', '')) === '') {
@@ -297,6 +319,24 @@ class mqttbeDaemon {
             }
         }
 
+        /*
+         * Un fichier de PID survit à une coupure de courant : après un
+         * redémarrage, le numéro qu'il contient a de bonnes chances d'appartenir
+         * à un tout autre programme, et nous étions sur le point de lui envoyer
+         * SIGKILL. On ne signale que ce qu'on reconnaît.
+         */
+        if ($cpid > 0 && !self::isOurDaemon($cpid)) {
+            mqttbe::logger('debug', sprintf(
+                __('Le processus %s n\'est pas le démon mqttbe : aucun signal ne lui est envoyé', __FILE__),
+                $cpid
+            ));
+            $pidFile = jeedom::getTmpFolder('mqttbe') . '/mqttbed.pid';
+            if (file_exists($pidFile)) {
+                @unlink($pidFile);
+            }
+            $cpid = 0;
+        }
+
         if ($cpid > 0 && @posix_getsid($cpid)) {
             mqttbe::logger('info', __('Arrêt du démon', __FILE__));
 
@@ -331,6 +371,22 @@ class mqttbeDaemon {
             }
         }
         self::cleanup();
+    }
+
+    /**
+     * Ce processus est-il bien notre démon ?
+     *
+     * /proc est la seule source qui ne mente pas. Son absence (conteneur
+     * restreint, système exotique) laisse le bénéfice du doute : on préfère
+     * arrêter un démon qu'on croit être le nôtre plutôt que d'en laisser un
+     * tourner sans contrôle.
+     */
+    private static function isOurDaemon($_pid) {
+        $cmdline = '/proc/' . ((int) $_pid) . '/cmdline';
+        if (!@is_readable($cmdline)) {
+            return true;
+        }
+        return strpos((string) @file_get_contents($cmdline), 'mqttbed.php') !== false;
     }
 
     /** Remise à zéro de l'état, quelle que soit la façon dont le démon a fini. */
@@ -381,6 +437,26 @@ class mqttbeDaemon {
         }
         stream_set_timeout($socket, 2);
         $written = @fwrite($socket, $payload);
+
+        /*
+         * On lit la réponse, au lieu de fermer aussitôt.
+         *
+         * Le démon répond déjà `{"state":"ok"}` ou `{"state":"error","result":…}`
+         * à chaque ordre, et personne ne l'écoutait : une publication refusée —
+         * broker tombé, topic invalide — passait pour une réussite. L'utilisateur
+         * appuyait sur « Allumer », rien ne se produisait, et aucun message ne le
+         * lui disait alors que le démon en connaissait la raison.
+         */
+        $reponse = null;
+        if ($written !== false) {
+            $brut = @stream_get_contents($socket);
+            if (is_string($brut) && $brut !== '') {
+                $decode = json_decode($brut, true);
+                if (is_array($decode)) {
+                    $reponse = $decode;
+                }
+            }
+        }
         fclose($socket);
 
         if ($written === false) {
@@ -388,6 +464,43 @@ class mqttbeDaemon {
             return false;
         }
         cache::set(self::CACHE_LAST_SND, time());
+
+        if (is_array($reponse) && isset($reponse['state']) && $reponse['state'] !== 'ok') {
+            $motif = isset($reponse['result']) && is_string($reponse['result'])
+                   ? $reponse['result'] : __('motif inconnu', __FILE__);
+            if ($_throw) {
+                throw new Exception(sprintf(
+                    __('Le démon a refusé la commande « %1$s » : %2$s', __FILE__),
+                    isset($_params['cmd']) ? $_params['cmd'] : '?', $motif
+                ));
+            }
+            mqttbe::logger('warning', sprintf(
+                __('Le démon a refusé la commande « %1$s » : %2$s', __FILE__),
+                isset($_params['cmd']) ? $_params['cmd'] : '?', $motif
+            ));
+            return false;
+        }
+
+        /*
+         * La réponse au battement porte la version de table que le démon
+         * applique réellement, et l'état de sa découverte — sous `result`, comme
+         * toute réponse du démon. Un démon relancé qui n'a ni notre table ni nos
+         * réglages de découverte est ainsi rattrapé au tour de cron suivant,
+         * sans attendre qu'un équipement soit modifié.
+         */
+        if (isset($_params['cmd']) && $_params['cmd'] === 'hb'
+         && isset($reponse['result']) && is_array($reponse['result'])) {
+            $etat = $reponse['result'];
+            if (isset($etat['routing'])) {
+                cache::set('mqttbe::daemonRouting', (int) $etat['routing']);
+            }
+            /* Le démon a-t-il gardé nos réglages de découverte ? */
+            if (isset($etat['discovery'])
+             && ((int) $etat['discovery'] === 1) !== (config::byKey('discovery::enabled', 'mqttbe', 1) == 1)) {
+                mqttbe::logger('info', __('La découverte du démon ne correspond plus aux réglages : renvoi.', __FILE__));
+                self::sendDiscoveryConfig();
+            }
+        }
         return true;
     }
 
@@ -398,6 +511,29 @@ class mqttbeDaemon {
      * pour un appareil connecté depuis des semaines : il ne s'annonce plus de
      * lui-même, et sans cette relance il resterait invisible alors qu'il parle.
      */
+    /**
+     * Le démon applique-t-il bien la table que Jeedom croit avoir envoyée ?
+     *
+     * La version appliquée revient dans la réponse au battement. Si elle diffère,
+     * la table est renvoyée de force : c'est le seul rattrapage qui couvre les
+     * cas où l'ordre s'est perdu en route sans que Jeedom l'apprenne.
+     */
+    public static function checkRoutingVersion() {
+        $appliquee = (int) self::cachedValue('mqttbe::daemonRouting', -1);
+        if ($appliquee < 0) {
+            return;   /* Aucun battement n'a encore répondu : rien à comparer. */
+        }
+        $attendue = (int) mqttbeRouting::version();
+        if ($appliquee === $attendue) {
+            return;
+        }
+        mqttbe::logger('info', sprintf(
+            __('Le démon applique la table %1$s alors que Jeedom en est à la %2$s : renvoi.', __FILE__),
+            $appliquee, $attendue
+        ));
+        mqttbeRouting::push(true);
+    }
+
     public static function sendDiscoveryConfig($_rescan = false) {
         $adapters = trim(config::byKey('discovery::adapters', 'mqttbe', 'shelly.gen1'));
         return self::send(array(
@@ -600,6 +736,29 @@ class mqttbeDaemon {
         mqttbeFactory::loadDiscovery();
         $auto = config::byKey('discovery::autoCreate', 'mqttbe', 1) == 1;
 
+        /*
+         * Plafond de création.
+         *
+         * La découverte crée à partir de ce qui passe sur le broker, et rien
+         * n'oblige ce qui passe à être honnête : un appareil compromis, ou
+         * n'importe qui pouvant publier sur le topic d'annonce, engendre autant
+         * d'équipements qu'il invente d'identifiants. Au-delà du plafond, on
+         * n'écrit plus rien et on met en attente : l'utilisateur garde la main.
+         */
+        $plafond = (int) config::byKey('discovery::maxDevices', 'mqttbe', 250);
+        if ($auto && $plafond > 0 && self::countDiscovered() >= $plafond) {
+            $auto = false;
+            if (message::byPluginLogicalId('mqttbe', 'discoveryLimit') === false
+             || count(message::byPluginLogicalId('mqttbe', 'discoveryLimit')) === 0) {
+                message::add('mqttbe', sprintf(
+                    __("La découverte a atteint le plafond de %s équipements : les suivants attendent votre adoption au lieu d'être créés.", __FILE__),
+                    $plafond
+                ), null, 'discoveryLimit');
+            }
+        }
+
+        $avant = self::countDiscovered();
+
         foreach ($_models as $donnees) {
             try {
                 $modele = MqttbeDeviceModel::fromArray($donnees);
@@ -637,6 +796,54 @@ class mqttbeDaemon {
                 ));
             }
         }
+
+        self::announceCreations($avant);
+    }
+
+    /** Nombre d'équipements issus de la découverte. */
+    private static function countDiscovered() {
+        $n = 0;
+        foreach (eqLogic::byType('mqttbe') as $eqLogic) {
+            if ($eqLogic->getConfiguration('mqttbe::adapter', '') !== '') {
+                $n++;
+            }
+        }
+        return $n;
+    }
+
+    /**
+     * Prévient l'utilisateur que des équipements sont apparus — et surtout
+     * qu'ils ne sont rangés nulle part.
+     *
+     * Un équipement sans objet parent n'apparaît pas sur le Dashboard, qui est
+     * le seul écran que la plupart des gens regardent. Sans ce message, la
+     * découverte réussit et l'utilisateur conclut que le plugin n'a rien fait.
+     * Le rangement dans une pièce reste son choix : on ne le devine pas à sa
+     * place, on le lui dit.
+     */
+    private static function announceCreations($_avant) {
+        $apres = self::countDiscovered();
+        if ($apres <= $_avant) {
+            return;
+        }
+        $orphelins = 0;
+        foreach (eqLogic::byType('mqttbe') as $eqLogic) {
+            if ($eqLogic->getConfiguration('mqttbe::adapter', '') !== ''
+             && (int) $eqLogic->getObject_id() === 0) {
+                $orphelins++;
+            }
+        }
+        $texte = sprintf(
+            __('%1$s équipement(s) découvert(s) sur le broker, %2$s au total.', __FILE__),
+            $apres - $_avant, $apres
+        );
+        if ($orphelins > 0) {
+            $texte .= ' ' . sprintf(
+                __("%s ne sont rangés dans aucun objet : ils n'apparaîtront pas sur le Dashboard tant que vous ne leur aurez pas donné une pièce.", __FILE__),
+                $orphelins
+            );
+        }
+        message::add('mqttbe', $texte, null, 'discovery');
     }
 
     /**

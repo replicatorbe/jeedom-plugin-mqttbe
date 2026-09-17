@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 require_once __DIR__ . '/../Channel.php';
@@ -101,6 +101,35 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
     /* Trois décimales : 1 Wh près sur un compteur domestique, et une valeur qui
      * tient dans un graphique sans traîner quatorze chiffres de flottant. */
     const DECIMALES_ENERGIE = 3;
+
+    /*
+     * L'état d'un relais, tel que le firmware l'écrit sur `relay/<i>`.
+     *
+     * `overpower` n'est pas un troisième état : c'est ce que l'appareil publie
+     * à l'instant où il COUPE la sortie pour surcharge. La sortie est donc
+     * ouverte, et l'état binaire vaut 0. Sans cette troisième entrée, la
+     * commande reçoit la chaîne « overpower » exactement au moment qui compte —
+     * un disjonctage — et Jeedom en fait ce qu'il peut, c'est-à-dire n'importe
+     * quoi.
+     */
+    const ETAT_RELAIS = array('on' => '1', 'off' => '0', 'overpower' => '0');
+
+    /*
+     * La forme d'un identifiant d'appareil acceptable.
+     *
+     * L'identifiant vient du réseau — le champ `id` d'une charge utile publiée
+     * par n'importe qui sur `shellies/announce` — et il compose ensuite TOUS
+     * les topics du modèle, en lecture comme en écriture. Une annonce
+     * `{"id":"+"}` donnerait `shellies/+/relay/0` en source, filtre parfaitement
+     * légal qui déverserait l'état de tout le parc sur un équipement fantôme,
+     * et `shellies/+/relay/0/command` en destination, ce que MQTT 3.1.1 §3.3.2
+     * interdit dans un nom de topic de publication : le broker fermerait la
+     * connexion à chaque appui sur le bouton.
+     *
+     * Les identifiants Shelly légitimes — « shelly1pm-D8BFC01A0805 » — tiennent
+     * très largement dans cette forme.
+     */
+    const ID_VALIDE = '/^[A-Za-z0-9._-]{1,64}$/';
 
     /* Noms commerciaux, chargés une fois. Le tableau vide et le « pas encore
      * lu » ne se confondent pas : sans cette distinction, un fichier illisible
@@ -195,14 +224,38 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
             $relanceDemandee = true;
         }
         if ($relanceDemandee) {
-            $this->demandeAnnonce($_ctx, 'relance demandée');
+            if ($this->demandeAnnonce($_ctx, 'relance demandée')) {
+                /* Et l'on oublie ce qui a déjà été émis. Le moteur dédoublonne
+                 * lui-même par empreinte (voir Adapter.php : « émettre deux
+                 * fois de suite un modèle identique ne coûte rien »), si bien
+                 * que ce souvenir-ci n'économise rien et empêche tout : un
+                 * équipement supprimé par erreur dans Jeedom ne reviendrait
+                 * jamais, puisque l'adapter tiendrait son modèle pour déjà
+                 * remis. Or « relancer la découverte » ne veut rien dire
+                 * d'autre que « redis-moi tout ». */
+                $this->oublieEmissions($_ctx);
+            } else {
+                /* Le broker n'est pas là : la demande n'est pas partie, et le
+                 * bouton de l'utilisateur ne doit pas rester sans effet. On la
+                 * réarme pour le tour suivant. */
+                $_ctx->remember(self::ID . ':rescan', true);
+            }
         }
 
         $relances = (int) (isset($horloge['relances']) ? $horloge['relances'] : 0);
         while ($relances < count(self::RELANCES)
                && ($maintenant - $horloge['depart']) >= self::RELANCES[$relances]) {
+            if (!$this->demandeAnnonce($_ctx, 'demande ' . ($relances + 1) . '/' . count(self::RELANCES))) {
+                /* Rien n'est parti : le compteur ne bouge pas, et la même
+                 * demande sera reprise au battement suivant. C'est le cas
+                 * ordinaire après une coupure de courant — la box et le broker
+                 * redémarrent ensemble, et le démon tourne avant d'avoir sa
+                 * liaison. Compter ces demandes-là comme faites consommerait à
+                 * vide les trois relances, et le parc resterait invisible
+                 * jusqu'au prochain redémarrage du démon. */
+                break;
+            }
             $relances++;
-            $this->demandeAnnonce($_ctx, 'demande ' . $relances . '/' . count(self::RELANCES));
         }
         $horloge['relances'] = $relances;
         $this->ecrit($_ctx, 'horloge', $horloge);
@@ -234,9 +287,35 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
      * seule façon de voir quoi que ce soit.
      */
     public function demandeAnnonce($_ctx, $_motif = '') {
-        $_ctx->publish(self::RACINE . '/command', 'announce');
+        /* Le retour de publish() n'est pas décoratif : il vaut false tant que
+         * la liaison au broker n'est pas établie. Journaliser « annonce
+         * demandée » sans l'avoir vérifié produit un journal qui affirme
+         * exactement le contraire de ce qui s'est passé, et c'est alors la
+         * seule trace dont dispose celui qui cherche pourquoi il ne voit
+         * aucun appareil. */
+        if ($_ctx->publish(self::RACINE . '/command', 'announce') !== true) {
+            $_ctx->log('warning', 'Shelly Gen1 : demande d\'annonce non partie, broker injoignable'
+                . ($_motif === '' ? '' : ' (' . $_motif . ')') . ' — reprise au prochain tour.');
+            return false;
+        }
         $_ctx->log('info', 'Shelly Gen1 : annonce demandée à tout le parc'
             . ($_motif === '' ? '' : ' (' . $_motif . ')') . '.');
+        return true;
+    }
+
+    /*
+     * Oublier ce qui a été émis, pour tout le parc : la prochaine annonce
+     * reproduira les modèles. Voir onTick() pour le pourquoi.
+     */
+    private function oublieEmissions($_ctx) {
+        foreach ($this->inventaire($_ctx) as $identifiant) {
+            $dossier = $this->dossier($_ctx, $identifiant);
+            if (!isset($dossier['emis'])) {
+                continue;
+            }
+            unset($dossier['emis']);
+            $this->range($_ctx, $dossier);
+        }
     }
 
     /* --------------------------------------------------------------------- */
@@ -254,6 +333,15 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
         }
         if ($identifiant === '') {
             $_ctx->log('warning', 'Shelly Gen1 : annonce sans identifiant, ignorée.');
+            return;
+        }
+        if (!preg_match(self::ID_VALIDE, $identifiant)) {
+            /* Voir ID_VALIDE : cet identifiant deviendrait la racine des topics
+             * de l'équipement, en lecture comme en écriture. */
+            $_ctx->log('warning', 'Shelly Gen1 : identifiant « ' . $this->citation($identifiant)
+                . ' » refusé — il compose les topics de l\'équipement, et tout ce qui n\'est pas '
+                . 'lettre, chiffre, point, tiret ou souligné y ferait un abonnement ou une '
+                . 'publication que personne n\'a voulus. Annonce ignorée.');
             return;
         }
         $mac = $this->macDe($annonce, $identifiant);
@@ -289,6 +377,16 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
     private function recoitInfo($_ctx, $_identifiant, $_payload) {
         $info = $this->json($_ctx, $_payload, 'info');
         if ($info === null || $_identifiant === '') {
+            return;
+        }
+        /* Même contrôle que sur l'annonce, et pour la même raison. Ici
+         * l'identifiant vient d'un niveau du topic reçu — un broker conforme ne
+         * délivre pas de joker à cet endroit — mais un dossier ouvert sous un
+         * identifiant biscornu consommerait une clé de mémoire sans jamais
+         * pouvoir produire d'équipement, l'annonce, elle, étant refusée. */
+        if (!preg_match(self::ID_VALIDE, (string) $_identifiant)) {
+            $_ctx->log('debug', 'Shelly Gen1 : info reçu sous un identifiant refusé « '
+                . $this->citation($_identifiant) . ' », ignoré.');
             return;
         }
         $dossier = $this->dossier($_ctx, $_identifiant);
@@ -414,13 +512,47 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
             return $modele;
         }
 
-        $relais = $this->indices($info, 'relays');
-        $this->ajouteRelais($modele, $base, $relais);
-        $this->ajouteCompteurs($_ctx, $modele, $base, $info, $relais);
-        $this->ajouteEmeters($modele, $base, $info);
-        $this->ajouteEntrees($modele, $base, $info);
-        $this->ajouteTemperature($modele, $base, $info);
-        $this->ajouteSondes($modele, $base, $info);
+        /*
+         * Quatre familles, et une seule à la fois.
+         *
+         * Un Shelly 2.5 en mode volet publie encore `relays[]` et `meters[]`
+         * dans son info — le matériel n'a pas changé — mais plus une seule
+         * valeur sur `relay/<i>` : tout passe par `roller/0`. Lire `relays`
+         * sans regarder `rollers` donne donc deux interrupteurs qui ne
+         * commandent rien et deux mesures qui ne remontent jamais. De même, la
+         * puissance d'un variateur est sous `light/<i>/power`, et un capteur
+         * sur pile ne publie jamais `temperature` mais `sensor/temperature`.
+         *
+         * D'où cet aiguillage, qui est la seule chose que l'info permette de
+         * trancher avec certitude — et non le code du modèle, qui ne dit pas
+         * dans quel mode l'appareil est configuré aujourd'hui.
+         */
+        $relais    = $this->indices($info, 'relays');
+        $volets    = $this->indices($info, 'rollers');
+        $lumieres  = $this->indices($info, 'lights');
+        $surPile   = $this->estCapteurSurPile($info, $code);
+
+        if ($surPile) {
+            $this->ajouteCapteurs($modele, $base, $info);
+        } elseif (!empty($volets)) {
+            $this->ajouteVolets($modele, $base, $info, $volets);
+        } elseif (!empty($lumieres)) {
+            $this->ajouteLumieres($modele, $base, $info, $lumieres, $code);
+        } else {
+            $this->ajouteRelais($modele, $base, $relais);
+            $this->ajouteCompteurs($_ctx, $modele, $base, $info, $relais);
+        }
+
+        if (!$surPile) {
+            $this->ajouteEmeters($modele, $base, $info);
+            $this->ajouteTemperature($modele, $base, $info);
+            $this->ajouteSondes($modele, $base, $info);
+        }
+
+        /* L'appui long n'existe que là où il y a quelque chose à commander :
+         * voir ajouteEntrees(). */
+        $actionneurs = !empty($relais) || !empty($volets) || !empty($lumieres);
+        $this->ajouteEntrees($modele, $base, $info, $actionneurs && !$surPile);
 
         return $modele;
     }
@@ -440,7 +572,8 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
                 'capability' => 'switch.state',
                 'name'       => 'État' . $suffixe,
                 'source'     => array('topic' => $_base . '/relay/' . $i),
-                'value'      => array('transform' => array('map' => array('on' => '1', 'off' => '0'))),
+                /* Trois entrées et non deux : voir ETAT_RELAIS. */
+                'value'      => array('transform' => array('map' => self::ETAT_RELAIS)),
             )));
             $actions = array(
                 'on'     => array('switch.on',     'Allumer',  'on'),
@@ -514,6 +647,428 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
     }
 
     /*
+     * Volets roulants — SHSW-25 et SHSW-21 configurés en mode roller.
+     *
+     * Le même boîtier, la même info à un tableau près, et pourtant plus rien de
+     * commun côté MQTT : `relay/<i>` se tait définitivement, et tout se joue
+     * sur `roller/<i>`. Les topics, tels que le firmware les emploie :
+     *
+     *   roller/<i>            open | close | stop — le mouvement, pas la position
+     *   roller/<i>/pos        0 à 100, ou -1 quand l'appareil n'est pas calibré
+     *   roller/<i>/power      watts, moteur
+     *   roller/<i>/energy     watt-minutes, comme un relais
+     *   roller/<i>/command        ← open | close | stop
+     *   roller/<i>/command/pos    ← 0 à 100
+     *
+     * La position est prise comme état — c'est elle que Jeedom montre sur le
+     * widget de volet — et `roller/<i>` lui-même n'est pas lu : « ouvre »,
+     * « ferme » ou « arrêté » ne se range dans aucune capacité du vocabulaire,
+     * et la position dit déjà où en est le volet.
+     */
+    private function ajouteVolets($_modele, $_base, $_info, $_indices) {
+        $plusieurs = count($_indices) > 1;
+        foreach ($_indices as $i) {
+            $suffixe = $plusieurs ? ' ' . ($i + 1) : '';
+            $cleEtat = 'roller.' . $i . '.state';
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => $cleEtat,
+                'capability' => 'cover.state',
+                'name'       => 'Position' . $suffixe,
+                'unit'       => '%',
+                'source'     => array('topic' => $_base . '/roller/' . $i . '/pos'),
+                /* -1 n'est pas une position : c'est ce que publie un volet non
+                 * calibré, qui sait ouvrir et fermer mais ignore où il en est.
+                 * Laissé tel quel, il s'afficherait comme « -1 % » et le widget
+                 * dessinerait un volet plus qu'ouvert. */
+                'value'      => array('transform' => array(
+                    'map'   => array('-1' => ''),
+                    'round' => 0,
+                )),
+            )));
+            $actions = array(
+                'open'  => array('cover.open',  'Ouvrir', 'open'),
+                'close' => array('cover.close', 'Fermer', 'close'),
+                'stop'  => array('cover.stop',  'Stop',   'stop'),
+            );
+            foreach ($actions as $role => $action) {
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => 'roller.' . $i . '.' . $role,
+                    'capability' => $action[0],
+                    'name'       => $action[1] . $suffixe,
+                    'sink'       => array(
+                        'topic'   => $_base . '/roller/' . $i . '/command',
+                        'payload' => $action[2],
+                        'qos'     => 0,
+                        'retain'  => false,
+                    ),
+                    'links'      => array('state' => $cleEtat),
+                )));
+            }
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'roller.' . $i . '.position',
+                'capability' => 'cover.position',
+                'name'       => 'Régler la position' . $suffixe,
+                'unit'       => '%',
+                'sink'       => array(
+                    /* Topic distinct, et non une charge utile particulière sur
+                     * `command` : c'est ainsi que le firmware l'attend. */
+                    'topic'   => $_base . '/roller/' . $i . '/command/pos',
+                    'payload' => '#slider#',
+                    'qos'     => 0,
+                    'retain'  => false,
+                ),
+                'links'      => array('state' => $cleEtat),
+            )));
+
+            /* La mesure du moteur, au même titre que celle d'un relais : même
+             * garde — un appareil sans wattmètre publie quand même un
+             * `meters[]` — et mêmes watt-minutes. */
+            $compteur = $this->entree($_info, 'meters', $i);
+            if (!$this->compteurReel($compteur)) {
+                continue;
+            }
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'roller.' . $i . '.power',
+                'capability' => 'power.active',
+                'name'       => 'Puissance' . $suffixe,
+                'unit'       => 'W',
+                'source'     => array('topic' => $_base . '/roller/' . $i . '/power'),
+                'value'      => array('transform' => array('round' => 1)),
+            )));
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'roller.' . $i . '.energy',
+                'capability' => 'energy.total',
+                'name'       => 'Consommation' . $suffixe,
+                'unit'       => 'kWh',
+                'source'     => array('topic' => $_base . '/roller/' . $i . '/energy'),
+                'value'      => array('transform' => array(
+                    'scale' => self::WATTMINUTE_VERS_KWH,
+                    'round' => self::DECIMALES_ENERGIE,
+                )),
+            )));
+        }
+    }
+
+    /*
+     * Variateurs, ampoules et bandeaux — SHDM-1/2, SHRGBW2, SHBLB-1, SHCB-1,
+     * SHBDUO-1, SHVIN-1, SHSPOT-1/2.
+     *
+     * Ils publient `lights[]` dans leur info et rien sous `relay/<i>` :
+     *
+     *   light/<i>             on | off
+     *   light/<i>/status      l'état complet, en JSON
+     *   light/<i>/power       watts
+     *   light/<i>/energy      watt-minutes
+     *   light/<i>/command         ← on | off | toggle
+     *   light/<i>/set             ← {"turn":"on","brightness":0..100}
+     *
+     * Une exception, et elle est documentée : le RGBW2 n'emploie pas `light`
+     * mais `color/0` en mode couleur et `white/<i>` en mode blanc. Le préfixe
+     * se lit donc dans l'info, jamais deviné ; voir prefixeLumiere().
+     */
+    private function ajouteLumieres($_modele, $_base, $_info, $_indices, $_code) {
+        $plusieurs = count($_indices) > 1;
+        foreach ($_indices as $i) {
+            $lumiere = $this->entree($_info, 'lights', $i);
+            $lumiere = is_array($lumiere) ? $lumiere : array();
+            $prefixe = $_base . '/' . $this->prefixeLumiere($_code, $_info, $lumiere, $i);
+            $suffixe = $plusieurs ? ' ' . ($i + 1) : '';
+            $cleEtat = 'light.' . $i . '.state';
+
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => $cleEtat,
+                'capability' => 'light.state',
+                'name'       => 'État' . $suffixe,
+                'source'     => array('topic' => $prefixe),
+                'value'      => array('transform' => array('map' => array('on' => '1', 'off' => '0'))),
+            )));
+            $actions = array(
+                'on'  => array('light.on',  'Allumer',  'on'),
+                'off' => array('light.off', 'Éteindre', 'off'),
+            );
+            foreach ($actions as $role => $action) {
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => 'light.' . $i . '.' . $role,
+                    'capability' => $action[0],
+                    'name'       => $action[1] . $suffixe,
+                    'sink'       => array(
+                        'topic'   => $prefixe . '/command',
+                        'payload' => $action[2],
+                        'qos'     => 0,
+                        'retain'  => false,
+                    ),
+                    'links'      => array('state' => $cleEtat),
+                )));
+            }
+
+            /*
+             * La luminosité. En mode couleur, le firmware ne l'appelle pas
+             * `brightness` mais `gain` — le premier ne pilote alors que la voie
+             * blanche, et un curseur qui ne fait rien bouger est pire qu'un
+             * curseur absent.
+             *
+             * `turn:"on"` dans la même charge utile : régler la luminosité
+             * d'une lampe éteinte, sur un tableau de bord, veut dire l'allumer
+             * à ce niveau-là.
+             */
+            $champ = ($this->estModeCouleur($_info, $lumiere) && array_key_exists('gain', $lumiere))
+                   ? 'gain' : 'brightness';
+            if (array_key_exists($champ, $lumiere)) {
+                $cleNiveau = 'light.' . $i . '.level';
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => $cleNiveau,
+                    'capability' => 'light.brightness_state',
+                    'name'       => 'Niveau' . $suffixe,
+                    'unit'       => '%',
+                    'source'     => array(
+                        'topic'    => $prefixe . '/status',
+                        'selector' => array('type' => 'json', 'path' => $champ),
+                    ),
+                    'value'      => array('transform' => array('round' => 0)),
+                )));
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => 'light.' . $i . '.brightness',
+                    'capability' => 'light.brightness',
+                    'name'       => 'Luminosité' . $suffixe,
+                    'unit'       => '%',
+                    'sink'       => array(
+                        'topic'   => $prefixe . '/set',
+                        'payload' => '{"' . $champ . '":#slider#,"turn":"on"}',
+                        'qos'     => 0,
+                        'retain'  => false,
+                    ),
+                    'links'      => array('state' => $cleNiveau),
+                )));
+            }
+
+            /* La température de couleur : un nombre de kelvins, que le curseur
+             * porte tel quel. Présente sur les Duo, les Vintage et les Duo
+             * RGBW, absente des variateurs. */
+            if (array_key_exists('temp', $lumiere)) {
+                $cleTemp = 'light.' . $i . '.color_temp_state';
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => $cleTemp,
+                    'capability' => 'light.color_temp_state',
+                    'name'       => 'Température de couleur (état)' . $suffixe,
+                    'unit'       => 'K',
+                    'source'     => array(
+                        'topic'    => $prefixe . '/status',
+                        'selector' => array('type' => 'json', 'path' => 'temp'),
+                    ),
+                    'value'      => array('transform' => array('round' => 0)),
+                )));
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => 'light.' . $i . '.color_temp',
+                    'capability' => 'light.color_temp',
+                    'name'       => 'Température de couleur' . $suffixe,
+                    'unit'       => 'K',
+                    'sink'       => array(
+                        'topic'   => $prefixe . '/set',
+                        'payload' => '{"temp":#slider#,"turn":"on"}',
+                        'qos'     => 0,
+                        'retain'  => false,
+                    ),
+                    'links'      => array('state' => $cleTemp),
+                )));
+            }
+
+            /* La mesure, s'il y en a une : même garde que pour un relais. */
+            $compteur = $this->entree($_info, 'meters', $i);
+            if (!$this->compteurReel($compteur)) {
+                continue;
+            }
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'light.' . $i . '.power',
+                'capability' => 'power.active',
+                'name'       => 'Puissance' . $suffixe,
+                'unit'       => 'W',
+                'source'     => array('topic' => $prefixe . '/power'),
+                'value'      => array('transform' => array('round' => 1)),
+            )));
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'light.' . $i . '.energy',
+                'capability' => 'energy.total',
+                'name'       => 'Consommation' . $suffixe,
+                'unit'       => 'kWh',
+                'source'     => array('topic' => $prefixe . '/energy'),
+                'value'      => array('transform' => array(
+                    'scale' => self::WATTMINUTE_VERS_KWH,
+                    'round' => self::DECIMALES_ENERGIE,
+                )),
+            )));
+        }
+    }
+
+    /*
+     * Le préfixe de topic d'une lampe.
+     *
+     * `light/<i>` partout, sauf sur le RGBW2 : celui-là parle sous `color/0`
+     * quand il est en mode couleur et sous `white/<i>` quand il pilote quatre
+     * blancs séparés. Le mode se lit dans l'info — au niveau de la lampe, ou à
+     * la racine selon la version du firmware — et jamais dans le code du
+     * modèle : c'est un réglage, il change du jour au lendemain.
+     */
+    private function prefixeLumiere($_code, $_info, $_lumiere, $_i) {
+        if (strtoupper(trim((string) $_code)) !== 'SHRGBW2') {
+            return 'light/' . $_i;
+        }
+        return ($this->estModeCouleur($_info, $_lumiere) ? 'color/' : 'white/') . $_i;
+    }
+
+    private function estModeCouleur($_info, $_lumiere) {
+        $mode = $this->texte($_lumiere, 'mode');
+        if ($mode === '') {
+            $mode = $this->texte($_info, 'mode');
+        }
+        return strtolower($mode) === 'color';
+    }
+
+    /*
+     * Capteurs sur pile — SHHT-1, SHWT-1, SHDW-1/2, SHSM-01/02, SHBTN-1/2,
+     * SHMOS-01/02, et le SHGS-1 qui n'a pas de pile mais la même façon de
+     * parler.
+     *
+     * Toute leur mesure passe sous `sensor/…`, et JAMAIS sous `temperature` :
+     * un H&T traité comme un relais donne une « Température interne » branchée
+     * sur un topic muet, sans humidité ni niveau de pile — c'est-à-dire un
+     * équipement qui ne dit rien de ce pour quoi il a été acheté.
+     *
+     * Sur un H&T, la température est d'ailleurs celle de la pièce : l'appeler
+     * « interne » induirait en erreur celui qui bâtit un thermostat dessus.
+     */
+    private function ajouteCapteurs($_modele, $_base, $_info) {
+        $binaire = array('transform' => array('map' => array(
+            'true' => '1', 'false' => '0', '1' => '1', '0' => '0',
+        )));
+
+        if ($this->aTemperatureCapteur($_info)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'temperature',
+                'capability' => 'sensor.temperature',
+                'name'       => 'Température',
+                'unit'       => '°C',
+                'source'     => array('topic' => $_base . '/sensor/temperature'),
+                'value'      => array('transform' => array('round' => 1)),
+            )));
+        }
+        if (isset($_info['hum'])) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'humidity',
+                'capability' => 'sensor.humidity',
+                'name'       => 'Humidité',
+                'unit'       => '%',
+                'source'     => array('topic' => $_base . '/sensor/humidity'),
+                'value'      => array('transform' => array('round' => 1)),
+            )));
+        }
+        if (array_key_exists('flood', $_info)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'flood',
+                'capability' => 'alarm.water_leak',
+                'name'       => 'Fuite d\'eau',
+                'source'     => array('topic' => $_base . '/sensor/flood'),
+                'value'      => $binaire,
+            )));
+        }
+        if (isset($_info['sensor']['state'])) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'contact',
+                'capability' => 'contact.open',
+                'name'       => 'Ouverture',
+                'source'     => array('topic' => $_base . '/sensor/state'),
+                /* « open »/« close », et non 1/0 : le contact d'un Door/Window
+                 * parle en toutes lettres. */
+                'value'      => array('transform' => array('map' => array(
+                    'open' => '1', 'close' => '0', 'closed' => '0',
+                ))),
+            )));
+        }
+        if (isset($_info['sensor']['motion']) || array_key_exists('motion', $_info)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'motion',
+                'capability' => 'presence.detected',
+                'name'       => 'Mouvement',
+                'source'     => array('topic' => $_base . '/sensor/motion'),
+                'value'      => $binaire,
+            )));
+        }
+        if (isset($_info['lux'])) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'lux',
+                'capability' => 'sensor.luminosity',
+                'name'       => 'Luminosité',
+                'unit'       => 'lx',
+                'source'     => array('topic' => $_base . '/sensor/lux'),
+                'value'      => array('transform' => array('round' => 0)),
+            )));
+        }
+        if (array_key_exists('smoke', $_info)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'smoke',
+                'capability' => 'alarm.smoke',
+                'name'       => 'Fumée',
+                'source'     => array('topic' => $_base . '/sensor/smoke'),
+                'value'      => $binaire,
+            )));
+        }
+        if (array_key_exists('gas', $_info) || array_key_exists('gas_sensor', $_info)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'gas',
+                'capability' => 'alarm.gas',
+                'name'       => 'Gaz',
+                'source'     => array('topic' => $_base . '/sensor/gas'),
+                /* Le détecteur de gaz ne dit pas vrai ou faux mais l'état de
+                 * son alarme, en toutes lettres. */
+                'value'      => array('transform' => array('map' => array(
+                    'none' => '0', 'mild' => '1', 'heavy' => '1', 'test' => '0',
+                ))),
+            )));
+        }
+        if (isset($_info['bat'])) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'battery',
+                'capability' => 'battery.level',
+                'name'       => 'Batterie',
+                'unit'       => '%',
+                'source'     => array('topic' => $_base . '/sensor/battery'),
+                'value'      => array('transform' => array('round' => 0)),
+            )));
+        }
+    }
+
+    /*
+     * Un capteur qui parle sous `sensor/`.
+     *
+     * La présence de `bat` est le discriminant le plus sûr : toute la gamme sur
+     * pile la publie, et aucun appareil sur secteur ne l'a. Les autres clés
+     * rattrapent les deux exceptions — un Gas ou un Sense branchés au secteur
+     * publient tout de même sous `sensor/` — et le catalogue sert de dernier
+     * recours pour un firmware qui aurait omis `bat`.
+     */
+    private function estCapteurSurPile($_info, $_code) {
+        foreach (array('bat', 'hum', 'flood', 'lux', 'smoke', 'motion', 'gas', 'gas_sensor') as $cle) {
+            if (array_key_exists($cle, $_info)) {
+                return true;
+            }
+        }
+        if (isset($_info['sensor']) && is_array($_info['sensor'])
+            && (isset($_info['sensor']['state']) || isset($_info['sensor']['motion']))) {
+            return true;
+        }
+        return $this->surPile($_code);
+    }
+
+    /* Un capteur sur pile publie sa température sous `sensor/temperature`, et
+     * la porte dans `tmp` — jamais dans `temperature`, qui est réservé à la
+     * chauffe du boîtier des appareils de puissance. */
+    private function aTemperatureCapteur($_info) {
+        if (!isset($_info['tmp']) || !is_array($_info['tmp'])) {
+            return false;
+        }
+        return array_key_exists('tC', $_info['tmp']) || array_key_exists('value', $_info['tmp']);
+    }
+
+    /*
      * Compteurs d'énergie (SHEM, SHEM-3) : une voie de mesure par entrée.
      *
      * La puissance y est signée — négative quand une installation solaire
@@ -584,6 +1139,23 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
                 )));
             }
 
+            /*
+             * Le courant par phase, sur un 3EM. Gardé par array_key_exists,
+             * comme le facteur de puissance : le SHEM à deux voies ne publie
+             * pas `current`, et lui créer la commande donnerait un ampérage
+             * éternellement vide sur la moitié du parc de compteurs.
+             */
+            if (is_array($compteur) && array_key_exists('current', $compteur)) {
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => 'emeter.' . $i . '.current',
+                    'capability' => 'power.current',
+                    'name'       => 'Courant' . $voie,
+                    'unit'       => 'A',
+                    'source'     => array('topic' => $_base . '/emeter/' . $i . '/current'),
+                    'value'      => array('transform' => array('round' => 2)),
+                )));
+            }
+
             if (is_array($compteur) && array_key_exists('total_returned', $compteur)) {
                 $_modele->addChannel(new MqttbeChannel(array(
                     'key'        => 'emeter.' . $i . '.returned',
@@ -614,7 +1186,7 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
      * scénario ne partirait pas : d'où `always`, qui est ici la seule politique
      * juste.
      */
-    private function ajouteEntrees($_modele, $_base, $_info) {
+    private function ajouteEntrees($_modele, $_base, $_info, $_avecAppuiLong = true) {
         foreach ($this->indices($_info, 'inputs') as $i) {
             $numero = ' ' . ($i + 1);
             $_modele->addChannel(new MqttbeChannel(array(
@@ -633,11 +1205,25 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
                 ),
                 'value'      => array('repeat' => array('mode' => 'always')),
             )));
-            /* L'appui long n'a pas de trace dans `info` : le firmware ne publie
+            /*
+             * L'appui long n'a pas de trace dans `info` : le firmware ne publie
              * `longpush/<i>` que lorsque l'entrée est configurée en bouton. Le
-             * canal est créé pour chaque entrée — un topic qui ne publie jamais
-             * laisse une commande à sa valeur par défaut, ce qui se voit et se
-             * masque ; une commande absente, elle, ne se devine pas. */
+             * canal est donc créé pour chaque entrée d'un appareil qui commande
+             * quelque chose — un topic qui ne publie jamais laisse une commande
+             * à sa valeur par défaut, ce qui se voit et se masque ; une commande
+             * absente, elle, ne se devine pas.
+             *
+             * Mais seulement là. Un appareil sans relais, sans volet et sans
+             * lampe — le Shelly i3, le Button1 — n'a pas de `longpush` du tout :
+             * il porte l'appui long dans `input_event/<i>`, sous la forme d'un
+             * événement « L ». Trois commandes « Appui long » définitivement
+             * vides sur un i3, c'est la moitié de son tableau de bord occupée
+             * par du vide, et l'utilisateur qui cherche pourquoi elles ne
+             * bougent jamais.
+             */
+            if (!$_avecAppuiLong) {
+                continue;
+            }
             $_modele->addChannel(new MqttbeChannel(array(
                 'key'        => 'input.' . $i . '.longpush',
                 'capability' => 'button.pressed',
@@ -876,6 +1462,17 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
     private function texte($_tableau, $_cle) {
         return (isset($_tableau[$_cle]) && !is_array($_tableau[$_cle]))
             ? trim((string) $_tableau[$_cle]) : '';
+    }
+
+    /*
+     * Une valeur venue du réseau, rendue citable dans une ligne de journal :
+     * les caractères de contrôle ôtés — un retour à la ligne y fabriquerait une
+     * fausse entrée de journal — et la longueur bornée, faute de quoi une
+     * charge utile de deux cents caractères noierait le motif du refus.
+     */
+    private function citation($_valeur) {
+        $texte = preg_replace('/[\x00-\x1F\x7F]/', '?', (string) $_valeur);
+        return (strlen($texte) > 48) ? substr($texte, 0, 48) . '…' : $texte;
     }
 
     private function nombre($_tableau, $_cle) {

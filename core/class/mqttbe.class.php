@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
@@ -33,6 +33,21 @@ class mqttbe extends eqLogic {
      * quinze aussitôt périmées.
      */
     private static $_routingScheduled = false;
+
+    /*
+     * Clés dont le cœur chiffre la valeur en base.
+     *
+     * config::save() ne chiffre une clé de plugin que si la classe du plugin
+     * déclare cette propriété et que la clé y figure. Sans elle, le mot de passe
+     * du broker restait en clair dans la table `config` : il partait tel quel
+     * dans chaque sauvegarde Jeedom, dans chaque export de base, et tout autre
+     * plugin pouvait le lire.
+     *
+     * Elle est statique et préfixée d'un souligné : elle échappe donc aux deux
+     * pièges du cœur — DB::save() ignore les statiques, et ce n'est pas une clé
+     * de formulaire.
+     */
+    public static $_encryptConfigKey = array('broker::password');
 
     /* Toute propriété d'instance doit commencer par un souligné : DB::save()
      * traite les autres comme des colonnes de la table eqLogic et l'ajout d'un
@@ -68,6 +83,12 @@ class mqttbe extends eqLogic {
          * redémarrait, la minute suivante le rattrape sans que personne n'ait
          * à s'en apercevoir. */
         mqttbeRouting::push();
+        /* Et si le démon applique une autre version que la nôtre — table trop
+         * grosse jadis jetée en silence, démon relancé seul, ordre perdu — on
+         * la lui renvoie de force plutôt que d'attendre qu'un équipement soit
+         * modifié. Sans cela, une installation pouvait rester muette
+         * indéfiniment. */
+        mqttbeDaemon::checkRoutingVersion();
         mqttbeDaemon::logLatency();
     }
 
@@ -209,6 +230,15 @@ class mqttbeCmd extends cmd {
         if ($topic === '') {
             throw new Exception(__('Aucun topic défini sur la commande', __FILE__) . ' ' . $this->getHumanName());
         }
+        /* Un joker est légal dans un abonnement, jamais dans une publication :
+         * le broker fermerait la connexion. Mieux vaut le dire ici, où
+         * l'utilisateur vient de cliquer, que dans un journal. */
+        if (strpbrk($topic, '+#') !== false) {
+            throw new Exception(sprintf(
+                __('Le topic « %s » contient un joker : impossible de publier dessus.', __FILE__),
+                $topic
+            ));
+        }
 
         $payload = (string) $this->getConfiguration('payload', '');
         if (isset($_options['slider'])) {
@@ -216,6 +246,22 @@ class mqttbeCmd extends cmd {
         }
         if (isset($_options['color'])) {
             $payload = str_replace('#color#', $_options['color'], $payload);
+            /*
+             * Jeedom donne une couleur en hexadécimal (#RRGGBB), alors que
+             * beaucoup d'appareils MQTT attendent trois entiers séparés — un
+             * Shelly Gen1 veut {"red":255,"green":128,"blue":0}. Sans cette
+             * décomposition, une commande de couleur publie une charge utile
+             * que l'appareil refuse, et l'adapter n'a pas d'autre choix que de
+             * ne pas en créer du tout.
+             */
+            $hexa = ltrim(trim((string) $_options['color']), '#');
+            if (preg_match('/^[0-9a-fA-F]{6}$/', $hexa)) {
+                $payload = str_replace(
+                    array('#red#', '#green#', '#blue#'),
+                    array(hexdec(substr($hexa, 0, 2)), hexdec(substr($hexa, 2, 2)), hexdec(substr($hexa, 4, 2))),
+                    $payload
+                );
+            }
         }
         if (isset($_options['message'])) {
             $payload = str_replace('#message#', $_options['message'], $payload);

@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /* La configuration porte la liste des topics exclus, et la correspondance
@@ -119,7 +119,16 @@ class MqttbeDiscoveryEngine {
 
     private $memory = array();    // id => clé => données
     private $seen   = array();    // adapter|uid => empreinte du dernier modèle émis
-    private $adhoc  = array();    // topic => array('adapter' => id, 'qos' => int)
+    /*
+     * topic => array('adapters' => array(id => true), 'qos' => int)
+     *
+     * Un ENSEMBLE de demandeurs, et non un seul : deux adapters peuvent vouloir
+     * le même topic — deux topics de réponse RPC portant le même nom, par
+     * exemple. Avec un demandeur unique, le second volait l'abonnement au
+     * premier, qui ne recevait plus rien, et son arrêt retirait l'abonnement
+     * sous les pieds de l'autre, toujours actif et se croyant abonné.
+     */
+    private $adhoc  = array();
     private $rescan = array();    // id => true, le temps d'un onTick
 
     /* Index reconstruit d'un bloc à chaque changement d'adapters actifs :
@@ -482,7 +491,9 @@ class MqttbeDiscoveryEngine {
     private function releaseAdapter($_id) {
         unset($this->memory[$_id], $this->rescan[$_id]);
         foreach ($this->adhoc as $topic => $info) {
-            if ($info['adapter'] === $_id) {
+            unset($this->adhoc[$topic]['adapters'][$_id]);
+            /* Le topic ne disparaît qu'avec son dernier demandeur. */
+            if (empty($this->adhoc[$topic]['adapters'])) {
                 unset($this->adhoc[$topic]);
             }
         }
@@ -587,8 +598,10 @@ class MqttbeDiscoveryEngine {
         }
 
         foreach ($this->adhoc as $topic => $info) {
-            if (isset($this->active[$info['adapter']])) {
-                $ajoute($info['adapter'], $topic, $info['qos'], 'subscribe()');
+            foreach ($info['adapters'] as $demandeur => $ignore) {
+                if (isset($this->active[$demandeur])) {
+                    $ajoute($demandeur, $topic, $info['qos'], 'subscribe()');
+                }
             }
         }
 
@@ -796,7 +809,7 @@ class MqttbeDiscoveryEngine {
                                 . 'configuration : ' . $topic);
             return false;
         }
-        if (isset($this->adhoc[$topic]) && $this->adhoc[$topic]['adapter'] === $_id) {
+        if (isset($this->adhoc[$topic]['adapters'][$_id])) {
             return true;
         }
         if (!isset($this->adhoc[$topic]) && count($this->adhoc) >= self::SUBS_MAX) {
@@ -807,7 +820,10 @@ class MqttbeDiscoveryEngine {
             return false;
         }
 
-        $this->adhoc[$topic] = array('adapter' => $_id, 'qos' => 0);
+        if (!isset($this->adhoc[$topic])) {
+            $this->adhoc[$topic] = array('adapters' => array(), 'qos' => 0);
+        }
+        $this->adhoc[$topic]['adapters'][$_id] = true;
         $this->rebuild();
         /* La boucle seule sait poser un abonnement : on la prévient, elle fera
          * la différence avec ce qu'elle tient déjà. */

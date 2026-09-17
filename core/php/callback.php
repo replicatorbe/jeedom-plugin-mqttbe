@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*
@@ -29,13 +29,22 @@
 
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
 
-if (!jeedom::apiAccess(init('apikey'), 'mqttbe')) {
+/*
+ * La clé arrive par en-tête, et non plus dans la chaîne de requête : celle-ci
+ * est journalisée en clair par Apache à chaque appel. init('apikey') reste
+ * accepté pour qu'un démon d'une version antérieure, pas encore redémarré,
+ * continue de fonctionner le temps de la mise à jour.
+ */
+$apikey = isset($_SERVER['HTTP_X_MQTTBE_APIKEY']) ? $_SERVER['HTTP_X_MQTTBE_APIKEY'] : init('apikey');
+
+if (!jeedom::apiAccess($apikey, 'mqttbe')) {
     echo 'Unauthorized access.';
-    $origine = sprintf(__('Accès non autorisé depuis %s', __FILE__), $_SERVER['REMOTE_ADDR']);
-    if (init('apikey') != '') {
+    $origine = sprintf(__('Accès non autorisé depuis %s', __FILE__),
+                       isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '?');
+    if ($apikey != '') {
         /* Les huit premiers caractères suffisent à reconnaître la clé sans
          * l'écrire en clair dans un journal que d'autres peuvent lire. */
-        $origine .= sprintf(__(", avec une clé commençant par %.8s…", __FILE__), init('apikey'));
+        $origine .= sprintf(__(", avec une clé commençant par %.8s…", __FILE__), $apikey);
     }
     log::add('mqttbe', 'error', $origine);
     die();

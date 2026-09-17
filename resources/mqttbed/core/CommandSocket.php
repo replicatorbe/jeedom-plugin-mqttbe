@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /* =============================================================================
@@ -41,7 +41,19 @@ class MqttbeCommandSocket {
     /* Jeedom n'ouvre qu'une connexion à la fois. Au-delà de quelques-unes,
      * c'est que quelque chose ne va pas : on refuse plutôt que de grossir. */
     const MAX_CONNECTIONS = 16;
-    const MAX_MESSAGE     = 65536;
+    /*
+     * 4 Mo, et non 64 Ko.
+     *
+     * Le plafond doit arrêter un flux malveillant, pas le message légitime le
+     * plus gros du protocole. Mesuré sur le parc d'essai : une table de routage
+     * pèse 189 octets par commande, donc 64 Ko étaient atteints vers 340
+     * commandes — une soixantaine d'appareils, très en deçà des 200 équipements
+     * visés. Au-delà, le démon fermait la connexion, Jeedom croyait avoir
+     * transmis, mémorisait l'empreinte et ne renvoyait plus jamais la table :
+     * l'installation devenait définitivement muette, sans autre trace qu'une
+     * ligne de journal invisible au niveau par défaut.
+     */
+    const MAX_MESSAGE     = 4194304;
     const READ_TIMEOUT    = 5;       // secondes pour dire ce qu'on a à dire
 
     private $port;
@@ -183,7 +195,10 @@ class MqttbeCommandSocket {
 
         $this->connections[$_id]['buffer'] .= $chunk;
         if (strlen($this->connections[$_id]['buffer']) > self::MAX_MESSAGE) {
-            MqttbeLog::warning('message local hors limite (' . self::MAX_MESSAGE . ' octets), connexion fermée');
+            /* En erreur et non en avertissement : au niveau par défaut, un
+             * avertissement ne s'écrit pas, et c'est précisément la panne qu'on
+             * ne peut pas diagnostiquer sans cette ligne. */
+            MqttbeLog::error('ordre local hors limite (' . self::MAX_MESSAGE . ' octets), connexion fermée sans traitement');
             $this->closeConnection($_id);
             return;
         }

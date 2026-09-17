@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*
@@ -39,7 +39,17 @@ class mqttbeRouting {
      * c'est un état d'exécution, pas un réglage, et plusieurs processus Apache
      * le lisent en même temps. */
     const CACHE_HASH    = 'mqttbe::routingHash';
-    const CACHE_VERSION = 'mqttbe::routingVersion';
+    /*
+     * La version vit dans la CONFIGURATION et non dans le cache.
+     *
+     * Un cache peut être vidé — mise à jour de Jeedom, nettoyage, redémarrage
+     * de la machine — et la version repartait alors en arrière. Comme le démon
+     * refuse toute version inférieure ou égale à celle qu'il applique, il
+     * ignorait ensuite toutes les tables, en silence, jusqu'à son propre
+     * redémarrage : l'installation devenait muette sans que rien ne le signale.
+     * La configuration, elle, survit et part dans les sauvegardes.
+     */
+    const CONF_VERSION  = 'routing::version';
 
     const REPEAT_ONCHANGE = 'onchange';
     const REPEAT_ALWAYS   = 'always';
@@ -376,6 +386,22 @@ class mqttbeRouting {
         }
 
         $empreinte = md5($json);
+
+        /*
+         * Tout ce qui suit — comparer l'empreinte, attribuer une version,
+         * envoyer, mémoriser — doit être indivisible.
+         *
+         * Sans ce verrou, deux processus simultanés (le cron de la minute et la
+         * fonction d'arrêt d'un enregistrement, ou deux lots `discovered`
+         * traités par deux processus Apache) obtenaient le MÊME numéro de
+         * version : le démon rejette l'égalité, et comme les deux ont mémorisé
+         * leur empreinte, plus personne ne renvoie rien. Le routage restait
+         * périmé jusqu'à la prochaine modification d'un équipement.
+         */
+        $verrou = self::lock();
+
+        try {
+
         if (!$_force && $empreinte === self::cachedValue(self::CACHE_HASH, '')) {
             mqttbe::logger('debug', __('Routage : table inchangée, rien n\'est envoyé au démon', __FILE__));
             return false;
@@ -402,11 +428,46 @@ class mqttbeRouting {
         }
 
         cache::set(self::CACHE_HASH, $empreinte);
+        config::save(self::CONF_VERSION, $version, 'mqttbe');
         mqttbe::logger('info', sprintf(
             __('Routage : table version %1$s envoyée au démon (%2$s topic(s), %3$s commande(s))', __FILE__),
             $version, count($entrees), self::countTargets($entrees)
         ));
         return true;
+
+        } finally {
+            self::unlock($verrou);
+        }
+    }
+
+    /**
+     * Verrou d'exclusion entre processus web.
+     *
+     * flock sur un fichier du dossier temporaire du plugin : c'est le seul
+     * moyen simple de sérialiser deux processus Apache, le cache de Jeedom
+     * n'offrant aucune opération atomique. Rend null si le verrou n'a pas pu
+     * être posé — on préfère alors envoyer sans garantie plutôt que de ne rien
+     * envoyer du tout.
+     */
+    private static function lock() {
+        $chemin = jeedom::getTmpFolder('mqttbe') . '/routing.lock';
+        $fichier = @fopen($chemin, 'c');
+        if ($fichier === false) {
+            return null;
+        }
+        if (!@flock($fichier, LOCK_EX)) {
+            fclose($fichier);
+            return null;
+        }
+        return $fichier;
+    }
+
+    private static function unlock($_verrou) {
+        if ($_verrou === null) {
+            return;
+        }
+        @flock($_verrou, LOCK_UN);
+        fclose($_verrou);
     }
 
     /**
@@ -422,7 +483,7 @@ class mqttbeRouting {
 
     /** Version de la dernière table envoyée, 0 si aucune. */
     public static function version() {
-        return (int) self::cachedValue(self::CACHE_VERSION, 0);
+        return (int) config::byKey(self::CONF_VERSION, 'mqttbe', 0);
     }
 
     /**
@@ -446,10 +507,32 @@ class mqttbeRouting {
      * envoie jusqu'à son prochain redémarrage. Avec time() pour plancher, la
      * suite ne peut pas régresser, quoi qu'il arrive au cache.
      */
+    /**
+     * Prochain numéro de version.
+     *
+     * N'écrit RIEN : la version n'est mémorisée qu'après un envoi réussi, sinon
+     * `routingTable` afficherait un numéro que le démon n'a jamais reçu — celui
+     * qu'on regarde justement quand on cherche pourquoi une commande est muette.
+     * L'appel est protégé par le verrou de push().
+     */
     private static function nextVersion() {
-        $version = max(self::version() + 1, time());
-        cache::set(self::CACHE_VERSION, $version);
-        return $version;
+        /*
+         * Le plancher horodaté ne suffit pas.
+         *
+         * `time()` ne progresse qu'une fois par seconde, alors que plusieurs
+         * envois peuvent partir dans la même — une rafale de découverte en
+         * produit un par requête. Le compteur passe alors devant l'horloge, et
+         * si le cache disparaît ensuite (mise à jour de Jeedom, nettoyage), la
+         * version repart EN ARRIÈRE : le démon, qui refuse toute version
+         * inférieure ou égale à celle qu'il applique, ignore silencieusement
+         * toutes les tables suivantes jusqu'à son propre redémarrage.
+         *
+         * La version que le démon applique réellement nous revient dans sa
+         * réponse au battement : elle sert donc de troisième plancher, et
+         * referme le seul cas où Jeedom pouvait parler dans le vide.
+         */
+        $applique = (int) self::cachedValue('mqttbe::daemonRouting', 0);
+        return max(self::version() + 1, time(), $applique + 1);
     }
 
     /**

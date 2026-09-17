@@ -1,0 +1,1107 @@
+{
+  "comment": "Un appareil par famille que le parc reel de 22 Shelly ne contient pas : volet, variateur, lampe de couleur, ampoule a temperature de couleur, capteurs sur pile, compteur triphase et boitier d'entrees seules. Les « info » sont reconstitues d'apres la documentation officielle https://shelly-api-docs.shelly.cloud/gen1/ — structure de /status et topics MQTT par modele — puis anonymises comme les captures reelles (SSID « reseau-essai », adresses en 192.0.2.x reservees a la documentation, MAC et identifiants fabriques).",
+  "appareils": {
+    "shellyswitch25-A8B0C1000020": {
+      "announce": {
+        "id": "shellyswitch25-A8B0C1000020",
+        "model": "SHSW-25",
+        "mac": "A8B0C1000020",
+        "ip": "192.0.2.40",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.40",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1204,
+        "has_update": false,
+        "mac": "A8B0C1000020",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "relays": [
+          {
+            "ison": false,
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "overpower": false,
+            "is_valid": true,
+            "source": "input"
+          },
+          {
+            "ison": false,
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "overpower": false,
+            "is_valid": true,
+            "source": "input"
+          }
+        ],
+        "rollers": [
+          {
+            "state": "stop",
+            "source": "input",
+            "power": 0,
+            "is_valid": true,
+            "safety_switch": false,
+            "overtemperature": false,
+            "stop_reason": "normal",
+            "last_direction": "open",
+            "current_pos": 63,
+            "calibrating": false,
+            "positioning": true
+          }
+        ],
+        "meters": [
+          {
+            "power": 0,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              0,
+              0,
+              0
+            ],
+            "total": 41230
+          },
+          {
+            "power": 0,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              0,
+              0,
+              0
+            ],
+            "total": 0
+          }
+        ],
+        "inputs": [
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          },
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          }
+        ],
+        "temperature": 41.24,
+        "overtemperature": false,
+        "tmp": {
+          "tC": 41.24,
+          "tF": 106.23,
+          "is_valid": true
+        },
+        "temperature_status": "Normal",
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 884512
+      }
+    },
+    "shellyswitch25-A8B0C1000021": {
+      "announce": {
+        "id": "shellyswitch25-A8B0C1000021",
+        "model": "SHSW-25",
+        "mac": "A8B0C1000021",
+        "ip": "192.0.2.41",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.41",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 980,
+        "has_update": false,
+        "mac": "A8B0C1000021",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "relays": [
+          {
+            "ison": true,
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "overpower": false,
+            "is_valid": true,
+            "source": "input"
+          },
+          {
+            "ison": false,
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "overpower": false,
+            "is_valid": true,
+            "source": "input"
+          }
+        ],
+        "meters": [
+          {
+            "power": 63.4,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              63.4,
+              63.4,
+              63.4
+            ],
+            "total": 112340
+          },
+          {
+            "power": 0,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              0,
+              0,
+              0
+            ],
+            "total": 4510
+          }
+        ],
+        "inputs": [
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          },
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          }
+        ],
+        "temperature": 39.1,
+        "overtemperature": false,
+        "tmp": {
+          "tC": 39.1,
+          "tF": 102.38,
+          "is_valid": true
+        },
+        "temperature_status": "Normal",
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 512300
+      }
+    },
+    "shellydimmer2-A8B0C1000022": {
+      "announce": {
+        "id": "shellydimmer2-A8B0C1000022",
+        "model": "SHDM-2",
+        "mac": "A8B0C1000022",
+        "ip": "192.0.2.42",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.42",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 3312,
+        "has_update": false,
+        "mac": "A8B0C1000022",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "lights": [
+          {
+            "ison": true,
+            "source": "input",
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "mode": "white",
+            "brightness": 75,
+            "transition": 0
+          }
+        ],
+        "meters": [
+          {
+            "power": 18.34,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              18.34,
+              18.34,
+              18.34
+            ],
+            "total": 25611
+          }
+        ],
+        "inputs": [
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          },
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          }
+        ],
+        "temperature": 38.52,
+        "overtemperature": false,
+        "tmp": {
+          "tC": 38.52,
+          "tF": 101.34,
+          "is_valid": true
+        },
+        "loaderror": 0,
+        "overpower": false,
+        "overvoltage": false,
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 233110
+      }
+    },
+    "shellyrgbw2-A8B0C1000023": {
+      "announce": {
+        "id": "shellyrgbw2-A8B0C1000023",
+        "model": "SHRGBW2",
+        "mac": "A8B0C1000023",
+        "ip": "192.0.2.43",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.43",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 118,
+        "has_update": false,
+        "mac": "A8B0C1000023",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "mode": "color",
+        "input": 0,
+        "lights": [
+          {
+            "ison": true,
+            "source": "http",
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "mode": "color",
+            "red": 255,
+            "green": 120,
+            "blue": 0,
+            "white": 0,
+            "gain": 80,
+            "effect": 0,
+            "transition": 0,
+            "power": 6.52,
+            "overpower": false
+          }
+        ],
+        "meters": [
+          {
+            "power": 6.52,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              6.52,
+              6.52,
+              6.52
+            ],
+            "total": 12340
+          }
+        ],
+        "inputs": [
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          }
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 98120
+      }
+    },
+    "shellybulbduo-A8B0C1000024": {
+      "announce": {
+        "id": "shellybulbduo-A8B0C1000024",
+        "model": "SHBDUO-1",
+        "mac": "A8B0C1000024",
+        "ip": "192.0.2.44",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.44",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 76,
+        "has_update": false,
+        "mac": "A8B0C1000024",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "mode": "white",
+        "lights": [
+          {
+            "ison": false,
+            "source": "mqtt",
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "mode": "white",
+            "red": 255,
+            "green": 255,
+            "blue": 255,
+            "white": 255,
+            "gain": 100,
+            "temp": 3000,
+            "brightness": 60,
+            "effect": 0,
+            "transition": 0
+          }
+        ],
+        "meters": [
+          {
+            "power": 0,
+            "overpower": 0,
+            "is_valid": true,
+            "timestamp": 1789651730,
+            "counters": [
+              0,
+              0,
+              0
+            ],
+            "total": 870
+          }
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 64210
+      }
+    },
+    "shellyht-A8B0C1000025": {
+      "announce": {
+        "id": "shellyht-A8B0C1000025",
+        "model": "SHHT-1",
+        "mac": "A8B0C1000025",
+        "ip": "192.0.2.45",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.45",
+          "rssi": -72
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1,
+        "has_update": false,
+        "mac": "A8B0C1000025",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "is_valid": true,
+        "tmp": {
+          "value": 21.38,
+          "units": "C",
+          "tC": 21.38,
+          "tF": 70.48,
+          "is_valid": true
+        },
+        "hum": {
+          "value": 48.4,
+          "is_valid": true
+        },
+        "bat": {
+          "value": 94,
+          "voltage": 2.97
+        },
+        "connect_retries": 0,
+        "sensor_error": 0,
+        "act_reasons": [
+          "sensor"
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 24000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 28
+      }
+    },
+    "shellyflood-A8B0C1000026": {
+      "announce": {
+        "id": "shellyflood-A8B0C1000026",
+        "model": "SHWT-1",
+        "mac": "A8B0C1000026",
+        "ip": "192.0.2.46",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.46",
+          "rssi": -80
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1,
+        "has_update": false,
+        "mac": "A8B0C1000026",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "is_valid": true,
+        "flood": false,
+        "rain_sensor": false,
+        "tmp": {
+          "value": 19.12,
+          "units": "C",
+          "tC": 19.12,
+          "tF": 66.42,
+          "is_valid": true
+        },
+        "bat": {
+          "value": 100,
+          "voltage": 2.99
+        },
+        "act_reasons": [
+          "sensor"
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 24500,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 19
+      }
+    },
+    "shellydw2-A8B0C1000027": {
+      "announce": {
+        "id": "shellydw2-A8B0C1000027",
+        "model": "SHDW-2",
+        "mac": "A8B0C1000027",
+        "ip": "192.0.2.47",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.47",
+          "rssi": -66
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1,
+        "has_update": false,
+        "mac": "A8B0C1000027",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "lux": {
+          "value": 92,
+          "illumination": "twilight",
+          "is_valid": true
+        },
+        "sensor": {
+          "state": "close",
+          "is_valid": true
+        },
+        "bat": {
+          "value": 88,
+          "voltage": 5.83
+        },
+        "tmp": {
+          "value": 20.7,
+          "units": "C",
+          "tC": 20.7,
+          "tF": 69.26,
+          "is_valid": true
+        },
+        "accel": {
+          "tilt": 0,
+          "vibration": 0
+        },
+        "act_reasons": [
+          "sensor"
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 25100,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 22
+      }
+    },
+    "shellysmoke-A8B0C1000028": {
+      "announce": {
+        "id": "shellysmoke-A8B0C1000028",
+        "model": "SHSM-01",
+        "mac": "A8B0C1000028",
+        "ip": "192.0.2.48",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.48",
+          "rssi": -74
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1,
+        "has_update": false,
+        "mac": "A8B0C1000028",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "is_valid": true,
+        "smoke": false,
+        "tmp": {
+          "value": 22.0,
+          "units": "C",
+          "tC": 22.0,
+          "tF": 71.6,
+          "is_valid": true
+        },
+        "bat": {
+          "value": 76,
+          "voltage": 2.93
+        },
+        "act_reasons": [
+          "button"
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 24800,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 31
+      }
+    },
+    "shellymotionsensor-A8B0C1000029": {
+      "announce": {
+        "id": "shellymotionsensor-A8B0C1000029",
+        "model": "SHMOS-01",
+        "mac": "A8B0C1000029",
+        "ip": "192.0.2.49",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.49",
+          "rssi": -70
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1,
+        "has_update": false,
+        "mac": "A8B0C1000029",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "sensor": {
+          "motion": true,
+          "vibration": false,
+          "timestamp": 1789644528,
+          "active": true,
+          "is_valid": true
+        },
+        "lux": {
+          "value": 24,
+          "illumination": "dark",
+          "is_valid": true
+        },
+        "bat": {
+          "value": 93,
+          "voltage": 4.1
+        },
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 26000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 84120
+      }
+    },
+    "shellybutton1-A8B0C100002A": {
+      "announce": {
+        "id": "shellybutton1-A8B0C100002A",
+        "model": "SHBTN-1",
+        "mac": "A8B0C100002A",
+        "ip": "192.0.2.50",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.50",
+          "rssi": -68
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 1,
+        "has_update": false,
+        "mac": "A8B0C100002A",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "inputs": [
+          {
+            "input": 0,
+            "event": "S",
+            "event_cnt": 12
+          }
+        ],
+        "bat": {
+          "value": 91,
+          "voltage": 4.12
+        },
+        "act_reasons": [
+          "button"
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 25600,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 14
+      }
+    },
+    "shellyem3-A8B0C100002B": {
+      "announce": {
+        "id": "shellyem3-A8B0C100002B",
+        "model": "SHEM-3",
+        "mac": "A8B0C100002B",
+        "ip": "192.0.2.51",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.51",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 51230,
+        "has_update": false,
+        "mac": "A8B0C100002B",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "relays": [
+          {
+            "ison": false,
+            "has_timer": false,
+            "timer_started": 0,
+            "timer_duration": 0,
+            "timer_remaining": 0,
+            "overpower": false,
+            "is_valid": true,
+            "source": "input"
+          }
+        ],
+        "emeters": [
+          {
+            "power": 213.42,
+            "pf": 0.92,
+            "current": 0.93,
+            "voltage": 231.4,
+            "is_valid": true,
+            "total": 1234567.8,
+            "total_returned": 0
+          },
+          {
+            "power": 48.11,
+            "pf": 0.71,
+            "current": 0.29,
+            "voltage": 230.9,
+            "is_valid": true,
+            "total": 456789.1,
+            "total_returned": 0
+          },
+          {
+            "power": -120.5,
+            "pf": 0.88,
+            "current": 0.54,
+            "voltage": 231.1,
+            "is_valid": true,
+            "total": 987654.3,
+            "total_returned": 154320.2
+          }
+        ],
+        "total_power": 141.03,
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 1204512
+      }
+    },
+    "shellyix3-A8B0C100002C": {
+      "announce": {
+        "id": "shellyix3-A8B0C100002C",
+        "model": "SHIX3-1",
+        "mac": "A8B0C100002C",
+        "ip": "192.0.2.52",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.52",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 412,
+        "has_update": false,
+        "mac": "A8B0C100002C",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "inputs": [
+          {
+            "input": 0,
+            "event": "S",
+            "event_cnt": 3
+          },
+          {
+            "input": 0,
+            "event": "",
+            "event_cnt": 0
+          },
+          {
+            "input": 0,
+            "event": "L",
+            "event_cnt": 1
+          }
+        ],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 704120
+      }
+    },
+    "shellygas-A8B0C100002D": {
+      "announce": {
+        "id": "shellygas-A8B0C100002D",
+        "model": "SHGS-1",
+        "mac": "A8B0C100002D",
+        "ip": "192.0.2.53",
+        "new_fw": false,
+        "fw_ver": "20230913-112003/v1.14.0-gcb84623"
+      },
+      "info": {
+        "wifi_sta": {
+          "connected": true,
+          "ssid": "reseau-essai",
+          "ip": "192.0.2.53",
+          "rssi": -58
+        },
+        "cloud": {
+          "enabled": false,
+          "connected": false
+        },
+        "mqtt": {
+          "connected": true
+        },
+        "time": "13:28",
+        "unixtime": 1789644530,
+        "serial": 8123,
+        "has_update": false,
+        "mac": "A8B0C100002D",
+        "cfg_changed_cnt": 0,
+        "actions_stats": {
+          "skipped": 0
+        },
+        "gas_sensor": {
+          "sensor_state": "normal",
+          "self_test_state": "not_completed",
+          "alarm_state": "none"
+        },
+        "concentration": {
+          "ppm": 0,
+          "is_valid": true
+        },
+        "valves": [],
+        "update": {
+          "status": "idle",
+          "has_update": false,
+          "new_version": "20230913-112003/v1.14.0-gcb84623",
+          "old_version": "20230913-112003/v1.14.0-gcb84623",
+          "beta_version": "20231107-164450/v1.14.1-rc1-g0617c15"
+        },
+        "ram_total": 49328,
+        "ram_free": 32000,
+        "fs_size": 233681,
+        "fs_free": 146051,
+        "uptime": 302400
+      }
+    }
+  }
+}

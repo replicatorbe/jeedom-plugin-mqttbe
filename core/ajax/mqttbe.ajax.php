@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 try {
@@ -100,7 +100,21 @@ try {
         }
         $client->disconnect();
 
-        $resultat = sprintf(__('Connexion réussie à %1$s:%2$s', __FILE__), $host, $port);
+        /*
+         * La version vient du broker, donc du réseau, et le message finit dans
+         * `showAlert`, qui l'insère en `innerHTML` dans la page d'un
+         * administrateur. Un broker hostile — ou simplement un broker dont les
+         * ACL laissent publier sur $SYS — y placerait du script exécuté avec
+         * tous les droits de Jeedom. On borne, on ôte les caractères de
+         * contrôle, et on échappe.
+         */
+        if ($version !== '') {
+            $version = preg_replace('/[\x00-\x1F\x7F]/', '', $version);
+            $version = htmlspecialchars(mb_substr($version, 0, 60), ENT_QUOTES, 'UTF-8');
+        }
+
+        $resultat = sprintf(__('Connexion réussie à %1$s:%2$s', __FILE__),
+                            htmlspecialchars($host, ENT_QUOTES, 'UTF-8'), (int) $port);
         if ($version !== '') {
             $resultat .= ' — ' . $version;
         }
@@ -152,6 +166,14 @@ try {
          */
         if (!mqttbeDaemon::state()) {
             throw new Exception(__("Le démon n'est pas démarré", __FILE__));
+        }
+        /*
+         * Sans ce contrôle, la relance répondait « les appareils se présentent »
+         * alors que le démon, découverte désactivée, n'active aucun adapter et
+         * ne publie rien : la page affirmait le contraire de ce qui se passait.
+         */
+        if (config::byKey('discovery::enabled', 'mqttbe', 1) != 1) {
+            throw new Exception(__("La découverte automatique est désactivée : réactivez-la et enregistrez avant de relancer.", __FILE__));
         }
         mqttbeDaemon::sendDiscoveryConfig(true);
         ajax::success(array('message' => __('Découverte relancée : les appareils se présentent, patientez quelques secondes.', __FILE__)));

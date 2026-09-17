@@ -1,18 +1,18 @@
 <?php
-/* This file is part of Jeedom.
+/* This file is part of the mqttbe plugin for Jeedom.
  *
- * Jeedom is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * Jeedom is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*
@@ -52,6 +52,12 @@ class mqttbeFactory {
     const CONF_MANUFACTURER = 'mqttbe::manufacturer';
     const CONF_MODEL        = 'mqttbe::model';
     const CONF_AVAILABILITY = 'mqttbe::availability';
+    /* Nombre de commandes que la fabrique a laissées derrière elle au dernier
+     * passage. Sans ce compte, le raccourci d'idempotence ne regarde que
+     * l'empreinte : une commande supprimée à la main — par erreur, ou par la
+     * page de l'équipement enregistrée pendant qu'un callback en créait une —
+     * ne serait plus jamais recréée, le modèle n'ayant pas changé. */
+    const CONF_CMDCOUNT     = 'mqttbe::cmdCount';
 
     /* Traçabilité de la fabrique, sur l'équipement comme sur les commandes. */
     const CONF_KEY        = 'mqttbe::key';
@@ -63,6 +69,28 @@ class mqttbeFactory {
     /* Capacité de dernier recours : un canal dont la capacité est inconnue du
      * vocabulaire devient une information texte plutôt que rien du tout. */
     const CAPABILITY_FALLBACK = 'generic.value';
+
+    /* Confiance qu'un modèle doit porter pour que la disparition d'un canal
+     * soit tenue pour vraie. Un adapter annonce « probable » tant qu'il n'a pas
+     * tout vu de l'appareil — Shelly Gen1 émet ainsi un modèle à un seul canal
+     * quand l'annonce est arrivée mais pas encore le « info », et sa mémoire
+     * étant en RAM, cela se reproduit à CHAQUE redémarrage du démon. Traiter ce
+     * modèle dégradé comme une perte de canaux supprimerait des commandes
+     * d'action, qui reviendraient avec de nouveaux identifiants : l'utilisateur
+     * perdrait ses boutons de tableau de bord et leur place dans les vues. */
+    const CONFIDENCE_TRUSTED = 'certain';
+
+    /* Au-delà de cette proportion de commandes orphelines en un seul passage,
+     * l'hypothèse « l'appareil a perdu ces canaux » devient moins vraisemblable
+     * que « le modèle est incomplet » : le passage est journalisé en warning
+     * pour que l'exploitation le voie sans avoir à relire la base. */
+    const ORPHAN_ALERT_RATIO = 0.5;
+
+    /* Champ de présentation trouvé sur une commande existante alors que la
+     * fabrique ne le suivait pas encore : sa valeur appartient à l'utilisateur.
+     * La liste de ces champs est rangée dans la trace elle-même, sous une clé
+     * qui ne peut pas entrer en conflit avec un nom de champ. */
+    const GENERATED_USER = '#user';
 
     /* eqLogic.name et cmd.name sont des varchar(127), eqLogic.logicalId aussi.
      * cmd.unite est un varchar(45) : un nom d'unité exotique tronqué vaut mieux
@@ -83,6 +111,8 @@ class mqttbeFactory {
     private static $_capabilities = null;
     private static $_index = null;
     private static $_discoveryLoaded = false;
+    /* Réponse de pluginsMayReference() pour la requête en cours. */
+    private static $_pluginsUsedBy = null;
 
     /* ------------------------------------------------------- point d'entrée */
 
@@ -110,8 +140,12 @@ class mqttbeFactory {
             'uid'        => '',
             'name'       => '',
             'eqLogic_id' => null,
+            /* « failed » compte les écritures rattrapées, et non les canaux
+             * écartés du modèle : c'est ce qui décide si l'empreinte peut être
+             * posée. Une commande refusée par la base doit être retentée au
+             * passage suivant, pas oubliée sous une empreinte à jour. */
             'cmd'        => array('created' => 0, 'updated' => 0, 'unchanged' => 0,
-                                  'orphaned' => 0, 'removed' => 0),
+                                  'orphaned' => 0, 'removed' => 0, 'failed' => 0),
             'touched'    => 0,
             'messages'   => array(),
         );
@@ -257,16 +291,42 @@ class mqttbeFactory {
 
         $meta        = isset($_model['meta']) && is_array($_model['meta']) ? $_model['meta'] : array();
         $channels    = isset($_model['channels']) && is_array($_model['channels']) ? $_model['channels'] : array();
+
+        /* Un modèle arrivé en tableau peut n'avoir pas d'empreinte : la page de
+         * configuration manuelle et les imports JSON écrits à la main n'en
+         * mettent pas. Sans elle, le raccourci d'idempotence ne se déclenche
+         * jamais et l'empreinte n'est jamais posée : tout l'équipement serait
+         * repassé en revue à chaque message retenu, en silence. Elle est donc
+         * recalculée ici, par le même code que celui du démon — à défaut de
+         * quoi le modèle est refusé, car une empreinte fausse vaudrait pire que
+         * pas d'empreinte du tout. */
         $fingerprint = self::str($_model, 'fingerprint');
+        if ($fingerprint === '') {
+            $fingerprint = self::fingerprintOf($_model);
+        }
+
+        /* La confiance dit si l'absence d'un canal est une information ou un
+         * simple silence : elle voyage avec l'identité et gouverne le sort des
+         * commandes orphelines. Un modèle qui n'en porte pas est réputé certain,
+         * comme le défaut de MqttbeDeviceModel. */
+        $confidence = strtolower(self::str($identity, 'confidence'));
+        if ($confidence === '') {
+            $confidence = self::CONFIDENCE_TRUSTED;
+        }
 
         $eqLogic = self::findByIdentity($identity);
         $isNew   = !is_object($eqLogic);
 
-        /* Idempotence : même empreinte, aucune lecture de commande, aucune
+        /* Idempotence : même empreinte ET même nombre de commandes, aucune
          * écriture. C'est le cas de loin le plus fréquent — à chaque démarrage
-         * du démon, tout le parc repasse ici. */
+         * du démon, tout le parc repasse ici. Le compte est indispensable :
+         * l'empreinte ne décrit que le modèle, elle ne dit rien de ce que la
+         * base contient réellement, et une commande supprimée à la main ne
+         * serait jamais recréée. Un équipement d'avant ce compte n'en a pas :
+         * il repasse une fois par la voie longue, le temps de l'acquérir. */
         if (!$isNew && $fingerprint !== ''
-            && (string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') === $fingerprint) {
+            && (string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') === $fingerprint
+            && self::countMatches($eqLogic)) {
             $report['status']     = 'unchanged';
             $report['name']       = $eqLogic->getName();
             $report['eqLogic_id'] = $eqLogic->getId();
@@ -294,16 +354,31 @@ class mqttbeFactory {
             self::indexEqLogic($eqLogic);
         }
 
-        $report = self::applyChannels($eqLogic, $channels, $report);
+        $report = self::applyChannels($eqLogic, $channels, $report, $confidence);
 
         /* L'empreinte n'est posée qu'une fois tout le reste écrit : interrompue
          * en cours de route, la fabrique doit repasser au prochain message, pas
-         * se croire à jour sur un équipement à moitié construit. */
-        if ($fingerprint !== ''
-            && (string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') !== $fingerprint) {
-            $eqLogic->setConfiguration(self::CONF_FINGERPRINT, $fingerprint);
-            $eqLogic->save();
-            $changed = true;
+         * se croire à jour sur un équipement à moitié construit.
+         *
+         * Et elle n'est pas posée du tout si une écriture a échoué : l'échec est
+         * rattrapé commande par commande pour ne pas emporter les autres, mais
+         * une empreinte à jour poserait dessus un couvercle définitif — au
+         * passage suivant le raccourci conclurait « inchangé » et la commande
+         * manquante ne serait jamais retentée. */
+        $failed = (int) $report['cmd']['failed'];
+        if ($fingerprint !== '' && $failed === 0) {
+            $count = self::countCmd($eqLogic);
+            if ((string) $eqLogic->getConfiguration(self::CONF_FINGERPRINT, '') !== $fingerprint
+                || (string) $eqLogic->getConfiguration(self::CONF_CMDCOUNT, '') !== (string) $count) {
+                $eqLogic->setConfiguration(self::CONF_FINGERPRINT, $fingerprint);
+                $eqLogic->setConfiguration(self::CONF_CMDCOUNT, $count);
+                $eqLogic->save();
+                $changed = true;
+            }
+        } elseif ($failed > 0) {
+            mqttbe::logger('warning', sprintf(
+                __('Équipement %1$s : %2$d écriture(s) refusée(s), empreinte non posée — le modèle sera repassé en revue au prochain message', __FILE__),
+                $uid, $failed));
         }
 
         $touched = $report['cmd']['created'] + $report['cmd']['updated']
@@ -340,6 +415,22 @@ class mqttbeFactory {
      * appartient à l'utilisateur.
      */
     private static function applyEqLogic($_eqLogic, $_isNew, $_uid, $_identity, $_meta, $_model) {
+        /* L'identifiant d'hier est exactement un des chemins par lesquels
+         * l'appareil peut se représenter : un adapter qui change de clé entre
+         * deux versions, ou un appareil vu tantôt par sa MAC tantôt par son
+         * préfixe de topic, revient par l'ancien uid. Le remplacer sans le
+         * ranger dans les alias rendrait l'équipement méconnaissable par le
+         * chemin qui l'a fait naître, et la découverte suivante en créerait un
+         * second — l'anti-doublon pris à revers. */
+        $previousKeys = array();
+        if (!$_isNew) {
+            foreach (array((string) $_eqLogic->getLogicalId(),
+                           (string) $_eqLogic->getConfiguration(self::CONF_UID, '')) as $old) {
+                if ($old !== '' && $old !== $_uid) {
+                    $previousKeys[$old] = true;
+                }
+            }
+        }
         $_eqLogic->setLogicalId($_uid);
         $_eqLogic->setConfiguration(self::CONF_UID, $_uid);
 
@@ -364,7 +455,7 @@ class mqttbeFactory {
         if (!is_array($aliases)) {
             $aliases = array();
         }
-        foreach (self::identityKeys($_identity) as $alias) {
+        foreach (array_merge(self::identityKeys($_identity), array_keys($previousKeys)) as $alias) {
             if ($alias !== $_uid && !in_array($alias, $aliases, true)) {
                 $aliases[] = $alias;
             }
@@ -418,7 +509,7 @@ class mqttbeFactory {
      * n'existe qu'une fois celle-ci enregistrée. Faire l'inverse obligerait à
      * enregistrer chaque action deux fois.
      */
-    private static function applyChannels($_eqLogic, $_channels, $report) {
+    private static function applyChannels($_eqLogic, $_channels, $report, $_confidence = self::CONFIDENCE_TRUSTED) {
         $wanted  = array();
         $ordered = array('info' => array(), 'action' => array());
         $index   = 0;
@@ -488,7 +579,23 @@ class mqttbeFactory {
                                $infoByKey, $infoByCapability);
         }
 
-        return self::handleOrphans($_eqLogic, $wanted, $report);
+        /* Un modèle qui n'est pas donné pour certain ne prouve rien par ce qu'il
+         * tait. L'adapter Gen1 annonce « probable » tant que le « info » n'est
+         * pas arrivé et ne décrit alors qu'un canal : appliquer le sort des
+         * orphelins à ce modèle-là détruirait les commandes d'action de tout
+         * appareil un peu lent, à chaque redémarrage du démon. On laisse donc
+         * les commandes en place et l'on attend le modèle complet. */
+        if ($_confidence !== self::CONFIDENCE_TRUSTED) {
+            $candidates = self::orphanCandidates($wanted, $existing);
+            if (!empty($candidates)) {
+                mqttbe::logger('info', sprintf(
+                    __('Modèle de confiance « %1$s » : %2$d commande(s) absente(s) laissée(s) en place sur %3$s', __FILE__),
+                    $_confidence, count($candidates), $_eqLogic->getName()));
+            }
+            return $report;
+        }
+
+        return self::handleOrphans($_eqLogic, $wanted, $report, $existing);
     }
 
     /**
@@ -589,7 +696,10 @@ class mqttbeFactory {
             }
         } catch (Throwable $e) {
             /* Une commande refusée ne doit pas emporter les autres : le reste de
-             * l'équipement est utilisable, et le journal dit laquelle manque. */
+             * l'équipement est utilisable, et le journal dit laquelle manque.
+             * L'échec est compté : il interdira de poser l'empreinte, sans quoi
+             * cette commande ne serait jamais retentée. */
+            $report['cmd']['failed']++;
             $report['messages'][] = $key . ' : ' . $e->getMessage();
             mqttbe::logger('error', __('Commande refusée :', __FILE__) . ' ' . $key
                 . ' — ' . $e->getMessage());
@@ -761,10 +871,19 @@ class mqttbeFactory {
      */
     private static function applyPresentation($_cmd, $_desired, $_isNew, &$_taken) {
         $generated = $_cmd->getConfiguration(self::CONF_GENERATED, array());
-        $hasTrace  = is_array($generated) && !empty($generated);
         if (!is_array($generated)) {
             $generated = array();
         }
+        /* Champs adoptés : rencontrés garnis sur une commande existante alors
+         * que la fabrique ne les suivait pas encore. Ils sont rangés à part
+         * parce que la trace, seule, ne saurait pas les distinguer de ce que la
+         * fabrique a écrit — et les confondre reviendrait à s'en dire
+         * propriétaire au passage suivant, c'est-à-dire à les écraser. */
+        $user = isset($generated[self::GENERATED_USER]) && is_array($generated[self::GENERATED_USER])
+              ? $generated[self::GENERATED_USER] : array();
+        $trace     = $generated;
+        unset($trace[self::GENERATED_USER]);
+        $hasTrace  = !empty($trace);
         $ownerKey = $_cmd->getId() != '' ? 'id:' . $_cmd->getId() : 'new:' . $_cmd->getLogicalId();
 
         foreach (self::$_presentationFields as $field) {
@@ -776,12 +895,25 @@ class mqttbeFactory {
                 $owned = true;
             } elseif (!$hasTrace) {
                 $owned = false;
+            } elseif (isset($user[$field])) {
+                $owned = false;
             } elseif (array_key_exists($field, $generated)) {
                 $owned = ((string) $generated[$field] === (string) $current);
+            } elseif (!self::presentationIsUnset($field, $current)
+                      && (string) $current !== (string) $_desired[$field]) {
+                /* Champ suivi depuis peu, déjà garni, et garni autrement que ce
+                 * que la fabrique poserait : personne d'autre que l'utilisateur
+                 * n'a pu l'écrire. On enregistre la valeur courante SANS
+                 * l'écrire — le jour où une capacité gagne un « template », le
+                 * widget personnalisé doit survivre, et pas seulement d'un
+                 * passage. */
+                $generated[$field] = $current;
+                $user[$field] = true;
+                $owned = false;
             } else {
-                /* Champ suivi depuis peu sur une commande que la fabrique a bien
-                 * écrite : la trace fait foi pour ce qu'elle contient, et le
-                 * reste lui revient. */
+                /* Champ suivi depuis peu et vide, ou déjà conforme : il n'y a
+                 * rien de l'utilisateur à protéger, la fabrique le prend en
+                 * charge comme les autres. */
                 $owned = true;
             }
             if (!$owned) {
@@ -802,7 +934,27 @@ class mqttbeFactory {
                 $_taken[self::normalizeKey($generated[$field])] = $ownerKey;
             }
         }
+        if (!empty($user)) {
+            $generated[self::GENERATED_USER] = $user;
+        }
         $_cmd->setConfiguration(self::CONF_GENERATED, $generated);
+    }
+
+    /**
+     * Ce champ est-il vide de toute décision ?
+     *
+     * Un champ vide n'a été choisi par personne : la fabrique peut le prendre en
+     * charge le jour où le vocabulaire le garnit. « core::default » est le vide
+     * du cœur, qui remplit lui-même les deux widgets à l'enregistrement quand
+     * on ne lui en donne pas : le prendre pour un choix de l'utilisateur
+     * gèlerait à jamais l'affichage de toutes les commandes déjà créées.
+     */
+    private static function presentationIsUnset($_field, $_value) {
+        $value = (string) $_value;
+        if ($value === '') {
+            return true;
+        }
+        return strpos($_field, 'template::') === 0 && $value === 'core::default';
     }
 
     private static function presentationValue($_cmd, $_field) {
@@ -856,28 +1008,48 @@ class mqttbeFactory {
      * peut alors casser, et laisser traîner des commandes mortes finirait par
      * rendre la page de l'équipement illisible.
      */
-    private static function handleOrphans($_eqLogic, $_wanted, $report) {
+    private static function handleOrphans($_eqLogic, $_wanted, $report, $_existing = null) {
         if ($_eqLogic->getId() == '') {
             return $report;
         }
-        $cmds = cmd::byEqLogicId($_eqLogic->getId());
+        /* Les commandes ont déjà été lues par applyChannels : les relire ferait
+         * un aller-retour de plus en base à chaque message de découverte. */
+        $cmds = is_array($_existing) ? $_existing : cmd::byEqLogicId($_eqLogic->getId());
         if (!is_array($cmds)) {
             return $report;
         }
+        $candidates = self::orphanCandidates($_wanted, $cmds);
+        if (empty($candidates)) {
+            return $report;
+        }
+
+        /* Perdre d'un coup la moitié de ses canaux ressemble moins à un appareil
+         * amputé qu'à un modèle incomplet — un adapter qui n'a pas tout vu, un
+         * firmware qui répond mal. Le sort des orphelins reste appliqué (le
+         * modèle se dit certain), mais la trace en warning donne à
+         * l'exploitation le moyen de reconnaître le cas sans relire la base. */
+        $owned = 0;
         foreach ($cmds as $cmd) {
+            if ((string) $cmd->getConfiguration(self::CONF_KEY, '') !== '') {
+                $owned++;
+            }
+        }
+        if ($owned > 0 && count($candidates) >= 2
+            && count($candidates) >= $owned * self::ORPHAN_ALERT_RATIO) {
+            mqttbe::logger('warning', sprintf(
+                __('Équipement %1$s : %2$d commande(s) sur %3$d n\'apparaissent plus dans le modèle — modèle incomplet ?', __FILE__),
+                $_eqLogic->getName(), count($candidates), $owned));
+        }
+
+        foreach ($candidates as $cmd) {
             $key = (string) $cmd->getConfiguration(self::CONF_KEY, '');
-            if ($key === '' || isset($_wanted[$key])) {
-                continue;
-            }
-            if ((string) $cmd->getConfiguration(self::CONF_ORPHAN, '') !== '') {
-                continue;
-            }
             if (!self::isReferenced($cmd) && !self::hasHistory($cmd)) {
                 try {
                     $cmd->remove();
                     $report['cmd']['removed']++;
                     continue;
                 } catch (Throwable $e) {
+                    $report['cmd']['failed']++;
                     $report['messages'][] = $key . ' : ' . $e->getMessage();
                 }
             }
@@ -897,10 +1069,34 @@ class mqttbeFactory {
                 mqttbe::logger('info', __('Canal disparu, commande désactivée :', __FILE__)
                     . ' ' . $cmd->getHumanName());
             } catch (Throwable $e) {
+                $report['cmd']['failed']++;
                 $report['messages'][] = $key . ' : ' . $e->getMessage();
             }
         }
         return $report;
+    }
+
+    /**
+     * Commandes de la fabrique dont le canal n'est plus dans le modèle.
+     *
+     * Elle sert deux fois : à décider quoi endormir, et à mesurer l'ampleur de
+     * ce qui disparaît — ce que la fabrique doit savoir avant d'y toucher.
+     */
+    private static function orphanCandidates($_wanted, $_cmds) {
+        $candidates = array();
+        foreach ($_cmds as $cmd) {
+            $key = (string) $cmd->getConfiguration(self::CONF_KEY, '');
+            if ($key === '' || isset($_wanted[$key])) {
+                continue;
+            }
+            /* Déjà endormie à un passage précédent : elle ne compte plus comme
+             * une disparition, sinon chaque passage la recompterait. */
+            if ((string) $cmd->getConfiguration(self::CONF_ORPHAN, '') !== '') {
+                continue;
+            }
+            $candidates[] = $cmd;
+        }
+        return $candidates;
     }
 
     /**
@@ -911,6 +1107,16 @@ class mqttbeFactory {
      * supprimer une commande utilisée casse un scénario.
      */
     private static function isReferenced($_cmd) {
+        /* Les cas tranchés d'abord, par des requêtes ciblées : getUsedBy()
+         * interroge une dizaine de classes, réveille tous les plugins actifs et
+         * coûte 44 ms à froid. Multiplié par les commandes disparues d'un lot de
+         * découverte, cela se compte en secondes dans une seule requête HTTP —
+         * le démon attend, et un dépassement de max_execution_time laisserait la
+         * base à moitié réécrite. */
+        $settled = self::referenceProbe($_cmd);
+        if ($settled !== null) {
+            return $settled;
+        }
         try {
             $usedBy = $_cmd->getUsedBy();
         } catch (Throwable $e) {
@@ -947,14 +1153,234 @@ class mqttbeFactory {
         if ($_cmd->getIsHistorized() == 1) {
             return true;
         }
+        /* Une commande dont l'historisation a été coupée conserve ses relevés :
+         * les effacer serait une perte définitive. Savoir s'il en existe ne
+         * demande qu'une ligne — getHistory() les charge TOUS, sans bornes, et
+         * un capteur historisé depuis un an en compte des dizaines de milliers
+         * qu'on ne fait que compter. */
+        $settled = self::historyProbe($_cmd);
+        if ($settled !== null) {
+            return $settled;
+        }
         try {
-            /* Une commande dont l'historisation a été coupée conserve ses
-             * relevés : les effacer serait une perte définitive. */
             $history = $_cmd->getHistory();
         } catch (Throwable $e) {
             return true;
         }
         return is_array($history) && count($history) > 0;
+    }
+
+    /**
+     * Sonde de référence : une requête, une réponse tranchée, ou rien.
+     *
+     * Rend true si un enregistrement cite la commande, false si aucune des
+     * tables qui peuvent la citer n'en porte trace, et null quand la sonde ne
+     * peut pas conclure — pas de base sous la main, requête refusée, ou un
+     * plugin capable de citer la commande dans ses propres tables. L'appelant
+     * reprend alors le chemin long, qui, lui, sait interroger les plugins.
+     *
+     * La première ligne de la requête est un témoin : elle interroge la commande
+     * elle-même, dont on sait qu'elle existe. Si elle ne revient pas, c'est que
+     * la sonde ne voit pas la base attendue, et son silence sur les autres
+     * tables ne prouve alors rien — mieux vaut ne rien conclure que supprimer
+     * une commande sur une réponse vide.
+     */
+    private static function referenceProbe($_cmd) {
+        $id = (int) $_cmd->getId();
+        if ($id <= 0) {
+            return true;
+        }
+        $origins = self::probe($id, array(
+            'cmd'          => 'SELECT \'cmd\' AS origine FROM `cmd` WHERE (`value` = :id OR `configuration` LIKE :token) AND `id` != :id LIMIT 1',
+            'eqLogic'      => 'SELECT \'eqLogic\' AS origine FROM `eqLogic` WHERE `configuration` LIKE :token LIMIT 1',
+            'object'       => 'SELECT \'object\' AS origine FROM `object` WHERE `configuration` LIKE :token LIMIT 1',
+            'scenario'     => 'SELECT \'scenario\' AS origine FROM `scenario` WHERE `trigger` LIKE :token LIMIT 1',
+            'scenarioExpression' => 'SELECT \'scenarioExpression\' AS origine FROM `scenarioExpression` WHERE `expression` LIKE :token OR `options` LIKE :token LIMIT 1',
+            'viewData'     => 'SELECT \'viewData\' AS origine FROM `viewData` WHERE (`type` = \'cmd\' AND `link_id` = :id) OR `configuration` LIKE :token LIMIT 1',
+            'plan'         => 'SELECT \'plan\' AS origine FROM `plan` WHERE (`link_type` = \'cmd\' AND `link_id` = :id) OR `configuration` LIKE :token LIMIT 1',
+            'plan3d'       => 'SELECT \'plan3d\' AS origine FROM `plan3d` WHERE (`link_type` = \'cmd\' AND `link_id` = :id) OR `configuration` LIKE :token LIMIT 1',
+            'interactDef'  => 'SELECT \'interactDef\' AS origine FROM `interactDef` WHERE `actions` LIKE :token OR `reply` LIKE :token LIMIT 1',
+            'interactQuery' => 'SELECT \'interactQuery\' AS origine FROM `interactQuery` WHERE `actions` LIKE :token LIMIT 1',
+        ));
+        if ($origins === null) {
+            return null;
+        }
+        if (!empty($origins)) {
+            mqttbe::logger('debug', __('Commande citée, conservée :', __FILE__)
+                . ' ' . $_cmd->getHumanName() . ' (' . implode(', ', $origins) . ')');
+            return true;
+        }
+        /* Un plugin peut citer la commande dans ses propres tables, que la sonde
+         * ne connaît pas : dès qu'il en existe un, seul getUsedBy() peut
+         * répondre. Sur une installation ordinaire il n'y en a aucun. */
+        return self::pluginsMayReference() ? null : false;
+    }
+
+    /** Existe-t-il au moins un relevé pour cette commande ? */
+    private static function historyProbe($_cmd) {
+        $id = (int) $_cmd->getId();
+        if ($id <= 0) {
+            return null;
+        }
+        $origins = self::probe($id, array(
+            'history'     => 'SELECT \'history\' AS origine FROM `history` WHERE `cmd_id` = :id LIMIT 1',
+            'historyArch' => 'SELECT \'historyArch\' AS origine FROM `historyArch` WHERE `cmd_id` = :id LIMIT 1',
+        ));
+        if ($origins === null) {
+            return null;
+        }
+        return !empty($origins);
+    }
+
+    /**
+     * Exécute les sondes en une seule requête, témoin compris.
+     *
+     * @return array|null les origines trouvées, ou null si l'on ne peut rien
+     *                    conclure.
+     */
+    private static function probe($_id, $_queries) {
+        if (!class_exists('DB') || !method_exists('DB', 'Prepare')) {
+            return null;
+        }
+        /* Chaque branche est parenthésée : MySQL refuse un LIMIT dans un membre
+         * d'UNION qui n'est pas entre parenthèses (42000/1064), et sans le
+         * LIMIT chaque branche ramènerait toute la table. */
+        $sql = '(SELECT \'self\' AS origine FROM `cmd` WHERE `id` = :id LIMIT 1)';
+        foreach ($_queries as $query) {
+            $sql .= ' UNION ALL (' . $query . ')';
+        }
+        /* Seuls les paramètres réellement cités sont liés : PDO refuse la
+         * requête entière (HY093) dès qu'on lui en donne un de trop. */
+        $params = array('id' => (int) $_id);
+        if (strpos($sql, ':token') !== false) {
+            $params['token'] = '%#' . (int) $_id . '#%';
+        }
+        try {
+            $rows = DB::Prepare($sql, $params, DB::FETCH_TYPE_ALL);
+        } catch (Throwable $e) {
+            /* Une table absente (un cœur plus ancien, une installation
+             * partielle) ne doit pas faire échouer la découverte : on rend la
+             * main au chemin long. */
+            mqttbe::logger('debug', __('Sonde de référence indisponible :', __FILE__) . ' ' . $e->getMessage());
+            return null;
+        }
+        if (!is_array($rows)) {
+            return null;
+        }
+        $origins = array();
+        $witness = false;
+        foreach ($rows as $row) {
+            $row = is_object($row) ? get_object_vars($row) : (array) $row;
+            $origin = isset($row['origine']) ? (string) $row['origine'] : '';
+            if ($origin === 'self') {
+                $witness = true;
+                continue;
+            }
+            if ($origin !== '') {
+                $origins[$origin] = $origin;
+            }
+        }
+        if (!$witness) {
+            return null;
+        }
+        return array_values($origins);
+    }
+
+    /**
+     * Un plugin peut-il citer une commande sans que la base ne le dise ?
+     *
+     * La réponse ne change pas dans une requête : la question est posée une
+     * fois. En cas de doute, oui — c'est le chemin long qui tranchera.
+     */
+    private static function pluginsMayReference() {
+        if (self::$_pluginsUsedBy !== null) {
+            return self::$_pluginsUsedBy;
+        }
+        self::$_pluginsUsedBy = true;
+        if (!class_exists('plugin') || !method_exists('plugin', 'listPlugin')) {
+            return true;
+        }
+        try {
+            $plugins = plugin::listPlugin(true, false, true, true);
+        } catch (Throwable $e) {
+            return true;
+        }
+        if (!is_array($plugins)) {
+            return true;
+        }
+        foreach ($plugins as $plugin) {
+            if (is_string($plugin) && method_exists($plugin, 'customUsedBy')) {
+                return true;
+            }
+        }
+        self::$_pluginsUsedBy = false;
+        return false;
+    }
+
+    /**
+     * Nombre de commandes portées par l'équipement.
+     *
+     * Un COUNT quand la base est là : construire les objets pour les compter
+     * coûterait, sur le chemin du callback, autant que tout le reste de la
+     * passe.
+     */
+    private static function countCmd($_eqLogic) {
+        $id = (int) $_eqLogic->getId();
+        if ($id <= 0) {
+            return 0;
+        }
+        if (class_exists('DB') && method_exists('DB', 'Prepare')) {
+            try {
+                $row = DB::Prepare('SELECT COUNT(*) AS total FROM `cmd` WHERE `eqLogic_id` = :id',
+                                   array('id' => $id), DB::FETCH_TYPE_ROW);
+                $row = is_object($row) ? get_object_vars($row) : $row;
+                if (is_array($row) && isset($row['total'])) {
+                    return (int) $row['total'];
+                }
+            } catch (Throwable $e) {
+                /* On retombe sur la lecture ordinaire. */
+            }
+        }
+        $cmds = cmd::byEqLogicId($id);
+        return is_array($cmds) ? count($cmds) : 0;
+    }
+
+    /**
+     * La base porte-t-elle encore le nombre de commandes du dernier passage ?
+     *
+     * Un équipement qui n'a pas encore ce compte (créé avant qu'il existe)
+     * répond non : il repassera une fois par la voie longue, ce qui est
+     * exactement l'occasion de l'acquérir.
+     */
+    private static function countMatches($_eqLogic) {
+        $stored = (string) $_eqLogic->getConfiguration(self::CONF_CMDCOUNT, '');
+        if ($stored === '') {
+            return false;
+        }
+        return (int) $stored === self::countCmd($_eqLogic);
+    }
+
+    /**
+     * Empreinte d'un modèle qui n'en porte pas.
+     *
+     * Calculée par la classe du modèle, celle-là même qu'emploie le démon :
+     * deux chemins d'entrée doivent donner la même empreinte, sans quoi un
+     * appareil importé à la main serait réécrit à chaque message retenu. Si les
+     * classes de découverte manquent, le modèle est refusé — une empreinte
+     * inventée ici serait pire que pas d'empreinte du tout, elle figerait
+     * l'équipement sur un état que rien ne décrit.
+     */
+    private static function fingerprintOf($_model) {
+        self::loadDiscovery();
+        if (!class_exists('MqttbeDeviceModel')) {
+            throw new RuntimeException(__("Le modèle ne porte pas d'empreinte et les classes de découverte sont introuvables", __FILE__));
+        }
+        $model = MqttbeDeviceModel::fromArray($_model);
+        $fingerprint = (string) $model->fingerprint();
+        if ($fingerprint === '') {
+            throw new RuntimeException(__("Le modèle ne porte pas d'empreinte et elle n'a pas pu être recalculée", __FILE__));
+        }
+        return $fingerprint;
     }
 
     /* ------------------------------------------------------ liens et noms */
@@ -973,7 +1399,22 @@ class mqttbeFactory {
             return $_infoByKey[$links]->getId();
         }
         if (is_array($links)) {
-            foreach ($links as $target) {
+            /* links est un rôle => clé de canal. Plusieurs rôles peuvent être
+             * donnés (« state », « position », « power »…) et prendre le premier
+             * venu revient à laisser l'ordre d'écriture du firmware décider ce
+             * que le bouton pilote : cmd.value n'accepte qu'une information.
+             * « state » est le rôle que Jeedom attend derrière une action — le
+             * retour d'état de ce que l'action commande ; les autres ne viennent
+             * qu'ensuite, dans un ordre stable pour que deux appareils
+             * identiques donnent le même résultat. */
+            $roles = array_keys($links);
+            sort($roles, SORT_STRING);
+            array_unshift($roles, 'state');
+            foreach ($roles as $role) {
+                if (!isset($links[$role])) {
+                    continue;
+                }
+                $target = $links[$role];
                 if (is_string($target) && isset($_infoByKey[$target])) {
                     return $_infoByKey[$target]->getId();
                 }
@@ -1012,15 +1453,51 @@ class mqttbeFactory {
         if ($previous !== '' && isset($_taken[$previous]) && $_taken[$previous] === $_ownerKey) {
             unset($_taken[$previous]);
         }
+
+        /* Un suffixe attribué ne se raccourcit jamais tant que la commande
+         * existe. Sans cette règle, il suffit que l'utilisateur renomme
+         * « Température » en « Cave » pour que la place se libère et que la
+         * sonde EXTERNE, jusque-là « Température 2 », prenne le nom
+         * « Température » au passage suivant : toute référence par nom — un
+         * scénario, une vue, une interaction vocale — désigne alors un autre
+         * capteur physique, sans rien qui le signale. */
+        if ($previous !== '' && !isset($_taken[$previous])
+            && self::isSuffixedFrom($_current, $base)) {
+            $_taken[$previous] = $_ownerKey;
+            return (string) $_current;
+        }
+
         $candidate = $base;
         $suffix    = 2;
         while (isset($_taken[self::normalizeKey($candidate)])
                && $_taken[self::normalizeKey($candidate)] !== $_ownerKey) {
-            $marker    = ' ' . $suffix;
-            $candidate = self::cleanName(substr($base, 0, self::MAX_NAME - strlen($marker))) . $marker;
+            $candidate = self::suffixedName($base, $suffix);
             $suffix++;
         }
         return $candidate;
+    }
+
+    /* Nom dédoublonné : la base rognée de quoi loger le marqueur, puis le
+     * marqueur. La coupe passe par cut() et non par substr() — une base coupée
+     * au milieu d'un caractère accentué serait refusée par la base de données,
+     * et ce serait tout l'équipement qui ne s'enregistrerait pas. */
+    private static function suffixedName($_base, $_suffix) {
+        $marker = ' ' . $_suffix;
+        return self::cleanName(self::cut($_base, self::MAX_NAME - strlen($marker))) . $marker;
+    }
+
+    /* Le nom porté aujourd'hui est-il celui que cette base a produit une fois
+     * dédoublonnée ? La comparaison se fait sur la base rognée pour ce
+     * marqueur-là : un nom long est tronqué avant de recevoir son suffixe. */
+    private static function isSuffixedFrom($_current, $_base) {
+        $current = trim((string) $_current);
+        if (!preg_match('/^(.*[^\s])\s+(\d+)$/u', $current, $found)) {
+            return false;
+        }
+        if ((int) $found[2] < 2) {
+            return false;
+        }
+        return self::normalizeKey($current) === self::normalizeKey(self::suffixedName($_base, $found[2]));
     }
 
     /**
@@ -1051,8 +1528,7 @@ class mqttbeFactory {
         $candidate = $base;
         $suffix    = 2;
         while (isset($taken[self::normalizeKey($candidate)])) {
-            $marker    = ' ' . $suffix;
-            $candidate = self::cleanName(substr($base, 0, self::MAX_NAME - strlen($marker))) . $marker;
+            $candidate = self::suffixedName($base, $suffix);
             $suffix++;
         }
         return $candidate;
@@ -1073,7 +1549,41 @@ class mqttbeFactory {
             $name = strip_tags(str_replace(array('&', '#', ']', '[', '%', "\\", '/', "'", '"', '*'), '', $name));
             $name = preg_replace('/\s+/', ' ', $name);
         }
-        return trim(substr($name, 0, self::MAX_NAME));
+        return trim(self::cut($name, self::MAX_NAME));
+    }
+
+    /**
+     * Coupe qui ne casse pas un caractère.
+     *
+     * substr() compte des octets et la colonne compte des caractères : couper à
+     * 127 octets un nom accentué tranche au milieu d'un caractère UTF-8 et
+     * produit une chaîne que MySQL refuse — « Incorrect string value » (22007,
+     * 1366) sur l'INSERT de l'ÉQUIPEMENT ENTIER, pas seulement du nom fautif.
+     * La coupe se fait donc en caractères.
+     *
+     * Le texte est ensuite rogné jusqu'à tenir aussi en $_max octets : le cœur
+     * refait sa propre troncature en octets (substr) dans setName(), juste
+     * avant l'écriture, et ce second coup de ciseaux retomberait exactement
+     * dans le piège qu'on vient d'éviter.
+     */
+    private static function cut($_text, $_max) {
+        $text = (string) $_text;
+        if ($_max <= 0) {
+            return '';
+        }
+        if (!function_exists('mb_substr') || !function_exists('mb_strlen')) {
+            return substr($text, 0, $_max);
+        }
+        $count = mb_strlen($text, 'UTF-8');
+        if ($count > $_max) {
+            $count = $_max;
+            $text  = mb_substr($text, 0, $count, 'UTF-8');
+        }
+        while ($count > 0 && strlen($text) > $_max) {
+            $count--;
+            $text = mb_substr($text, 0, $count, 'UTF-8');
+        }
+        return $text;
     }
 
     /* ------------------------------------------------- index d'identité */
@@ -1126,6 +1636,7 @@ class mqttbeFactory {
     public static function resetCache() {
         self::$_capabilities = null;
         self::$_index = null;
+        self::$_pluginsUsedBy = null;
     }
 
     /**
