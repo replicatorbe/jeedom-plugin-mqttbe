@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.7 — 20 September 2026
+
+### Shelly Gen2, Gen3 and Gen4 read again against their documentation
+
+Their discovery was written without a single reachable device: from the
+manufacturer's official documentation, and checked against reconstructed
+conversations. That method has a known weakness, stated from the start, and it
+has just shown itself: **a data set written from a reading of the documentation
+confirms the understanding one has of it, including where that understanding is
+wrong.** The adapter was therefore read a second time, line by line, against the
+official pages — MQTT transport, enumeration methods, components field by field,
+notifications. Here is what that reading found, and what the checks could not.
+
+- **The white channel of an RGBW strip was capped at 39% of its power.** It is
+  set from 0 to 255 on the device, and was being given the value of a slider
+  that runs from 0 to 100. Pushed to the top, it commanded 100 out of 255 — and
+  since the state was read back on the same scale, the slider appeared to refuse
+  to go any higher. The value is now converted before being published.
+- **The colour temperature setting did nothing at all, ever.** It is expressed
+  in kelvin, between the bounds the device announces itself — 2700 to 6500 on a
+  tunable-white bulb — and it too was given a value between 0 and 100. Every one
+  of them was out of range, so every one was refused by the device, silently.
+  The slider now takes the device's bounds, and a virtual number takes the ones
+  you gave it.
+- **An unplugged device was being questioned at every daemon start.** The
+  message saying a Shelly is offline is not published by the device: it is its
+  will, published by the broker and kept. A device unplugged six months ago
+  replays it on every subscription, and the plugin used to ask it three
+  questions before drawing any conclusion. It no longer speaks to a closed
+  session, and picks the conversation back up when the device returns.
+- **A second door existed, and the plugin believed it walled up.** Modern
+  Shellys answer two commands published on their own topic — this is "MQTT
+  control", active out of the factory: announce yourself, and publish your full
+  state. Nothing to change on the device. The plugin now uses it when the usual
+  conversation stays unanswered, a case that used to have no way out: a device
+  whose RPC calls are disabled is now discovered in full.
+- **A device's inventory was never refreshed.** Renaming an output in the Shelly
+  app, changing a 2PM's profile, adding a virtual component: the device
+  announces it, and nothing was listening. Its Jeedom equipment kept the
+  commands from the day it was discovered until someone re-ran discovery by
+  hand. Those announcements now restart the questioning of that device, and of
+  that device only.
+- **An unplugged probe kept its command, and its last value.** When a Shelly
+  loses a field it announces it by publishing it empty; that announcement was
+  received and immediately forgotten. The matching command now disappears, and
+  its neighbours stay.
+- **Text containing a quotation mark broke the command sending it.** Writing a
+  value with `"` or `\` into a virtual text component produced a message the
+  device rejected without a word.
+- **A button press could replay itself.** The *Last event* and *Event component*
+  commands react to everything that arrives, including the same value twice —
+  which is what two quick presses need. But a broker or a badly set-up bridge
+  can keep those messages, and the daemon then received them at every start: a
+  scenario fired, triggered by a gesture weeks old, with nothing to explain it.
+  Those two commands now tell the daemon to ignore what the broker replays.
+  State commands still rely on it — for them, the replayed value is the current
+  one.
+
+And smaller corrections, all from the same reading: orders are published with
+acknowledgement where replaying them is harmless — a lost button press no longer
+vanishes; a device that answers without saying to whom is heard; a refusal that
+is not "I do not know this method" is no longer treated as one; a device
+announcing more components than it delivers is no longer presented as fully
+known; a device whose notifications have been switched off in its settings
+leaves a warning in the log, instead of creating commands that would stay empty
+with nothing to explain it; and a battery sensor's sleep is read from what the
+device publishes rather than from a hand-written list of models.
+
+**New commands**, also read from the documentation: muting a smoke detector and
+knowing whether it is muted, a roller shutter's state in plain words — the only
+information an uncalibrated shutter has, and it had none —, virtual buttons,
+`rgbcct` bulbs, the Shelly cloud link, the Wi-Fi state, illumination in words,
+and an input's converted measurements: a sensor set up in litres or bars shows
+its litres.
+
+### And then the hardware turned up
+
+These corrections were written believing no modern Shelly was reachable. There
+were four on the broker: three **Shelly 1 Mini Gen3** on firmware 2.0.0 and one
+**Plus Smoke**. Nobody had looked for them there.
+
+**The three Mini Gen3 are discovered on their own, with fifteen commands each**,
+without a single setting being touched on them: state, on, off, toggle, internal
+temperature, input, signal, Wi-Fi state, cloud link, uptime, free memory,
+restart, the two event commands and availability. That is this milestone's
+acceptance criterion, and it is met for this model. The smoke detector sleeps: it
+gives only its availability, which is exactly what a battery device should do.
+
+Their conversation was captured and kept, anonymised, in the test bench. It
+settled three questions the documentation left open:
+
+- **the broadcast announce request works** on a Gen3 — a community thread claimed
+  otherwise. Discovery is therefore immediate, without waiting for a device to
+  change state;
+- **the availability message is indeed kept by the broker**, which is what lets a
+  whole estate report in when the daemon starts;
+- **a device does not hand over its components in one go**: it announces
+  fourteen, delivers eleven, then the last three. A plugin assuming otherwise
+  would lose uptime and signal with no message to say so. Ours already asked for
+  the rest, and we now know that was not an idle precaution.
+
+Still unproven, for lack of hardware: roller shutters, lights, energy meters and
+awake battery sensors. They are written from the documentation, with the same
+caveat as before.
+
 ## 0.6 — 20 September 2026
 
 ### The adoption queue no longer keeps passers-by

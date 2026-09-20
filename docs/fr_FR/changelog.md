@@ -1,5 +1,116 @@
 # Changelog
 
+## 0.7 — 20 septembre 2026
+
+### Les Shelly Gen2, Gen3 et Gen4 relus contre leur documentation
+
+Leur découverte a été écrite sans qu'aucun appareil ne soit joignable : d'après
+la documentation officielle du constructeur, et vérifiée sur des conversations
+reconstituées. Cette façon de faire a une faiblesse connue, annoncée dès le
+départ, et elle vient de se manifester : **un jeu de données écrit d'après une
+lecture de la documentation confirme la compréhension qu'on en a, y compris
+quand elle est fausse.** L'adapter a donc été relu une seconde fois, ligne par
+ligne, contre les pages officielles — transport MQTT, méthodes d'interrogation,
+composants champ par champ, notifications. Voici ce qu'elle a trouvé, et que les
+contrôles ne pouvaient pas trouver.
+
+- **La voie blanche d'un bandeau RGBW plafonnait à 39 % de sa puissance.** Elle
+  se règle de 0 à 255 sur l'appareil, et recevait la valeur d'un curseur qui va
+  de 0 à 100. Poussé à fond, il commandait 100 sur 255 — et comme l'état relisait
+  la même échelle, le curseur semblait refuser de monter plus haut. La valeur est
+  désormais convertie avant d'être publiée.
+- **Le réglage de température de couleur ne faisait rien, jamais.** Il s'exprime
+  en kelvins, entre les bornes que l'appareil annonce lui-même — 2700 à 6500 sur
+  une ampoule blanc réglable —, et il recevait lui aussi une valeur entre 0 et
+  100. Toutes étaient hors plage, donc toutes refusées par l'appareil,
+  silencieusement. Le curseur prend maintenant les bornes de l'appareil, et le
+  nombre virtuel celles que vous lui avez données.
+- **Un appareil débranché était interrogé à chaque démarrage du démon.** Le
+  message qui dit qu'un Shelly est hors ligne n'est pas publié par lui : c'est
+  son testament, publié par le broker et conservé. Un appareil débranché depuis
+  six mois le rejoue donc à chaque abonnement, et le plugin lui posait trois
+  questions avant d'en tirer les conséquences. Il ne parle plus à une session
+  fermée, et reprend la conversation au retour de l'appareil.
+- **Une seconde porte existait, et le plugin la croyait murée.** Les Shelly
+  modernes répondent à deux commandes publiées sur leur propre topic — c'est le
+  « contrôle MQTT », actif en sortie d'usine : s'annoncer, et publier leur état
+  complet. Rien à régler sur l'appareil. Le plugin s'en sert désormais quand la
+  conversation habituelle reste sans réponse, ce qui arrive et n'avait jusqu'ici
+  aucune issue : un appareil dont les appels RPC sont coupés est maintenant
+  découvert entièrement.
+- **L'inventaire d'un appareil ne se rafraîchissait jamais.** Renommer une
+  sortie dans l'application Shelly, changer le profil d'un 2PM, ajouter un
+  composant virtuel : l'appareil l'annonce, et rien ne l'écoutait. Son équipement
+  gardait les commandes du jour de sa découverte jusqu'à une relance faite à la
+  main. Ces annonces relancent maintenant l'interrogation de cet appareil-là, et
+  de lui seul.
+- **Une sonde débranchée gardait sa commande, et sa dernière valeur.** Quand un
+  Shelly perd un champ, il l'annonce en le publiant à vide ; cette annonce était
+  reçue et aussitôt oubliée. La commande correspondante disparaît désormais,
+  celles d'à côté restent.
+- **Un texte contenant un guillemet cassait la commande qui l'envoyait.** Écrire
+  dans un composant texte virtuel une valeur avec `"` ou `\` produisait un
+  message que l'appareil rejetait sans un mot.
+- **Un appui sur un bouton pouvait se rejouer tout seul.** Les commandes
+  *Dernier événement* et *Composant de l'événement* réagissent à tout ce qui
+  arrive, y compris deux fois la même valeur — c'est ce qu'il faut pour deux
+  appuis courts de suite. Mais un broker ou un pont mal réglé peut conserver ces
+  messages, et le démon les recevait alors à chaque démarrage : un scénario
+  partait, déclenché par un geste vieux de plusieurs semaines, sans que rien
+  n'en donne la cause. Ces deux commandes disent maintenant au démon d'ignorer
+  ce que le broker rejoue. Les commandes d'état, elles, continuent de s'en
+  servir — pour elles, la valeur rejouée est la valeur courante.
+
+Et des corrections plus petites, toutes tirées de la même relecture : les ordres
+sont publiés avec accusé de réception quand les rejouer est sans danger — un
+appui perdu ne l'est plus ; un appareil qui répond sans dire à qui est entendu ;
+un refus qui n'est pas « je ne connais pas cette méthode » n'est plus traité
+comme tel ; un appareil qui annonce plus de composants qu'il n'en livre n'est
+plus présenté comme entièrement connu ; un appareil dont les notifications ont
+été coupées dans ses réglages laisse un avertissement au journal, au lieu de
+créer des commandes qui resteraient vides sans que rien ne l'explique ; et le
+sommeil d'un capteur sur pile se lit dans ce que l'appareil publie plutôt que
+dans une liste de modèles écrite à la main.
+
+**Nouvelles commandes**, elles aussi lues dans la documentation : faire taire un
+détecteur de fumée et savoir s'il l'est, l'état d'un volet en toutes lettres —
+la seule information d'un volet non calibré, qui n'en avait aucune —, les
+boutons virtuels, les ampoules `rgbcct`, la liaison au cloud Shelly, l'état du
+Wi-Fi, l'éclairement en mots, et les mesures converties d'une entrée : un
+capteur réglé en litres ou en bars affiche ses litres.
+
+### Et puis le matériel est arrivé
+
+Ces corrections ont été écrites en croyant qu'aucun Shelly moderne n'était
+joignable. Il y en avait quatre sur le broker : trois **Shelly 1 Mini Gen3** en
+micrologiciel 2.0.0 et un **Plus Smoke**. Personne ne les avait cherchés là.
+
+**Les trois Mini Gen3 sont découverts seuls, avec quinze commandes chacun**, sans
+qu'un réglage ait été touché chez eux : état, allumer, éteindre, basculer,
+température interne, entrée, signal, état Wi-Fi, liaison au cloud, durée de
+fonctionnement, mémoire libre, redémarrage, les deux commandes d'événement et la
+disponibilité. C'est le critère d'acceptation du jalon, et il est atteint pour ce
+modèle. Le détecteur de fumée, lui, dort : il ne donne que sa disponibilité, ce
+qui est exactement le comportement attendu d'un appareil sur pile.
+
+Leur conversation a été capturée et conservée, anonymisée, dans le banc d'essai.
+Elle a tranché trois questions que la documentation laissait ouvertes :
+
+- **la demande d'annonce générale fonctionne** sur un Gen3 — un fil communautaire
+  prétendait le contraire. La découverte est donc immédiate, sans attendre qu'un
+  appareil change d'état ;
+- **le message de disponibilité est bien conservé par le broker**, ce qui permet
+  à tout le parc de se signaler au démarrage ;
+- **l'appareil ne livre pas ses composants d'un bloc** : il en annonce quatorze,
+  en donne onze, puis les trois derniers. Un plugin qui supposerait le contraire
+  perdrait la durée de fonctionnement et le signal sans qu'aucun message ne le
+  dise. Le nôtre demandait déjà la suite, et on sait maintenant que ce n'était
+  pas une précaution inutile.
+
+Restent non éprouvés, faute d'appareil : les volets, les lumières, les compteurs
+d'énergie et les capteurs sur pile éveillés. Ils sont écrits d'après la
+documentation, avec la même réserve qu'avant.
+
 ## 0.6 — 20 septembre 2026
 
 ### La file d'adoption ne garde plus les passants

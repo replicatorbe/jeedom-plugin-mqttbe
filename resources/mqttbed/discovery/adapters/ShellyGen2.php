@@ -76,14 +76,27 @@ if (!interface_exists('MqttbeAdapter')) {
  *      trame porte son identifiant. C'est aussi, et surtout, le topic où l'état
  *      circule une fois l'équipement créé.
  *
- * CE QU'ON NE PEUT PAS FAIRE, ET POURQUOI
+ * ET UNE QUATRIÈME VOIE, QUI NE PARLE QUE SI ON LUI PARLE
  *
- * `<P>/status/<composant>` serait le topic idéal — un objet de statut nu, par
- * composant. Il est muet : `status_ntf` vaut `false` en sortie d'usine, et le
- * critère de ce jalon est qu'un appareil soit découvert SANS que son
- * propriétaire n'ait à toucher à sa configuration. Les autres intégrations s'en
- * sortent en allant retourner ce réglage par HTTP ; cette porte-là nous est
- * fermée, et c'est très bien ainsi.
+ * `<P>/status` et `<P>/status/<composant>` ne publient RIEN spontanément :
+ * `status_ntf` vaut `false` en sortie d'usine, et le critère de ce jalon est
+ * qu'un appareil soit découvert sans que son propriétaire n'ait à toucher à sa
+ * configuration. Les autres intégrations s'en sortent en allant retourner ce
+ * réglage par HTTP ; cette porte-là nous est fermée, et c'est très bien ainsi.
+ *
+ * Mais ces topics ne sont pas muets pour autant : ils répondent. La
+ * documentation décrit, sous le nom de « MQTT control », deux commandes
+ * écoutées d'usine sur `<P>/command` — `enable_control` vaut `true` depuis la
+ * version 0.14.0 :
+ *
+ *   `announce`      → l'identité complète, sur `<P>/announce` ;
+ *   `status_update` → le statut complet de l'appareil, sur `<P>/status`.
+ *
+ * C'est une SECONDE PORTE, et elle sert exactement là où la première se ferme :
+ * un appareil dont le RPC est coupé — `enable_rpc` à `false` — ou qui reste
+ * muet pour une raison qu'on n'a pas, répond encore à celle-ci. L'adapter ne
+ * s'en sert qu'après le silence du RPC : c'est un secours, pas la voie
+ * normale, et rien n'en dépend.
  *
  * Tout l'état passe donc par `<P>/events/rpc`, avec des sélecteurs JSON
  * `params.<composant>.<champ>`. Le démon les évalue tels quels — le `:` de
@@ -92,12 +105,22 @@ if (!interface_exists('MqttbeAdapter')) {
  * exactement ce qu'il faut : un `NotifyStatus` est un DELTA, il ne porte que ce
  * qui a changé, et une valeur absente ne doit jamais effacer une mesure valable.
  *
- * LA LIMITE, DITE FRANCHEMENT : `events/rpc` n'est pas retenu. Au redémarrage
+ * DEUX LIMITES, DITES FRANCHEMENT.
+ *
+ * `events/rpc` n'est pas retenu. Au redémarrage
  * du démon, les commandes gardent la dernière valeur que Jeedom a enregistrée,
  * et la première notification venue les rafraîchit. Un appareil qui ne change
  * pas d'état de la semaine n'émet rien, et ses commandes affichent une valeur
  * datée. Aucun topic d'usine ne permet de faire mieux : `NotifyFullStatus`
  * n'est poussé sur MQTT que par les appareils sur pile.
+ *
+ * Et un `NotifyEvent` peut porter PLUSIEURS événements à la fois — la
+ * documentation dit « tous les événements survenus », et l'exemple officiel en
+ * montre deux, sur deux entrées différentes. Les commandes d'événement lisent
+ * le premier, parce qu'un sélecteur est un chemin par points et qu'un chemin ne
+ * sait pas parcourir un tableau. Deux appuis dans la même fenêtre d'agrégation
+ * donnent donc une seule remontée. Corriger cela demande d'étendre le langage
+ * de sélecteurs du noyau, pas d'écrire une exception ici.
  *
  * Aucune référence à Jeedom dans ce fichier : il est chargé par le démon, qui
  * tourne sans core.inc.php. Les décisions de présentation ne sont pas prises
@@ -142,22 +165,22 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * secondes sont généreuses pour un appareil sur secteur, et l'attente ne
      * coûte rien puisque rien n'est bloqué : on repose la question au tour
      * suivant. Trois tentatives, parce qu'un appareil peut manquer la première
-     * — sa file de publication est bornée à trente messages, et une seule
-     * publication pouvait être en vol avant le micrologiciel 1.4.0.
+     * — sa file de publication est bornée (trente messages depuis le
+     * micrologiciel 2.0.0, moins avant, la documentation ne dit pas combien), et
+     * une seule publication pouvait être en vol avant la version 1.4.0.
      */
     const DELAI_REPONSE = 5.0;
     const TENTATIVES    = 3;
 
     /*
-     * Délai avant de renoncer à une conversation et de conclure avec ce qu'on a.
+     * Délai d'attente de la seconde porte, celle du « MQTT control ».
      *
-     * Des Gen2 sur SECTEUR restent muets au RPC tout en publiant leur
-     * télémétrie : le silence ne prouve donc pas le sommeil, et il ne doit pas
-     * faire disparaître l'appareil de la liste. Passé ce délai, un modèle
-     * `probable` est émis avec ce que les notifications ont appris — c'est le
-     * même parti que la génération 1 prend au bout de vingt secondes sans info.
+     * Elle n'est frappée qu'après le silence du RPC, et un appareil qui écoute
+     * `<P>/command` répond aussi vite qu'au RPC. Dix secondes suffisent donc
+     * largement ; au-delà, on conclut avec ce qu'on a, et le modèle reste
+     * `probable` jusqu'au jour où l'appareil parlera.
      */
-    const DELAI_ABANDON = 90;
+    const DELAI_CONTROLE = 10.0;
 
     /* Demandes d'annonce diffusée, en secondes depuis l'activation. Même
      * raisonnement que pour la génération 1 : la première part parfois avant
@@ -281,6 +304,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             $filtres[] = $prefixe . 'online';
             $filtres[] = $prefixe . 'announce';
             $filtres[] = $prefixe . 'events/rpc';
+            /* La réponse à `status_update`. Elle n'arrive que si on l'a
+             * demandée, mais l'abonnement doit précéder la demande — et un
+             * abonnement posé par appareil, résilié par personne, ferait enfler
+             * le démon au rythme du parc. */
+            $filtres[] = $prefixe . 'status';
         }
         return array_values(array_unique($filtres));
     }
@@ -314,6 +342,10 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         }
         if ($dernier === 'announce') {
             $this->recoitAnnonce($_ctx, implode('/', $parties), $_payload);
+            return;
+        }
+        if ($dernier === 'status') {
+            $this->recoitStatutDemande($_ctx, implode('/', $parties), $_payload);
             return;
         }
         if ($dernier === 'online') {
@@ -375,8 +407,9 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
     /*
      * Publier `announce` sur `shellies/command`.
      *
-     * La documentation officielle donne ce topic pour fixe, non préfixé, et
-     * écouté d'usine par toutes les générations depuis la version 0.14.0. Aucune
+     * La documentation officielle donne ce topic pour fixe et non préfixé. Les
+     * Gen2+ l'écoutent d'usine depuis leur version 0.14.0 ; la génération 1 le
+     * fait aussi, par un mécanisme antérieur et sans rapport avec ce numéro. Aucune
      * intégration connue ne s'en sert, et un fil communautaire affirme même que
      * cela n'existe pas sur Gen2 : la documentation et la pratique se
      * contredisent, et sans matériel on ne peut pas trancher.
@@ -386,7 +419,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * cela ne répond pas, `online` et `events/rpc` découvrent le même parc.
      */
     public function demandeAnnonce($_ctx, $_motif = '') {
-        if ($_ctx->publish(self::DIFFUSION_COMMANDE, 'announce') !== true) {
+        if ($_ctx->publish(self::DIFFUSION_COMMANDE, 'announce', 1) !== true) {
             $_ctx->log('warning', 'Shelly Gen2+ : demande d\'annonce non partie, broker injoignable'
                 . ($_motif === '' ? '' : ' (' . $_motif . ')') . ' — reprise au prochain tour.');
             return false;
@@ -419,7 +452,82 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         if ($charge !== 'true' && $charge !== 'false') {
             return;
         }
-        $this->ouvreDossier($_ctx, $_prefixe, 'online');
+
+        /*
+         * UN `false` NE S'INTERROGE PAS.
+         *
+         * Ce message-là n'est pas publié par l'appareil : c'est son testament,
+         * publié par le BROKER quand la session tombe, et il est retenu. Un
+         * appareil débranché depuis six mois le rejoue donc à chaque abonnement,
+         * c'est-à-dire à chaque démarrage du démon. L'interroger coûterait trois
+         * appels RPC, trois délais d'expiration et une ligne d'avertissement,
+         * pour un appareil dont le broker vient précisément de dire qu'il n'est
+         * plus là.
+         *
+         * Aucun dossier n'est donc ouvert sur un `false`. S'il en existe un, la
+         * conversation est suspendue : elle repartira au `true` suivant, quand
+         * l'appareil reviendra. L'équipement Jeedom, lui, ne bouge pas — c'est
+         * le bloc `availability` qui le déclare hors ligne, et c'est son rôle.
+         */
+        if ($charge === 'false') {
+            $this->suspend($_ctx, $_prefixe);
+            return;
+        }
+
+        $dossier = $this->ouvreDossier($_ctx, $_prefixe, 'online');
+        if ($dossier !== null && !empty($dossier['absent'])) {
+            $this->reveille($_ctx, $dossier);
+        }
+    }
+
+    /*
+     * Suspendre la conversation d'un appareil que le broker déclare parti.
+     *
+     * Tout ce qu'on a appris de lui est gardé ; seule la parole s'arrête. La
+     * question en vol est oubliée, faute de quoi son expiration consommerait
+     * une tentative à l'aveugle, et les trois tentatives seraient brûlées avant
+     * même que l'appareil ne soit revenu.
+     */
+    private function suspend($_ctx, $_prefixe) {
+        $prefixe = trim((string) $_prefixe);
+        if ($prefixe === '' || !in_array($prefixe, $this->inventaire($_ctx), true)) {
+            return;
+        }
+        $dossier = $this->dossier($_ctx, $prefixe);
+        if (!empty($dossier['absent'])) {
+            return;
+        }
+        $this->oublieAttente($_ctx, $dossier);
+        $dossier['absent']  = true;
+        $dossier['attente'] = array();
+        $this->range($_ctx, $dossier);
+        $_ctx->log('debug', 'Shelly Gen2+ : ' . $prefixe . ' déclaré hors ligne par le broker — '
+            . 'conversation suspendue jusqu\'à son retour.');
+    }
+
+    /* Il a reparlé : la conversation reprend là où le testament l'avait
+     * laissée, et le compteur de tentatives repart à zéro — les questions
+     * perdues l'ont été parce qu'il était absent, pas parce qu'il refuse de
+     * répondre. */
+    private function reveille($_ctx, $_dossier) {
+        $_dossier['absent'] = false;
+        $_dossier['essais'] = 0;
+        $this->range($_ctx, $_dossier);
+        return $_dossier;
+    }
+
+    /* Retirer de la table des questions en vol celle que cette fiche attendait.
+     * Sans cela, la réponse tardive d'un appareil réanimerait une conversation
+     * qu'on a close, et la table ne se viderait qu'au plafond. */
+    private function oublieAttente($_ctx, $_dossier) {
+        $attente = isset($_dossier['attente']) && is_array($_dossier['attente'])
+            ? $_dossier['attente'] : array();
+        if (empty($attente)) {
+            return;
+        }
+        $attentes = $this->lit($_ctx, 'attentes');
+        unset($attentes[(string) $this->texte($attente, 'numero')]);
+        $this->ecrit($_ctx, 'attentes', $attentes);
     }
 
     /*
@@ -524,7 +632,8 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 . ' — il dit un appui passé, pas un appui qui vient d\'avoir lieu.');
             return;
         }
-        if ($methode !== 'NotifyStatus' && $methode !== 'NotifyFullStatus') {
+        if ($methode !== 'NotifyStatus' && $methode !== 'NotifyFullStatus'
+            && $methode !== 'NotifyEvent') {
             return;
         }
         $params = (isset($trame['params']) && is_array($trame['params'])) ? $trame['params'] : array();
@@ -537,10 +646,29 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         if ($dossier === null) {
             return;
         }
+        /*
+         * L'IDENTITÉ S'APPREND DE TOUTE TRAME, Y COMPRIS D'UN ÉVÉNEMENT.
+         *
+         * Un `NotifyEvent` porte `src` exactement comme un `NotifyStatus`, et
+         * il est parfois le seul à le porter : un i4 dont les quatre entrées
+         * sont en mode bouton ne publie aucun état d'entrée — il n'émet que des
+         * événements. Jeter la trame avant d'en avoir tiré le couple
+         * (identifiant, préfixe) reviendrait à ignorer le seul appareil qui
+         * parle.
+         */
         $identifiant = $this->texte($trame, 'src');
         if ($identifiant !== '') {
             $dossier['src'] = $identifiant;
             $this->nommePrefixe($_ctx, $identifiant, $_prefixe);
+        }
+        /* Il parle : il est donc là, quoi qu'en dise un testament retenu. */
+        $dossier['absent'] = false;
+
+        if ($methode === 'NotifyEvent') {
+            $dossier = $this->recoitEvenements($_ctx, $dossier, $params);
+            $dossier['vu'] = $this->maintenant($_ctx);
+            $this->range($_ctx, $dossier);
+            return;
         }
 
         /*
@@ -550,6 +678,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
          * composants que l'appareil a perdus : une sonde débranchée, un script
          * supprimé, un capteur BTHome qui ne répond plus.
          */
+        /* L'inventaire tel qu'il est AVANT cette trame. Comparé à celui
+         * d'après, il dit si la trame a ajouté ou retiré quelque chose — et
+         * c'est la seule chose qui justifie de reconstruire un modèle. */
+        $avant = $this->signatureInventaire($dossier);
+
         $observes = isset($dossier['observes']) && is_array($dossier['observes'])
             ? $dossier['observes'] : array();
         foreach ($params as $cle => $etat) {
@@ -566,8 +699,32 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             }
             $observes[$cle] = ($methode === 'NotifyFullStatus' || !isset($observes[$cle]))
                 ? $etat : array_merge($observes[$cle], $etat);
+            /*
+             * Et la même règle un cran plus bas, qui est d'ailleurs celle que la
+             * documentation énonce : « certaines CLÉS DE STATUT n'existent que
+             * dans certaines situations ; quand elles disparaissent, la charge
+             * utile les porte avec la valeur `null` ». Un `array_merge` les
+             * garderait telles quelles, et la garde qui décide de créer un canal
+             * est une simple présence de clé : un champ disparu fabriquerait une
+             * commande éternellement vide.
+             */
+            foreach ($observes[$cle] as $champ => $valeur) {
+                if ($valeur !== null) {
+                    continue;
+                }
+                unset($observes[$cle][$champ]);
+                /* Et le champ disparaît aussi de ce que la conversation RPC
+                 * avait rapporté : cet inventaire-là est une photographie, prise
+                 * une fois. L'appareil vient de dire que le champ n'existe plus
+                 * — une sonde débranchée, un tore retiré —, et le garder ferait
+                 * survivre la commande à la chose qu'elle mesurait. */
+                if (isset($dossier['composants'][$cle]['status'][$champ])) {
+                    unset($dossier['composants'][$cle]['status'][$champ]);
+                }
+            }
         }
         $dossier['observes'] = $observes;
+        $dossier = $this->surveilleRevision($_ctx, $dossier, $params);
         if ($methode === 'NotifyFullStatus') {
             /* Un inventaire complet, poussé spontanément : c'est tout ce qu'on
              * obtiendra jamais d'un appareil sur pile, et cela vaut une
@@ -579,7 +736,185 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
 
         if ($methode === 'NotifyFullStatus') {
             $this->emet($_ctx, $dossier);
+            return;
         }
+
+        /*
+         * UN DELTA QUI CHANGE L'INVENTAIRE VAUT UNE RÉÉMISSION.
+         *
+         * Un `NotifyStatus` ordinaire ne fait que porter des valeurs : les
+         * commandes existent déjà, le routeur les remplit, et reconstruire un
+         * modèle à chaque trame coûterait cher sur un compteur d'énergie qui en
+         * publie plusieurs par seconde. Mais la même trame peut aussi annoncer
+         * qu'un champ a DISPARU — une sonde débranchée, un tore retiré — ou
+         * qu'un composant est apparu. Le modèle n'est alors plus celui de
+         * l'appareil, et personne d'autre ne viendra le dire : la conversation
+         * est close, et rien ne la rouvre.
+         */
+        if ($this->signatureInventaire($dossier) !== $avant) {
+            $this->emet($_ctx, $dossier);
+        }
+    }
+
+    /* Les clés de l'inventaire, et elles seules : les composants, et le nom des
+     * champs de chacun. Les VALEURS n'y sont pas — elles changent sans cesse, et
+     * ce n'est pas ce qu'on surveille ici. */
+    private function signatureInventaire($_dossier) {
+        $signature = array();
+        foreach ($this->composantsDe($_dossier) as $cle => $composant) {
+            $champs = (isset($composant['status']) && is_array($composant['status']))
+                ? array_keys($composant['status']) : array();
+            sort($champs);
+            $signature[] = $cle . ':' . implode(',', $champs);
+        }
+        return implode('|', $signature);
+    }
+
+    /*
+     * Les événements d'un `NotifyEvent`, et ce qu'ils apprennent de l'appareil.
+     *
+     * Trois d'entre eux comptent ici, et ils disent tous la même chose :
+     * L'INVENTAIRE QU'ON A N'EST PLUS CELUI DE L'APPAREIL.
+     *
+     *   `config_changed`    — commun à tous les composants. Il part quand on
+     *                         renomme une sortie dans l'application Shelly,
+     *                         quand on change le profil d'un 2PM, quand on règle
+     *                         une entrée en bouton. Tout cela change les
+     *                         commandes qu'il faut créer.
+     *   `component_added`   — un composant virtuel, un capteur BTHome ou un
+     *   `component_removed`   script apparaît ou disparaît.
+     *
+     * Sans cette relecture, un équipement resterait figé sur l'inventaire du
+     * jour de sa découverte jusqu'à ce que quelqu'un pense à relancer la
+     * découverte à la main — c'est-à-dire, en pratique, pour toujours.
+     *
+     * Les autres événements ne sont pas traités ici : ils vont aux commandes
+     * d'événement, par la table de routage, et c'est Jeedom qui les voit.
+     */
+    private function recoitEvenements($_ctx, $_dossier, $_params) {
+        $evenements = (isset($_params['events']) && is_array($_params['events']))
+            ? $_params['events'] : array();
+        foreach ($evenements as $evenement) {
+            if (!is_array($evenement)) {
+                continue;
+            }
+            $nom = $this->texte($evenement, 'event');
+            if ($nom !== 'config_changed' && $nom !== 'component_added'
+                && $nom !== 'component_removed') {
+                continue;
+            }
+            return $this->reprendInventaire($_ctx, $_dossier,
+                $nom . ' sur ' . $this->texte($evenement, 'component'));
+        }
+        return $_dossier;
+    }
+
+    /*
+     * `sys.cfg_rev` : le même avertissement, par une autre voie.
+     *
+     * La révision de configuration accompagne chaque réponse de
+     * `Shelly.GetComponents` et reparaît dans les notifications de `sys`. Elle
+     * change à chaque modification de l'appareil. La surveiller rattrape le cas
+     * où l'événement `config_changed` s'est perdu — il n'est pas retenu, et un
+     * démon arrêté au mauvais moment ne le verra jamais.
+     */
+    private function surveilleRevision($_ctx, $_dossier, $_params) {
+        if (!isset($_params['sys']['cfg_rev']) || !is_numeric($_params['sys']['cfg_rev'])) {
+            return $_dossier;
+        }
+        $vue = (int) $_params['sys']['cfg_rev'];
+        $connue = isset($_dossier['cfg_rev']) ? (int) $_dossier['cfg_rev'] : 0;
+        if ($connue === 0 || $vue === $connue) {
+            $_dossier['cfg_rev'] = $vue;
+            return $_dossier;
+        }
+        $_dossier['cfg_rev'] = $vue;
+        return $this->reprendInventaire($_ctx, $_dossier,
+            'révision de configuration ' . $connue . ' → ' . $vue);
+    }
+
+    /*
+     * Reposer la question de l'inventaire, et elle seule.
+     *
+     * L'identité ne bouge pas — une MAC ne change pas parce qu'on a renommé une
+     * sortie —, donc la conversation reprend à l'énumération et non au début.
+     *
+     * Et l'inventaire connu n'est PAS effacé tout de suite : il l'est à
+     * l'arrivée de la première page. Entre les deux, l'appareil peut très bien
+     * ne jamais répondre ; l'effacer d'avance transformerait un équipement
+     * complet en équipement vide, pour cause de renommage d'une sortie.
+     */
+    private function reprendInventaire($_ctx, $_dossier, $_motif) {
+        if ($this->texte($_dossier, 'prefixe') === '') {
+            return $_dossier;
+        }
+        $this->oublieAttente($_ctx, $_dossier);
+        $_dossier['etape']      = 'composants';
+        $_dossier['offset']     = 0;
+        $_dossier['pages']      = 0;
+        $_dossier['essais']     = 0;
+        $_dossier['attente']    = array();
+        $_dossier['renouvelle'] = true;
+        $_ctx->log('info', 'Shelly Gen2+ : ' . $this->texte($_dossier, 'prefixe')
+            . ' a changé (' . $_motif . ') — son inventaire est redemandé.');
+        return $_dossier;
+    }
+
+    /*
+     * `<P>/status` : le statut complet, en réponse à `status_update`.
+     *
+     * La seconde porte de l'en-tête. Elle donne ce que `Shelly.GetStatus`
+     * aurait donné — les mêmes clés de composants — sans le RPC, donc sans
+     * dépendre de `enable_rpc`. Il lui manque la configuration, et donc les noms
+     * que le propriétaire a donnés à ses sorties : les commandes porteront leur
+     * numéro. C'est un secours, et un secours qui marche vaut mieux qu'une voie
+     * royale qui se tait.
+     *
+     * AUCUN DOSSIER NE S'OUVRE ICI. Le filtre `+/status` attrape n'importe quel
+     * topic de deux niveaux finissant par « status », et il y en a sur un broker
+     * partagé — `homeassistant/status` pour ne citer que celui-là. On ne lit
+     * donc ce message que pour un préfixe déjà repéré par un `online`, une
+     * annonce ou une notification.
+     */
+    private function recoitStatutDemande($_ctx, $_prefixe, $_payload) {
+        $prefixe = trim((string) $_prefixe);
+        if ($prefixe === '' || !in_array($prefixe, $this->inventaire($_ctx), true)) {
+            return;
+        }
+        $statut = $this->json($_ctx, $_payload, 'statut demandé');
+        if ($statut === null || empty($statut)) {
+            return;
+        }
+        $dossier = $this->dossier($_ctx, $prefixe);
+        $etape   = $this->texte($dossier, 'etape');
+
+        $dossier = $this->rangeStatuts($dossier, $statut, 'status');
+        if (empty($dossier['composants'])) {
+            return;
+        }
+        $dossier['absent'] = false;
+        $dossier['vu']     = $this->maintenant($_ctx);
+
+        /*
+         * Une conversation RPC en cours n'est pas interrompue pour autant.
+         *
+         * Ce message peut aussi arriver sans qu'on l'ait demandé — chez qui a
+         * mis `status_ntf` à `true`. Il enrichit alors l'inventaire, mais
+         * conclure sur lui ferait perdre la configuration que la conversation
+         * allait ramener, c'est-à-dire les noms des sorties.
+         */
+        if ($etape !== '' && $etape !== 'fini' && $etape !== 'controle') {
+            $this->range($_ctx, $dossier);
+            return;
+        }
+
+        $dossier['etape']   = 'fini';
+        $dossier['complet'] = true;
+        $dossier['attente'] = array();
+        $this->range($_ctx, $dossier);
+        $_ctx->log('info', 'Shelly Gen2+ : ' . $prefixe . ' a répondu à status_update — '
+            . count($dossier['composants']) . ' composants, sans passer par le RPC.');
+        $this->emet($_ctx, $dossier);
     }
 
     /*
@@ -597,7 +932,21 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         if ($trame === null) {
             return;
         }
-        if ($this->texte($trame, 'dst') !== $this->source) {
+        /*
+         * `dst` : vérifié quand il est là, jamais exigé.
+         *
+         * La page normative le donne pour obligatoire dans une réponse, et
+         * c'est bien ce que les appareils publient. Mais les exemples engendrés
+         * du site — ceux d'après lesquels un micrologiciel a pu être écrit — le
+         * montrent absent, et ce sont exactement ceux dont la clé s'appelle
+         * `params` au lieu de `result`. L'exiger ferait donc jeter en silence la
+         * réponse même que le repli plus bas prétend rattraper. La corrélation
+         * par le numéro de requête suffit à se l'approprier : ce numéro, nous
+         * seuls l'avons attribué. Un `dst` présent et étranger, lui, reste
+         * refusé — c'est la réponse d'un autre client.
+         */
+        $destinataire = $this->texte($trame, 'dst');
+        if ($destinataire !== '' && $destinataire !== $this->source) {
             return;
         }
         if (!isset($trame['id'])) {
@@ -622,6 +971,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         }
         $dossier = $this->dossier($_ctx, $prefixe);
         $dossier['vu'] = $this->maintenant($_ctx);
+        $dossier['absent'] = false;
         /* La question est répondue : sans cet oubli, la fiche resterait en
          * attente et la question SUIVANTE ne partirait jamais — la conversation
          * s'arrêterait sur son premier échange, silencieusement. */
@@ -690,18 +1040,30 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * cette méthode ».
      *
      * `Shelly.GetComponents` n'existe pas sur les micrologiciels antérieurs à
-     * la version 1, et le code rendu n'est pas dans la liste des erreurs
-     * communes : c'est un 404 accompagné de « No handler for … ». Le repli est
-     * `Shelly.GetStatus` puis `Shelly.GetConfig`, dont l'union des clés donne
-     * le même inventaire — au prix des deux plus grosses réponses de toute
-     * l'API, ce pour quoi il reste un repli et non la voie normale.
+     * la 1.2.0 — la documentation ne dit pas quand elle est apparue, mais des
+     * appareils en 1.0.3 la refusent, et l'intégration de référence la garde
+     * derrière la version du 13 février 2024. Le code rendu n'est pas dans la
+     * liste des erreurs communes : c'est un 404 accompagné de « No handler
+     * for … ». Le repli est `Shelly.GetStatus` puis `Shelly.GetConfig`, dont
+     * l'union des clés donne le même inventaire DES COMPOSANTS STATIQUES — les
+     * composants dynamiques (200 à 299 : virtuels, BTHome, scripts) ne sont
+     * énumérés que par `Shelly.GetComponents`. Il n'y a rien à perdre : ces
+     * composants-là n'existent pas sur les micrologiciels qui refusent la
+     * méthode. Le repli coûte les deux plus grosses réponses de toute l'API, ce
+     * pour quoi il reste un repli et non la voie normale.
+     *
+     * ET SEUL UN 404 LE DÉCLENCHE. Un `-103 INVALID ARGUMENT` ou un `-108` sont
+     * d'autres erreurs, qui veulent dire autre chose ; les traiter comme une
+     * méthode inconnue écrirait dans le journal une cause fausse, et c'est ce
+     * journal qu'on lira le jour où la découverte n'aboutira pas.
      */
     private function recoitErreur($_ctx, $_dossier, $_methode, $_erreur) {
         $code    = isset($_erreur['code']) ? (int) $_erreur['code'] : 0;
         $message = isset($_erreur['message']) ? (string) $_erreur['message'] : '';
         $prefixe = $this->texte($_dossier, 'prefixe');
+        $inconnue = ($code === 404 || stripos($message, 'no handler') !== false);
 
-        if ($_methode === 'Shelly.GetComponents') {
+        if ($_methode === 'Shelly.GetComponents' && $inconnue) {
             $_ctx->log('info', 'Shelly Gen2+ : ' . $prefixe . ' ne connaît pas Shelly.GetComponents ('
                 . $code . ' ' . $this->citation($message) . ') — repli sur GetStatus puis GetConfig.');
             $_dossier['etape']  = 'status';
@@ -712,7 +1074,8 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         }
 
         $_ctx->log('warning', 'Shelly Gen2+ : ' . $prefixe . ' a refusé ' . $_methode . ' ('
-            . $code . ' ' . $this->citation($message) . ').');
+            . $code . ' ' . $this->citation($message) . ') — ce n\'est pas « méthode inconnue », '
+            . 'et l\'inventaire restera ce qu\'on en sait.');
         /* On ne réessaie pas une méthode que l'appareil vient de refuser : la
          * réponse serait la même, et trois fois la même erreur dans le journal
          * n'apprend rien de plus que la première. On conclut avec ce qu'on a. */
@@ -746,6 +1109,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         if ($etape === '' || $etape === 'fini') {
             return;
         }
+        /* Le broker l'a déclaré parti : on ne parle pas à une session fermée.
+         * Son retour rouvrira la conversation, et pas une seconde avant. */
+        if (!empty($_dossier['absent'])) {
+            return;
+        }
 
         /*
          * UN APPAREIL SUR PILE NE S'INTERROGE PAS.
@@ -758,6 +1126,21 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
          * découverte. Son `NotifyFullStatus` dit déjà tout ce qu'on peut savoir.
          */
         if ($this->dortSurPile($_dossier)) {
+            $_dossier['etape'] = 'fini';
+            $this->range($_ctx, $_dossier);
+            $this->emet($_ctx, $_dossier);
+            return;
+        }
+
+        /* La seconde porte a été frappée : on attend sa réponse, puis on
+         * conclut. Aucune question ne part d'ici — `status_update` est déjà
+         * publié, et le répéter n'apprendrait rien. */
+        if ($etape === 'controle') {
+            if (($_maintenant - $this->nombre($_dossier, 'controle')) < self::DELAI_CONTROLE) {
+                return;
+            }
+            $_ctx->log('info', 'Shelly Gen2+ : ' . $prefixe . ' n\'a répondu ni au RPC ni à '
+                . 'status_update ; on conclut avec ce qui est connu.');
             $_dossier['etape'] = 'fini';
             $this->range($_ctx, $_dossier);
             $this->emet($_ctx, $_dossier);
@@ -782,21 +1165,23 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
 
         if ((int) $this->nombre($_dossier, 'essais') >= self::TENTATIVES) {
             /*
-             * Trois questions sans réponse. On conclut avec ce qu'on a.
+             * Trois questions sans réponse. Avant de conclure, la seconde porte.
              *
              * Le silence ne prouve rien : des Gen2 sur SECTEUR restent muets au
-             * RPC tout en publiant leur télémétrie. Faire disparaître
-             * l'appareil de la liste serait donc faux, et le laisser en
-             * conversation éternelle le ferait interroger à chaque battement.
-             * Ce qu'on a — l'identité, et ce que les notifications ont montré —
-             * donne un équipement `probable`, qui deviendra `certain` le jour
-             * où l'appareil répondra.
+             * RPC tout en publiant leur télémétrie, et un appareil dont
+             * `enable_rpc` a été coupé ne répondra jamais, quel que soit le
+             * nombre de tentatives. « MQTT control » ne dépend pas de ce
+             * réglage-là : c'est une autre porte, ouverte d'usine, et elle ne
+             * coûte que deux publications.
+             *
+             * Si elle reste close elle aussi, on conclut avec ce qu'on a —
+             * l'identité, et ce que les notifications ont montré. Cela donne un
+             * équipement `probable`, qui deviendra `certain` le jour où
+             * l'appareil parlera. Le faire disparaître de la liste serait faux ;
+             * le laisser en conversation éternelle le ferait interroger à chaque
+             * battement.
              */
-            $_ctx->log('info', 'Shelly Gen2+ : ' . $prefixe . ' n\'a pas répondu à ' . $etape
-                . ' après ' . self::TENTATIVES . ' tentatives ; on conclut avec ce qui est connu.');
-            $_dossier['etape'] = 'fini';
-            $this->range($_ctx, $_dossier);
-            $this->emet($_ctx, $_dossier);
+            $this->demandeParControle($_ctx, $_dossier, $etape);
             return;
         }
 
@@ -826,6 +1211,42 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
     }
 
     /*
+     * Frapper à la seconde porte : `announce` et `status_update` sur
+     * `<P>/command`.
+     *
+     * Les deux commandes du « MQTT control », écoutées d'usine — `enable_control`
+     * vaut `true` depuis la version 0.14.0 — et qui ne demandent RIEN à
+     * l'utilisateur : le critère de ce jalon est qu'un appareil soit découvert
+     * sans qu'on touche à sa configuration, et c'est bien le cas.
+     *
+     * `announce` ramène l'identité sur `<P>/announce`, topic auquel on est déjà
+     * abonné ; `status_update` ramène le statut complet sur `<P>/status`. Un
+     * appareil qui répond à l'une ou à l'autre devient un équipement complet
+     * sans qu'un seul appel RPC n'ait abouti.
+     *
+     * Rien n'en dépend : si les deux restent sans réponse, la conversation se
+     * conclut comme avant, avec ce qu'on sait.
+     */
+    private function demandeParControle($_ctx, $_dossier, $_etape) {
+        $prefixe = $this->texte($_dossier, 'prefixe');
+        $partie  = ($_ctx->publish($prefixe . '/command', 'announce', 1) === true);
+        $partie  = ($_ctx->publish($prefixe . '/command', 'status_update', 1) === true) && $partie;
+        if (!$partie) {
+            /* Broker injoignable : rien n'est consommé, on repassera. */
+            return false;
+        }
+        $_ctx->log('info', 'Shelly Gen2+ : ' . $prefixe . ' muet au RPC après ' . self::TENTATIVES
+            . ' tentatives sur ' . $_etape . ' — on lui demande de s\'annoncer et de publier son '
+            . 'statut, ce qui ne dépend pas du RPC.');
+        $_dossier['etape']    = 'controle';
+        $_dossier['controle'] = $this->maintenant($_ctx);
+        $_dossier['essais']   = 0;
+        $_dossier['attente']  = array();
+        $this->range($_ctx, $_dossier);
+        return true;
+    }
+
+    /*
      * Poser une question. La réponse arrivera — ou n'arrivera pas — sur
      * `<src>/rpc`, et c'est onTick qui s'apercevra du silence.
      */
@@ -838,7 +1259,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         }
         $charge = json_encode($requete, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-        if ($_ctx->publish($prefixe . '/rpc', $charge) !== true) {
+        /* QoS 1 : c'est le seul niveau que la documentation reconnaisse sur ce
+         * canal, et une question perdue coûte cinq secondes d'attente. Une
+         * question livrée deux fois ne coûte, elle, rien du tout — ce sont des
+         * lectures, et la corrélation par numéro range la seconde réponse. */
+        if ($_ctx->publish($prefixe . '/rpc', $charge, 1) !== true) {
             /* Le broker n'est pas là. Ni tentative consommée, ni attente
              * enregistrée : la même question repartira au tour suivant. */
             return false;
@@ -882,8 +1307,43 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         $total = isset($_resultat['total']) ? (int) $_resultat['total'] : 0;
         $debut = isset($_resultat['offset']) ? (int) $_resultat['offset'] : (int) $this->nombre($_dossier, 'offset');
 
+        /*
+         * Une révision de configuration qui change EN COURS DE PAGINATION.
+         *
+         * `cfg_rev` accompagne chaque page. S'il bouge entre deux — un composant
+         * virtuel ajouté, un script supprimé pendant qu'on énumère —, les index
+         * glissent : la page suivante ne reprend pas où la précédente s'est
+         * arrêtée, et l'inventaire assemblé mélange deux états sans qu'aucun
+         * doublon ne le trahisse. On recommence, c'est la seule issue honnête.
+         */
+        $revision = isset($_resultat['cfg_rev']) ? (int) $_resultat['cfg_rev'] : 0;
+        $connue   = isset($_dossier['cfg_rev']) ? (int) $_dossier['cfg_rev'] : 0;
+        if ($revision !== 0 && $connue !== 0 && $revision !== $connue
+            && (int) $this->nombre($_dossier, 'pages') > 0) {
+            $_ctx->log('info', 'Shelly Gen2+ : ' . $this->texte($_dossier, 'prefixe')
+                . ' a changé de configuration pendant l\'énumération (' . $connue . ' → '
+                . $revision . ') — on recommence, un inventaire à cheval sur deux états '
+                . 'ne vaut rien.');
+            $_dossier['cfg_rev']    = $revision;
+            $_dossier['offset']     = 0;
+            $_dossier['pages']      = 0;
+            $_dossier['etape']      = 'composants';
+            $_dossier['renouvelle'] = true;
+            return $_dossier;
+        }
+
         $connus = isset($_dossier['composants']) && is_array($_dossier['composants'])
             ? $_dossier['composants'] : array();
+        /*
+         * L'inventaire précédent ne s'efface qu'ICI, à l'arrivée de la première
+         * page du nouveau. Entre la demande et la réponse, l'appareil peut très
+         * bien se taire : l'effacer d'avance ferait d'un équipement complet un
+         * équipement vide, pour cause de renommage d'une sortie.
+         */
+        if (!empty($_dossier['renouvelle']) && $debut === 0) {
+            $connus = array();
+            unset($_dossier['renouvelle']);
+        }
         foreach ($composants as $composant) {
             if (!is_array($composant)) {
                 continue;
@@ -917,13 +1377,25 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             $_dossier['etape']  = 'composants';
             return $_dossier;
         }
-        if (count($composants) === 0 && $suivant < $total) {
+        /*
+         * On s'arrête, et il faut dire pourquoi : parce que tout est arrivé, ou
+         * parce qu'on a renoncé.
+         *
+         * Dans le second cas l'inventaire est amputé, et le publier comme
+         * `certain` serait un mensonge — c'est précisément ce que la confiance
+         * sert à ne pas faire. Un appareil resté `probable` sera repris à la
+         * prochaine occasion ; un appareil `certain` et incomplet ne le sera
+         * jamais.
+         */
+        if ($suivant < $total) {
             $_ctx->log('warning', 'Shelly Gen2+ : ' . $this->texte($_dossier, 'prefixe')
-                . ' annonce ' . $total . ' composants mais n\'en livre plus à partir de ' . $debut
-                . ' — pagination interrompue, l\'inventaire est incomplet.');
+                . ' annonce ' . $total . ' composants, ' . $suivant . ' sont arrivés'
+                . (count($composants) === 0 ? ' — il n\'en livre plus à partir de ' . $debut
+                                            : ' — plafond de pages atteint')
+                . ', l\'inventaire est incomplet.');
         }
         $_dossier['etape']   = 'fini';
-        $_dossier['complet'] = true;
+        $_dossier['complet'] = ($suivant >= $total);
         return $_dossier;
     }
 
@@ -1006,9 +1478,48 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         $_ctx->emit($modele);
         $_dossier['emis'] = array('fingerprint' => $empreinte, 'confidence' => $modele->confidence());
         $this->range($_ctx, $_dossier);
+        $this->avertitSiMuet($_ctx, $_dossier);
         $_ctx->log('info', 'Shelly Gen2+ : ' . $modele->name() . ' (' . $modele->uid() . ') — '
             . $modele->countChannels() . ' canaux, confiance ' . $modele->confidence() . '.');
         return true;
+    }
+
+    /*
+     * LE RÉGLAGE QUI REND UN ÉQUIPEMENT DÉFINITIVEMENT VIDE.
+     *
+     * Toutes les commandes d'information de cet adapter lisent
+     * `<P>/events/rpc`, et ce topic n'existe que si `rpc_ntf` vaut `true`.
+     * C'est sa valeur d'usine, mais elle se change — et un appareil dont son
+     * propriétaire l'a mise à `false` sera découvert normalement, créera toutes
+     * ses commandes, et aucune ne recevra jamais rien.
+     *
+     * Le plugin ne peut pas le corriger : il ne touche pas à la configuration
+     * d'un appareil. Il peut le DIRE, et c'est la seule chose qui distingue,
+     * dans un journal, une panne du plugin d'un réglage de l'appareil.
+     *
+     * Cette configuration-là n'arrive qu'avec `Shelly.GetComponents` ou
+     * `Shelly.GetConfig` : un appareil découvert par ses seules notifications
+     * ne la publie pas, et il n'y a alors rien à dire.
+     */
+    private function avertitSiMuet($_ctx, $_dossier) {
+        $composants = $this->composantsDe($_dossier);
+        if (!isset($composants['mqtt']['config']) || !is_array($composants['mqtt']['config'])) {
+            return;
+        }
+        $config  = $composants['mqtt']['config'];
+        $prefixe = $this->texte($_dossier, 'prefixe');
+        if (array_key_exists('rpc_ntf', $config) && $config['rpc_ntf'] === false) {
+            $_ctx->log('warning', 'Shelly Gen2+ : ' . $prefixe . ' a « rpc_ntf » à false — il ne '
+                . 'publie aucune notification, et les commandes de cet équipement resteront vides '
+                . 'tant que ce réglage n\'aura pas été remis à true DANS L\'APPAREIL. Le plugin ne '
+                . 'touche pas à sa configuration.');
+        }
+        $annonce = $this->texte($config, 'topic_prefix');
+        if ($annonce !== '' && $annonce !== $prefixe) {
+            $_ctx->log('warning', 'Shelly Gen2+ : ' . $prefixe . ' dit publier sous « '
+                . $this->citation($annonce) . ' ». Les topics de l\'équipement sont composés avec '
+                . 'le préfixe où il a été vu, et non avec celui qu\'il annonce.');
+        }
     }
 
     /* --------------------------------------------------------------------- */
@@ -1200,8 +1711,10 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 case 'light':
                 case 'rgb':
                 case 'rgbw':
+                case 'rgbcct':
                 case 'cct':
-                    $this->ajouteLumiere($_modele, $_prefixe, $cle, $type, $rang, $etiquette, $statut);
+                    $this->ajouteLumiere($_modele, $_prefixe, $cle, $type, $rang, $etiquette,
+                                         $statut, $config);
                     break;
                 case 'input':
                     $this->ajouteEntree($_modele, $_prefixe, $cle, $rang, $etiquette, $statut, $config);
@@ -1231,6 +1744,17 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 case 'illuminance':
                     $this->ajouteMesure($_modele, $_prefixe, $cle, 'lux', 'sensor.luminosity',
                                         'Luminosité' . $etiquette, 'lx', 0, $statut);
+                    /* `illumination` range le lux en trois mots — sombre,
+                     * pénombre, plein jour. C'est ce qu'on écrit dans un
+                     * scénario, là où un seuil en lux se règle par tâtonnements. */
+                    if (array_key_exists('illumination', $statut)) {
+                        $_modele->addChannel(new MqttbeChannel(array(
+                            'key'        => $this->racineCle($cle) . '.illumination',
+                            'capability' => 'generic.value',
+                            'name'       => 'Éclairement' . $etiquette,
+                            'source'     => $this->venantDe($_prefixe, $cle, 'illumination'),
+                        )));
+                    }
                     break;
                 case 'voltmeter':
                     $this->ajouteVoltmetre($_modele, $_prefixe, $cle, $etiquette, $statut, $config);
@@ -1240,11 +1764,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                     break;
                 case 'smoke':
                     $this->ajouteAlarme($_modele, $_prefixe, $cle, 'alarm.smoke',
-                                        'Fumée' . $etiquette, $statut);
+                                        'Fumée' . $etiquette, $etiquette, $statut, $rang);
                     break;
                 case 'flood':
                     $this->ajouteAlarme($_modele, $_prefixe, $cle, 'alarm.water_leak',
-                                        'Fuite d\'eau' . $etiquette, $statut);
+                                        'Fuite d\'eau' . $etiquette, $etiquette, $statut, $rang);
                     break;
                 case 'presencezone':
                     $this->ajoutePresence($_modele, $_prefixe, $cle, $etiquette, $statut);
@@ -1253,6 +1777,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 case 'number':
                 case 'text':
                 case 'enum':
+                case 'button':
                     $this->ajouteVirtuel($_modele, $_prefixe, $cle, $type, $etiquette, $statut, $config);
                     break;
                 case 'sys':
@@ -1262,12 +1787,24 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 case 'wifi':
                     $this->ajouteReseau($_modele, $_prefixe, $statut);
                     break;
+                case 'cloud':
+                    /* Un seul champ, et il dit s'il faut chercher la panne ici
+                     * ou chez Shelly le jour où l'application ne répond plus. */
+                    if (array_key_exists('connected', $statut)) {
+                        $_modele->addChannel(new MqttbeChannel(array(
+                            'key'        => 'cloud.connected',
+                            'capability' => 'generic.binary',
+                            'name'       => 'Cloud Shelly',
+                            'source'     => $this->venantDe($_prefixe, 'cloud', 'connected'),
+                        )));
+                    }
+                    break;
                 default:
-                    /* ble, cloud, mqtt, ws, script, schedule, knx, modbus,
-                     * group, et les composants d'interface au statut vide :
-                     * rien à en tirer qui mérite une commande. Les créer
-                     * remplirait le tableau de bord de réglages que personne ne
-                     * regarde depuis Jeedom. */
+                    /* ble, mqtt, ws, script, schedule, knx, modbus, group, et
+                     * les composants d'interface au statut vide : rien à en
+                     * tirer qui mérite une commande. Les créer remplirait le
+                     * tableau de bord de réglages que personne ne regarde depuis
+                     * Jeedom. */
                     break;
             }
         }
@@ -1315,27 +1852,44 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
     /*
      * Volet roulant.
      *
-     * La position sert d'état, comme pour la génération 1 : c'est elle que le
-     * widget de volet montre, et « ouvre » ou « ferme » ne se range dans aucune
-     * capacité du vocabulaire.
+     * UN VOLET NON CALIBRÉ N'A PAS DE POSITION, ET CE N'EST PAS UNE PANNE.
      *
-     * Le curseur de position, lui, ne se crée que si l'appareil sait où il en
-     * est. C'est `pos_control` qui le dit, et non la présence de `current_pos` :
-     * un volet non calibré publie un `current_pos` absent ou nul, et un curseur
-     * qui renverrait une position à un appareil incapable de s'y rendre ne
-     * ferait rien du tout, sans un mot pour l'expliquer.
+     * `current_pos` n'est présent que si le volet est calibré — la
+     * documentation le dit mot pour mot, et `pos_control` est le champ qui
+     * l'annonce. Faire de la position la seule information du composant
+     * condamnait donc un volet non calibré à une commande vide à vie, sans rien
+     * pour l'expliquer.
+     *
+     * D'où deux informations, et non une :
+     *   `state` — ouvert, fermé, en ouverture, en fermeture, arrêté, en cours
+     *      de calibration. Toujours présent, et il dit le MOUVEMENT, ce qu'une
+     *      position ne dit pas ;
+     *   la position en pourcents — quand, et seulement quand, elle existe.
+     *
+     * Le curseur suit la même règle, et pour la même raison : un appareil non
+     * calibré refuse `Cover.GoToPosition`.
      */
     private function ajouteVolet($_modele, $_prefixe, $_cle, $_rang, $_etiquette, $_statut, $_config) {
-        $racine  = $this->racineCle($_cle);
-        $cleEtat = $racine . '.state';
+        $racine   = $this->racineCle($_cle);
+        $calibre  = !empty($_statut['pos_control']);
+        $cleEtat  = $racine . '.status';
         $_modele->addChannel(new MqttbeChannel(array(
             'key'        => $cleEtat,
-            'capability' => 'cover.state',
-            'name'       => 'Position' . $_etiquette,
-            'unit'       => '%',
-            'source'     => $this->venantDe($_prefixe, $_cle, 'current_pos'),
-            'value'      => array('transform' => array('round' => 0)),
+            'capability' => 'generic.value',
+            'name'       => 'État' . $_etiquette,
+            'source'     => $this->venantDe($_prefixe, $_cle, 'state'),
         )));
+        if ($calibre) {
+            $cleEtat = $racine . '.state';
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => $cleEtat,
+                'capability' => 'cover.state',
+                'name'       => 'Position' . $_etiquette,
+                'unit'       => '%',
+                'source'     => $this->venantDe($_prefixe, $_cle, 'current_pos'),
+                'value'      => array('transform' => array('round' => 0)),
+            )));
+        }
         $actions = array(
             'open'  => array('cover.open',  'Ouvrir', 'Cover.Open'),
             'close' => array('cover.close', 'Fermer', 'Cover.Close'),
@@ -1350,7 +1904,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'links'      => array('state' => $cleEtat),
             )));
         }
-        if (!empty($_statut['pos_control'])) {
+        if ($calibre) {
             $_modele->addChannel(new MqttbeChannel(array(
                 'key'        => $racine . '.position',
                 'capability' => 'cover.position',
@@ -1376,7 +1930,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * pas de voie blanche, et lui en créer une donnerait un curseur qui ne
      * commande rien.
      */
-    private function ajouteLumiere($_modele, $_prefixe, $_cle, $_type, $_rang, $_etiquette, $_statut) {
+    private function ajouteLumiere($_modele, $_prefixe, $_cle, $_type, $_rang, $_etiquette, $_statut, $_config = array()) {
         $racine  = $this->racineCle($_cle);
         $cleEtat = $racine . '.state';
         $methode = $this->methodeDe($_type);
@@ -1458,10 +2012,9 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'name'       => 'Blanc' . $_etiquette,
                 'unit'       => '%',
                 'source'     => $this->venantDe($_prefixe, $_cle, 'white'),
-                /* La voie blanche se compte en 0 à 255, là où la luminosité se
-                 * compte en pourcents. Un curseur Jeedom va de 0 à 100 : sans
-                 * cette conversion, pousser le curseur à fond donnerait 100 sur
-                 * 255, soit une voie blanche au tiers de sa puissance. */
+                /* La voie blanche se compte de 0 à 255, là où la luminosité se
+                 * compte en pourcents. L'état est ramené en pourcents pour que
+                 * le tableau de bord montre la même grandeur partout. */
                 'value'      => array('transform' => array('scale' => 0.39215686274509803, 'round' => 0)),
             )));
             $_modele->addChannel(new MqttbeChannel(array(
@@ -1471,10 +2024,45 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'unit'       => '%',
                 'sink'       => $this->appelBrut($_prefixe, $methode . '.Set',
                                     '{"id":' . $_rang . ',"on":true,"white":#slider#}'),
+                /*
+                 * ET LA CONVERSION SE FAIT DANS LA CHARGE UTILE, PAS DANS LE
+                 * CURSEUR.
+                 *
+                 * Un curseur de lumière Jeedom va de 0 à 100 : c'est ce que son
+                 * widget suppose, et le borner à 255 le ferait afficher faux.
+                 * C'est donc la valeur publiée qui est multipliée par 2,55 —
+                 * sans quoi le curseur poussé à fond enverrait 100 sur 255, soit
+                 * une voie blanche au tiers de sa puissance, et l'état relisant
+                 * la même échelle, le curseur semblerait refuser de dépasser 39.
+                 */
+                'value'      => array('slider' => array(
+                    'scale' => 2.55, 'round' => 0, 'min' => 0, 'max' => 100,
+                )),
                 'links'      => array('state' => $cleBlanc),
             )));
         }
         if (array_key_exists('ct', $_statut)) {
+            /*
+             * LES BORNES D'UNE TEMPÉRATURE DE COULEUR VIENNENT DE L'APPAREIL.
+             *
+             * `ct` est en KELVINS, et l'appareil publie sa plage dans
+             * `config.ct_range`. Sans ces bornes, le curseur garde le 0 à 100 du
+             * cœur et n'envoie que des valeurs que l'appareil refuse : la
+             * commande existe, elle s'actionne, et il ne se passe jamais rien.
+             *
+             * À défaut de plage annoncée, 2700 à 6500 K — celle que la
+             * documentation donne par défaut, et celle d'à peu près toutes les
+             * ampoules blanc réglable. Une valeur hors de la plage réelle est
+             * refusée par l'appareil, ce qui reste préférable à un curseur dont
+             * AUCUNE position n'est acceptable.
+             */
+            $bornes = array(2700, 6500);
+            if (isset($_config['ct_range']) && is_array($_config['ct_range'])
+                && count($_config['ct_range']) === 2
+                && is_numeric($_config['ct_range'][0]) && is_numeric($_config['ct_range'][1])
+                && $_config['ct_range'][0] < $_config['ct_range'][1]) {
+                $bornes = array((int) $_config['ct_range'][0], (int) $_config['ct_range'][1]);
+            }
             $cleTemp = $racine . '.color_temp_state';
             $_modele->addChannel(new MqttbeChannel(array(
                 'key'        => $cleTemp,
@@ -1491,6 +2079,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'unit'       => 'K',
                 'sink'       => $this->appelBrut($_prefixe, $methode . '.Set',
                                     '{"id":' . $_rang . ',"on":true,"ct":#slider#}'),
+                'value'      => array('slider' => array('min' => $bornes[0], 'max' => $bornes[1])),
                 'links'      => array('state' => $cleTemp),
             )));
         }
@@ -1513,6 +2102,19 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      */
     private function ajouteEntree($_modele, $_prefixe, $_cle, $_rang, $_etiquette, $_statut, $_config) {
         $racine = $this->racineCle($_cle);
+        /*
+         * Une entrée désactivée ne publie que des `null`.
+         *
+         * `enable: false` est un réglage ordinaire — on coupe l'entrée d'un
+         * appareil dont le bouton n'est pas câblé. La documentation dit alors :
+         * « reports status properties as null ». Lui créer des commandes
+         * donnerait exactement ce que cet adapter s'interdit ailleurs : des
+         * commandes éternellement vides, que leur propriétaire prend pour une
+         * panne du plugin.
+         */
+        if (array_key_exists('enable', $_config) && $_config['enable'] === false) {
+            return;
+        }
         $mode   = $this->texte($_config, 'type');
         if ($mode === '') {
             /* Sans configuration — repli `Shelly.GetStatus` seul, ou trame de
@@ -1537,6 +2139,17 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'source'     => $this->venantDe($_prefixe, $_cle, 'percent'),
                 'value'      => array('transform' => array('round' => 1)),
             )));
+            /*
+             * Et la MESURE MÉTIER, quand son propriétaire en a réglé une.
+             *
+             * C'est le même mécanisme que le voltmètre : une expression dans la
+             * configuration convertit les pourcents en litres, en bars ou en
+             * degrés, et `config.xpercent.unit` en donne l'unité. Le champ
+             * n'existe que si l'expression ET l'unité sont renseignées — donc
+             * s'il est là, c'est qu'on le veut, et c'est lui qu'on veut voir.
+             */
+            $this->ajouteMesureMetier($_modele, $_prefixe, $_cle, 'xpercent', 'xpercent',
+                                      'Mesure' . $_etiquette, $_statut, $_config);
             return;
         }
         if ($mode === 'count') {
@@ -1546,6 +2159,23 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'name'       => 'Comptage' . $_etiquette,
                 'source'     => $this->venantDe($_prefixe, $_cle, 'counts.total'),
             )));
+            /* La fréquence des impulsions : un compteur d'eau ou de gaz la rend
+             * lisible en débit instantané, là où un total n'apprend rien avant
+             * la fin du mois. */
+            if (array_key_exists('freq', $_statut)) {
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => $racine . '.freq',
+                    'capability' => 'power.frequency',
+                    'name'       => 'Fréquence' . $_etiquette,
+                    'unit'       => 'Hz',
+                    'source'     => $this->venantDe($_prefixe, $_cle, 'freq'),
+                    'value'      => array('transform' => array('round' => 2)),
+                )));
+            }
+            $this->ajouteMesureMetier($_modele, $_prefixe, $_cle, 'counts.xtotal', 'xcounts',
+                                      'Comptage converti' . $_etiquette, $_statut, $_config);
+            $this->ajouteMesureMetier($_modele, $_prefixe, $_cle, 'xfreq', 'xfreq',
+                                      'Fréquence convertie' . $_etiquette, $_statut, $_config);
             return;
         }
         if ($mode === 'switch') {
@@ -1557,6 +2187,44 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             )));
         }
         /* Mode bouton : rien ici. Voir ajouteEvenements(). */
+    }
+
+    /*
+     * Une valeur convertie par l'appareil dans l'unité de son propriétaire.
+     *
+     * Les Gen2 offrent partout le même mécanisme : une expression réglée dans
+     * la configuration transforme une grandeur brute — des volts, des pourcents,
+     * des impulsions — en ce que la mesure représente vraiment, et la
+     * configuration porte l'unité correspondante. Le champ converti n'apparaît
+     * dans le statut que si l'expression et l'unité sont toutes deux réglées.
+     *
+     * Le chemin du champ peut descendre d'un cran (`counts.xtotal`) : la clé de
+     * la commande ne garde alors que sa dernière partie.
+     */
+    private function ajouteMesureMetier($_modele, $_prefixe, $_cle, $_chemin, $_reglage, $_nom, $_statut, $_config) {
+        $morceaux = explode('.', $_chemin);
+        $valeur   = $_statut;
+        foreach ($morceaux as $morceau) {
+            if (!is_array($valeur) || !array_key_exists($morceau, $valeur)) {
+                return;
+            }
+            $valeur = $valeur[$morceau];
+        }
+        if ($valeur === null) {
+            return;
+        }
+        $unite = '';
+        if (isset($_config[$_reglage]) && is_array($_config[$_reglage])) {
+            $unite = $this->texte($_config[$_reglage], 'unit');
+        }
+        $_modele->addChannel(new MqttbeChannel(array(
+            'key'        => $this->racineCle($_cle) . '.' . end($morceaux),
+            'capability' => 'generic.numeric',
+            'name'       => $_nom,
+            'unit'       => $unite,
+            'source'     => $this->venantDe($_prefixe, $_cle, $_chemin),
+            'value'      => array('transform' => array('round' => 2)),
+        )));
     }
 
     /*
@@ -1801,21 +2469,8 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
     private function ajouteVoltmetre($_modele, $_prefixe, $_cle, $_etiquette, $_statut, $_config) {
         $this->ajouteMesure($_modele, $_prefixe, $_cle, 'voltage', 'power.voltage',
                             'Tension' . $_etiquette, 'V', 2, $_statut);
-        if (!array_key_exists('xvoltage', $_statut)) {
-            return;
-        }
-        $unite = '';
-        if (isset($_config['xvoltage']) && is_array($_config['xvoltage'])) {
-            $unite = $this->texte($_config['xvoltage'], 'unit');
-        }
-        $_modele->addChannel(new MqttbeChannel(array(
-            'key'        => $this->racineCle($_cle) . '.xvoltage',
-            'capability' => 'generic.numeric',
-            'name'       => 'Mesure' . $_etiquette,
-            'unit'       => $unite,
-            'source'     => $this->venantDe($_prefixe, $_cle, 'xvoltage'),
-            'value'      => array('transform' => array('round' => 2)),
-        )));
+        $this->ajouteMesureMetier($_modele, $_prefixe, $_cle, 'xvoltage', 'xvoltage',
+                                  'Mesure' . $_etiquette, $_statut, $_config);
     }
 
     /*
@@ -1860,17 +2515,44 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         }
     }
 
-    /* Une alarme : un booléen, et le widget qui va avec. */
-    private function ajouteAlarme($_modele, $_prefixe, $_cle, $_capacite, $_nom, $_statut) {
-        if (!array_key_exists('alarm', $_statut)) {
-            return;
+    /*
+     * Une alarme : le booléen qui déclenche, et ce qu'on peut faire quand il
+     * hurle.
+     *
+     * `mute` dit si la sirène a été fait taire — une alarme silencieuse reste
+     * une alarme, et confondre les deux ferait croire au calme. Et le détecteur
+     * de fumée expose une écriture, une seule : `Smoke.Mute`. Une sirène qu'on
+     * ne peut pas couper depuis son tableau de bord à trois heures du matin est
+     * une lacune, pas un raffinement. Le détecteur de fuite, lui, n'a pas
+     * d'équivalent : sa seule écriture est un réglage de configuration, que ce
+     * plugin ne touche pas.
+     */
+    private function ajouteAlarme($_modele, $_prefixe, $_cle, $_capacite, $_nom, $_etiquette, $_statut, $_rang) {
+        $racine = $this->racineCle($_cle);
+        if (array_key_exists('alarm', $_statut)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => $racine . '.alarm',
+                'capability' => $_capacite,
+                'name'       => $_nom,
+                'source'     => $this->venantDe($_prefixe, $_cle, 'alarm'),
+            )));
         }
-        $_modele->addChannel(new MqttbeChannel(array(
-            'key'        => $this->racineCle($_cle) . '.alarm',
-            'capability' => $_capacite,
-            'name'       => $_nom,
-            'source'     => $this->venantDe($_prefixe, $_cle, 'alarm'),
-        )));
+        if (array_key_exists('mute', $_statut)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => $racine . '.mute',
+                'capability' => 'generic.binary',
+                'name'       => 'Alarme silencieuse' . $_etiquette,
+                'source'     => $this->venantDe($_prefixe, $_cle, 'mute'),
+            )));
+        }
+        if ($this->typeDe($_cle) === 'smoke') {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => $racine . '.silence',
+                'capability' => 'generic.action',
+                'name'       => 'Faire taire' . $_etiquette,
+                'sink'       => $this->appel($_prefixe, 'Smoke.Mute', array('id' => $_rang)),
+            )));
+        }
     }
 
     /*
@@ -1911,11 +2593,47 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * créer une action donnerait un bouton qui ne commande rien.
      */
     private function ajouteVirtuel($_modele, $_prefixe, $_cle, $_type, $_etiquette, $_statut, $_config) {
+        $racine = $this->racineCle($_cle);
+        $rang   = $this->rangDe($_cle);
+
+        /*
+         * LE BOUTON VIRTUEL N'A PAS D'ÉTAT, ET C'EST TOUT L'INTÉRÊT.
+         *
+         * Son statut est vide — la documentation l'écrit en toutes lettres. On
+         * ne le crée pas pour lire quelque chose : on le crée pour l'actionner
+         * de l'extérieur, et un script de l'appareil réagit. C'est le seul
+         * composant virtuel qui soit une action pure, et la garde « pas de
+         * valeur, pas de commande » l'écartait pour cette raison même.
+         *
+         * `Button.Trigger` exige un `event`, et quatre valeurs sont
+         * documentées. Deux commandes suffisent : l'appui court, qui est ce
+         * qu'on veut neuf fois sur dix, et l'appui long, qui sert de second
+         * geste. Les quatre encombreraient le tableau de bord pour un bouton
+         * qui n'en demande pas tant.
+         *
+         * Le nom du paramètre est bien `event` : `event_type` est celui
+         * d'`Input.Trigger`, qui est un autre appel.
+         */
+        if ($_type === 'button') {
+            $nomBouton = $this->texte($_config, 'name');
+            if ($nomBouton === '') {
+                $nomBouton = 'Bouton ' . $rang;
+            }
+            foreach (array('single_push' => 'Appuyer', 'long_push' => 'Appui long') as $evenement => $verbe) {
+                $_modele->addChannel(new MqttbeChannel(array(
+                    'key'        => $racine . '.' . $evenement,
+                    'capability' => 'generic.action',
+                    'name'       => $verbe . ' ' . $nomBouton,
+                    'sink'       => $this->appel($_prefixe, 'Button.Trigger',
+                                                 array('id' => $rang, 'event' => $evenement)),
+                )));
+            }
+            return;
+        }
+
         if (!array_key_exists('value', $_statut)) {
             return;
         }
-        $racine = $this->racineCle($_cle);
-        $rang   = $this->rangDe($_cle);
         /*
          * UN VIRTUEL PORTE TOUJOURS SON NOM, lui.
          *
@@ -1934,6 +2652,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         $_etiquette = ' ' . $nom;
         $ui     = (isset($_config['meta']['ui']) && is_array($_config['meta']['ui']))
             ? $_config['meta']['ui'] : array();
+        /* `view` valant « label » signifie AFFICHAGE SEUL. La documentation ne
+         * publie nulle part la liste des valeurs possibles ; celle-ci est lue
+         * dans ses exemples, et c'est la prudence qui décide du sens du doute :
+         * une commande de lecture en trop ne dérange personne, une commande
+         * d'écriture qui ne commande rien passe pour une panne. */
         $lectureSeule = ($this->texte($ui, 'view') === 'label');
         $unite  = $this->texte($ui, 'unit');
 
@@ -1971,6 +2694,22 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             return;
         }
         if ($_type === 'number') {
+            /*
+             * LES BORNES D'UN NOMBRE VIRTUEL SONT CELLES QU'ON LUI A DONNÉES.
+             *
+             * `min` et `max` sont des champs de configuration de premier niveau
+             * — à la différence de l'unité, qui vit dans `meta.ui`. Un nombre
+             * réglé de 15 à 25 pour une consigne, ou de 0 à 1000 pour des
+             * litres, devient sans eux un curseur 0-100 qui ne peut pas
+             * atteindre les valeurs pour lesquelles il a été créé.
+             */
+            $curseur = array();
+            if (isset($_config['min']) && is_numeric($_config['min'])) {
+                $curseur['min'] = 0 + $_config['min'];
+            }
+            if (isset($_config['max']) && is_numeric($_config['max'])) {
+                $curseur['max'] = 0 + $_config['max'];
+            }
             $_modele->addChannel(new MqttbeChannel(array(
                 'key'        => $racine . '.set',
                 'capability' => 'generic.slider',
@@ -1978,6 +2717,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'unit'       => $unite,
                 'sink'       => $this->appelBrut($_prefixe, $methode,
                                     '{"id":' . $rang . ',"value":#slider#}'),
+                'value'      => empty($curseur) ? array() : array('slider' => $curseur),
                 'links'      => array('state' => $cleEtat),
             )));
             return;
@@ -1987,11 +2727,16 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'key'        => $racine . '.set',
                 'capability' => 'generic.text',
                 'name'       => 'Écrire' . $_etiquette,
-                /* `#message#` est substitué par le texte saisi. Les guillemets
-                 * l'entourent ici, parce que `value` attend une chaîne — à la
-                 * différence d'un curseur, qui attend un nombre. */
+                /*
+                 * `#message_json#` et non `#message#` : le texte saisi est
+                 * substitué DÉJÀ entouré de guillemets et échappé. Écrire
+                 * `"value":"#message#"` marche tant que personne ne tape de
+                 * guillemet, de barre oblique inverse ou de retour à la ligne —
+                 * après quoi la charge utile n'est plus du JSON, l'appareil la
+                 * rejette sans un mot, et la commande passe pour cassée.
+                 */
                 'sink'       => $this->appelBrut($_prefixe, $methode,
-                                    '{"id":' . $rang . ',"value":"#message#"}'),
+                                    '{"id":' . $rang . ',"value":#message_json#}'),
                 'links'      => array('state' => $cleEtat),
             )));
         }
@@ -2035,7 +2780,17 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'source'     => $this->venantDe($_prefixe, 'sys', 'ram_free'),
             )));
         }
-        if (isset($_statut['available_updates'])) {
+        /*
+         * « Mise à jour disponible » ne se crée que s'il y en a une.
+         *
+         * `available_updates` vaut `{}` quand l'appareil est à jour : le
+         * sélecteur rend alors `null`, que le routeur laisse tomber sans rien
+         * écrire — et la commande continuerait d'annoncer, pour toujours, la
+         * version qui vient justement d'être installée. Le modèle étant
+         * reconstruit à chaque notification, la commande réapparaîtra le jour où
+         * une mise à jour sortira, et disparaîtra une fois posée.
+         */
+        if (isset($_statut['available_updates']['stable']['version'])) {
             $_modele->addChannel(new MqttbeChannel(array(
                 'key'        => 'sys.update',
                 'capability' => 'generic.value',
@@ -2055,6 +2810,17 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * encombrerait le tableau de bord — mais c'est la première chose qu'on
      * regarde quand un appareil devient capricieux. */
     private function ajouteReseau($_modele, $_prefixe, $_statut) {
+        /* L'état de la liaison, en quatre mots documentés — `disconnected`,
+         * `connecting`, `connected`, `got ip`. Un appareil qui va et vient le
+         * dit ici avant que le RSSI n'ait l'air suspect. */
+        if (array_key_exists('status', $_statut)) {
+            $_modele->addChannel(new MqttbeChannel(array(
+                'key'        => 'wifi.status',
+                'capability' => 'generic.value',
+                'name'       => 'État Wi-Fi',
+                'source'     => $this->venantDe($_prefixe, 'wifi', 'status'),
+            )));
+        }
         if (!array_key_exists('rssi', $_statut)) {
             return;
         }
@@ -2102,7 +2868,14 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'topic'    => $_prefixe . '/events/rpc',
                 'selector' => array('type' => 'json', 'path' => 'params.events.0.event'),
             ),
-            'value'      => array('repeat' => array('mode' => 'always')),
+            /* `always` parce que deux appuis courts de suite donnent deux fois
+             * « single_push », et qu'en mode `onchange` le second serait avalé.
+             * `ignore_retained` parce que c'est le revers exact de `always` :
+             * une commande qui réagit à tout réagirait aussi à ce que le broker
+             * rejoue au démarrage du démon. `events/rpc` n'est pas censé être
+             * retenu, mais un pont mal réglé suffit, et l'accident est alors
+             * indétectable — le scénario part, et rien n'en donne la cause. */
+            'value'      => array('repeat' => array('mode' => 'always', 'ignore_retained' => true)),
         )));
         $_modele->addChannel(new MqttbeChannel(array(
             'key'        => 'event.component',
@@ -2112,7 +2885,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'topic'    => $_prefixe . '/events/rpc',
                 'selector' => array('type' => 'json', 'path' => 'params.events.0.component'),
             ),
-            'value'      => array('repeat' => array('mode' => 'always')),
+            'value'      => array('repeat' => array('mode' => 'always', 'ignore_retained' => true)),
         )));
     }
 
@@ -2156,9 +2929,34 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
         return array(
             'topic'   => $_prefixe . '/rpc',
             'payload' => json_encode($charge, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-            'qos'     => 0,
+            'qos'     => $this->qosDe($_methode),
             'retain'  => false,
         );
+    }
+
+    /*
+     * LE NIVEAU DE SERVICE D'UNE ACTION, ET POURQUOI IL N'EST PAS LE MÊME
+     * PARTOUT.
+     *
+     * La documentation ne connaît qu'un niveau sur ce canal : « the supported
+     * quality of service level is 1 ». En QoS 0, un appui sur un bouton se perd
+     * sans un mot dès que la liaison hoquette — c'est « au plus une fois », et
+     * l'utilisateur n'a que l'absence de réaction de sa lampe pour l'apprendre.
+     *
+     * Mais « au moins une fois » veut dire qu'un message peut être livré DEUX
+     * fois, et deux appels ne se valent pas là-dessus. `Switch.Set{on:true}`
+     * rejoué laisse la sortie allumée ; `Switch.Toggle` rejoué l'éteint, et
+     * `Shelly.Reboot` rejoué redémarre une seconde fois un appareil qui vient
+     * tout juste de revenir. Ces deux-là restent donc en QoS 0 : mieux vaut un
+     * ordre perdu, que l'utilisateur voit et refait, qu'un ordre exécuté deux
+     * fois, qu'il ne comprendra jamais.
+     */
+    private function qosDe($_methode) {
+        $methode = (string) $_methode;
+        if (substr($methode, -7) === '.Toggle' || $methode === 'Shelly.Reboot') {
+            return 0;
+        }
+        return 1;
     }
 
     /*
@@ -2175,7 +2973,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             'topic'   => $_prefixe . '/rpc',
             'payload' => '{"id":0,"src":"' . self::SRC_ACTIONS . '","method":"' . $_methode
                        . '","params":' . $_params . '}',
-            'qos'     => 0,
+            'qos'     => $this->qosDe($_methode),
             'retain'  => false,
         );
     }
@@ -2287,14 +3085,24 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
     /*
      * Un appareil qui dort.
      *
-     * Deux indices, et le second est le plus sûr : le catalogue le dit — six
-     * modèles seulement —, ou l'appareil porte un composant `devicepower`, qui
-     * n'existe que sur un appareil alimenté par pile. Le second l'emporte
-     * toujours, parce qu'il vient de l'appareil et non d'une liste écrite à la
-     * main ; le premier sert avant qu'on n'ait le moindre inventaire, c'est-à-
-     * dire au moment précis où il faut décider de ne pas l'interroger.
+     * Trois indices, et les deux premiers viennent de l'appareil lui-même :
+     *
+     *   `sys.wakeup_period` — la période de réveil, en secondes. Un appareil
+     *      sur secteur ne dort pas et la publie à zéro, ou pas du tout. C'est
+     *      le critère le plus sûr, et c'est celui de l'intégration de
+     *      référence ;
+     *   un composant `devicepower` — il n'existe que sur un appareil alimenté
+     *      par pile ;
+     *   le catalogue — six modèles, écrits à la main. Il ne sert qu'avant
+     *      qu'on n'ait le moindre inventaire, c'est-à-dire au moment précis où
+     *      il faut décider de ne pas interroger l'appareil.
      */
     private function surPile($_code, $_composants) {
+        if (isset($_composants['sys']['status']['wakeup_period'])
+            && is_numeric($_composants['sys']['status']['wakeup_period'])
+            && (float) $_composants['sys']['status']['wakeup_period'] > 0) {
+            return true;
+        }
         foreach (array_keys($_composants) as $cle) {
             if ($this->typeDe($cle) === 'devicepower') {
                 return true;
@@ -2523,7 +3331,7 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
      * minuscules, la méthode ne l'est pas. */
     private function methodeDe($_type) {
         $particuliers = array(
-            'rgb' => 'RGB', 'rgbw' => 'RGBW', 'cct' => 'CCT',
+            'rgb' => 'RGB', 'rgbw' => 'RGBW', 'cct' => 'CCT', 'rgbcct' => 'RGBCCT',
             'pm1' => 'PM1', 'em' => 'EM', 'em1' => 'EM1',
             'emdata' => 'EMData', 'em1data' => 'EM1Data',
         );

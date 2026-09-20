@@ -17,7 +17,7 @@ et les critères d'acceptation.
 | 0 | Socle du dépôt, conformité Jeedom, intégration continue | fait |
 | 1 | Client MQTT, démon, page de configuration, test de connexion | fait |
 | 2 | Modèle de périphérique, capacités, fabrique, routage, équipements manuels | fait |
-| 3 | Shelly Gen2 / Gen3 / Gen4 | repoussé, faute de matériel |
+| 3 | Shelly Gen2 / Gen3 / Gen4 | éprouvé sur Gen3 ; volets et lumières non éprouvés |
 | 4 | Shelly Gen1 | fait |
 | 4 bis | Passerelles OpenMQTTGateway et balises Bluetooth | fait, hors plan initial |
 | 5 | Explorateur de topics, adoption, reprise en main | file d'adoption faite, explorateur à venir |
@@ -29,13 +29,31 @@ Gen1 réel : 22 appareils, 198 commandes créées sans saisie. Le jalon 4 bis l'
 été sur des captures anonymisées d'un parc de cinq passerelles — dont une au
 préfixe dupliqué — rejouées hors ligne par `tests/check-omg.php`.
 
-**Le jalon 3 est repoussé volontairement**, et le 4 traité avant lui. La
-découverte des Shelly Gen2+ repose entièrement sur une conversation RPC avec
-l'appareil ; aucun Gen2, Gen3 ou Gen4 n'était joignable au moment de l'écrire —
-l'un hors tension, l'autre sur pile et endormi. On peut écrire l'adapter, on ne
-peut pas le prouver, et son critère d'acceptation est précisément qu'un Shelly
-moderne apparaisse tout seul. Le parc Gen1, lui, est nombreux et vivant, donc
-entièrement vérifiable : il est passé devant.
+**Le jalon 3 a été écrit sans matériel, et cela s'entend.** Aucun Gen2, Gen3 ou
+Gen4 n'était joignable — l'un hors tension, l'autre sur pile et endormi — et le
+4 a donc été traité avant lui, le parc Gen1 étant nombreux, vivant et
+entièrement vérifiable. L'adapter Gen2+ existe pourtant, écrit d'après la
+documentation officielle du constructeur, puis **relu ligne par ligne contre
+elle une seconde fois** : transport MQTT, méthodes d'énumération, composants
+champ par champ, notifications. Cette relecture a trouvé ce que trente contrôles
+hors ligne ne pouvaient pas trouver — ils partageaient les hypothèses de
+l'adapter —, dont deux commandes que l'appareil aurait refusées et une voie de
+découverte entière déclarée impossible à tort.
+
+**Puis du matériel est apparu.** Trois Shelly 1 Mini Gen3 en micrologiciel 2.0.0
+se sont révélés joignables sur le broker de production — ils y étaient depuis le
+début, personne ne les avait cherchés. Ils ont été découverts seuls, sans qu'un
+réglage ne soit touché chez eux, avec quinze commandes chacun. Leur conversation
+est conservée, anonymisée, dans `tests/fixtures/shelly/gen2/capture-reelle.json`
+et rejouée octet pour octet par le banc d'essai : **c'est la seule capture du
+dépôt dont on puisse dire qu'un Shelly réel répond ainsi.** Elle a notamment
+montré que `Shelly.GetComponents` livre onze composants sur quatorze à la
+première page — ce qu'aucune lecture de la documentation ne laissait deviner.
+
+Le critère d'acceptation est donc atteint **pour ce modèle**. Volets, lumières,
+compteurs d'énergie et capteurs sur pile éveillés restent écrits d'après la
+documentation seule : `docs/ROADMAP.md` dit ce qui est éprouvé et ce qui ne
+l'est pas.
 
 **Le jalon 4 bis n'était prévu nulle part.** OpenMQTTGateway n'apparaissait
 qu'au détour du critère d'acceptation du jalon 8, comme un sous-produit du Home
@@ -72,7 +90,7 @@ resources/mqttbed/  le démon, processus autonome
   core/             boucle, journal, configuration, liaison Jeedom, routeur
   mqtt/             interface de transport et son implémentation
   discovery/        moteur de découverte, modèle, canaux, sondes de nom
-    adapters/       ShellyGen1.php, OpenMqttGateway.php
+    adapters/       ShellyGen1.php, ShellyGen2.php, OpenMqttGateway.php
   lib/              php-mqtt/client, psr/log, myclabs/php-enum (MIT, figés)
 tests/              contrôles hors ligne et banc de routage
 docs/               ARCHITECTURE.md, ROADMAP.md, documentation fr_FR et en_US

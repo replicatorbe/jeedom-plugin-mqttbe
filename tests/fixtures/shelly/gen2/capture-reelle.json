@@ -1,0 +1,616 @@
+{
+  "comment": "CAPTURE REELLE, prise le 20 septembre 2026 sur un Shelly 1 Mini Gen3 (S3SW-001X8EU, micrologiciel 2.0.0) relie a un Mosquitto, puis anonymisee : MAC ramenee dans la plage fabriquee A8B0C1xxxxxx, SSID « reseau-essai », adresses en 192.0.2.x reservees a la documentation, noms d'appareil et de script neutralises. Tout le reste est l'octet que l'appareil a publie : ordre des cles, valeurs nulles, pagination — la premiere page rend 11 composants sur 14 et la seconde les trois derniers, ce qu'aucune lecture de la documentation ne permettait de deviner. C'est la seule capture du depot dont on puisse dire qu'un Shelly reel repond ainsi ; les autres sont reconstituees d'apres la documentation, et encodent la comprehension qu'on en avait.",
+  "appareil": {
+    "deviceinfo": {
+      "name": "Mini1G3Essai",
+      "id": "shelly1minig3-a8b0c1000050",
+      "mac": "A8B0C1000050",
+      "slot": 0,
+      "model": "S3SW-001X8EU",
+      "gen": 3,
+      "fw_id": "20260710-101122/2.0.0-g87fbfa4",
+      "ver": "2.0.0",
+      "app": "Mini1G3",
+      "auth_en": false,
+      "auth_domain": null,
+      "matter": false,
+      "provision": "complete",
+      "enhanced_security": false
+    },
+    "pages": [
+      {
+        "components": [
+          {
+            "key": "ble",
+            "status": {
+              "addr": "a8:b0:c1:00:00:52,p",
+              "flags": [
+                "advertising",
+                "scanning"
+              ]
+            },
+            "config": {
+              "rpc": {
+                "enable": true
+              }
+            }
+          },
+          {
+            "key": "bthome",
+            "status": {},
+            "config": {}
+          },
+          {
+            "key": "bthomedevice:200",
+            "status": {
+              "id": 200,
+              "rssi": null,
+              "battery": null,
+              "packet_id": null,
+              "last_updated_ts": null,
+              "key": false,
+              "paired": false,
+              "rpc": false,
+              "rsv": -1,
+              "fw_ver": null
+            },
+            "config": {
+              "id": 200,
+              "addr": "a8:b0:c1:00:00:60",
+              "name": null,
+              "meta": {
+                "ui": {
+                  "view": "regular"
+                }
+              }
+            },
+            "attrs": {
+              "model_id": 0
+            }
+          },
+          {
+            "key": "bthomedevice:201",
+            "status": {
+              "id": 201,
+              "rssi": null,
+              "battery": null,
+              "packet_id": null,
+              "last_updated_ts": null,
+              "key": false,
+              "paired": false,
+              "rpc": false,
+              "rsv": -1,
+              "fw_ver": null
+            },
+            "config": {
+              "id": 201,
+              "addr": "a8:b0:c1:00:00:60",
+              "name": null,
+              "meta": {
+                "ui": {
+                  "view": "regular"
+                }
+              }
+            },
+            "attrs": {
+              "model_id": 0
+            }
+          },
+          {
+            "key": "cloud",
+            "status": {
+              "connected": false
+            },
+            "config": {
+              "enable": false,
+              "server": "iot.shelly.cloud:6012/jrpc"
+            }
+          },
+          {
+            "key": "input:0",
+            "status": {
+              "id": 0,
+              "state": false
+            },
+            "config": {
+              "id": 0,
+              "name": null,
+              "type": "switch",
+              "enable": true,
+              "invert": false,
+              "factory_reset": true
+            }
+          },
+          {
+            "key": "knx",
+            "status": {},
+            "config": {
+              "enable": false,
+              "ia": "15.15.255",
+              "routing": {
+                "addr": "224.0.23.12:3671"
+              }
+            }
+          },
+          {
+            "key": "matter",
+            "status": {
+              "num_fabrics": 0,
+              "commissionable": false
+            },
+            "config": {
+              "enable": false
+            }
+          },
+          {
+            "key": "mqtt",
+            "status": {
+              "connected": true
+            },
+            "config": {
+              "enable": true,
+              "server": "192.0.2.1",
+              "client_id": "shelly1minig3-a8b0c1000050",
+              "user": null,
+              "ssl_ca": null,
+              "topic_prefix": "shelly1minig3-a8b0c1000050",
+              "rpc_ntf": true,
+              "status_ntf": false,
+              "use_client_cert": false,
+              "enable_rpc": true,
+              "enable_control": true
+            }
+          },
+          {
+            "key": "script:1",
+            "status": {
+              "id": 1,
+              "running": true,
+              "mem_used": 1498,
+              "mem_peak": 3864,
+              "mem_free": 23688,
+              "cpu": 5
+            },
+            "config": {
+              "id": 1,
+              "name": "Scan BLE",
+              "enable": true
+            },
+            "attrs": {
+              "type": "general"
+            }
+          },
+          {
+            "key": "switch:0",
+            "status": {
+              "id": 0,
+              "source": "switch",
+              "tag": null,
+              "output": false,
+              "counts": {
+                "on_time": 240,
+                "on_time_rst_ts": 0,
+                "switch_on": 5,
+                "switch_on_rst_ts": 0
+              },
+              "temperature": {
+                "tC": 51.1,
+                "tF": 123.9
+              }
+            },
+            "config": {
+              "id": 0,
+              "name": null,
+              "in_mode": "follow",
+              "in_locked": false,
+              "initial_state": "match_input",
+              "auto_on": false,
+              "auto_on_delay": 60.0,
+              "auto_off": false,
+              "auto_off_delay": 60.0,
+              "counts": {
+                "enable": true
+              }
+            },
+            "attrs": {
+              "inputs": [
+                0
+              ]
+            }
+          }
+        ],
+        "cfg_rev": 23,
+        "offset": 0,
+        "total": 14
+      },
+      {
+        "components": [
+          {
+            "key": "sys",
+            "status": {
+              "mac": "A8B0C1000050",
+              "restart_required": false,
+              "time": "16:59",
+              "unixtime": 1789916371,
+              "last_sync_ts": 1789915572,
+              "uptime": 85184,
+              "ram_size": 275516,
+              "ram_free": 112484,
+              "ram_min_free": 93852,
+              "fs_size": 917504,
+              "fs_free": 442368,
+              "cfg_rev": 23,
+              "kvs_rev": 0,
+              "schedule_rev": 0,
+              "webhook_rev": 0,
+              "btrelay_rev": 0,
+              "bthc_rev": 0,
+              "available_updates": {
+                "beta": {
+                  "version": "2.0.1-beta3"
+                }
+              },
+              "reset_reason": 4,
+              "utc_offset": 7200
+            },
+            "config": {
+              "device": {
+                "name": "Mini1G3Essai",
+                "mac": "A8B0C1000050",
+                "fw_id": "20260710-101122/2.0.0-g87fbfa4",
+                "discoverable": true,
+                "eco_mode": false,
+                "tls_check_cert_validity_time": true,
+                "enhanced_security": false
+              },
+              "location": {
+                "tz": "Europe/Brussels",
+                "lat": 50.85,
+                "lon": 4.35
+              },
+              "debug": {
+                "level": 2,
+                "file_level": null,
+                "mqtt": {
+                  "enable": false
+                },
+                "websocket": {
+                  "enable": true
+                },
+                "file_log": {
+                  "enable": false
+                },
+                "udp": {
+                  "addr": null
+                }
+              },
+              "ui_data": {
+                "device_revision": "1-15"
+              },
+              "rpc_udp": {
+                "dst_addr": null,
+                "listen_port": null
+              },
+              "sntp": {
+                "server": "time.cloudflare.com"
+              },
+              "cfg_rev": 23
+            }
+          },
+          {
+            "key": "wifi",
+            "status": {
+              "sta_ip": "192.0.2.50",
+              "status": "got ip",
+              "ssid": "reseau-essai",
+              "channel": 6,
+              "rssi": -65,
+              "bssid": "aa:bb:cc:dd:ee:ff",
+              "sta_ip6": [
+                "fe80::aab0:c1ff:fe00:50"
+              ]
+            },
+            "config": {
+              "ap": {
+                "ssid": "reseau-essai-ap",
+                "is_open": true,
+                "enable": false,
+                "range_extender": {
+                  "enable": false
+                }
+              },
+              "sta": {
+                "ssid": "reseau-essai",
+                "is_open": false,
+                "enable": true,
+                "ipv4mode": "dhcp",
+                "ip": null,
+                "netmask": null,
+                "gw": null,
+                "nameserver": null
+              },
+              "sta1": {
+                "ssid": null,
+                "is_open": true,
+                "enable": false,
+                "ipv4mode": "dhcp",
+                "ip": null,
+                "netmask": null,
+                "gw": null,
+                "nameserver": null
+              },
+              "roam": {
+                "rssi_thr": -80,
+                "interval": 60
+              }
+            }
+          },
+          {
+            "key": "ws",
+            "status": {
+              "connected": false
+            },
+            "config": {
+              "enable": false,
+              "server": null,
+              "ssl_ca": "ca.pem"
+            }
+          }
+        ],
+        "cfg_rev": 23,
+        "offset": 11,
+        "total": 14
+      }
+    ],
+    "status": {
+      "ble": {
+        "addr": "a8:b0:c1:00:00:52,p",
+        "flags": [
+          "advertising",
+          "scanning"
+        ]
+      },
+      "bthome": {},
+      "cloud": {
+        "connected": false
+      },
+      "input:0": {
+        "id": 0,
+        "state": false
+      },
+      "knx": {},
+      "matter": {
+        "num_fabrics": 0,
+        "commissionable": false
+      },
+      "mqtt": {
+        "connected": true
+      },
+      "script:1": {
+        "id": 1,
+        "running": true,
+        "mem_used": 1498,
+        "mem_peak": 3864,
+        "mem_free": 23688,
+        "cpu": 5
+      },
+      "switch:0": {
+        "id": 0,
+        "source": "switch",
+        "tag": null,
+        "output": false,
+        "counts": {
+          "on_time": 240,
+          "on_time_rst_ts": 0,
+          "switch_on": 5,
+          "switch_on_rst_ts": 0
+        },
+        "temperature": {
+          "tC": 51.0,
+          "tF": 123.8
+        }
+      },
+      "sys": {
+        "mac": "A8B0C1000050",
+        "restart_required": false,
+        "time": "16:59",
+        "unixtime": 1789916373,
+        "last_sync_ts": 1789915572,
+        "uptime": 85186,
+        "ram_size": 275496,
+        "ram_free": 111864,
+        "ram_min_free": 93852,
+        "fs_size": 917504,
+        "fs_free": 442368,
+        "cfg_rev": 23,
+        "kvs_rev": 0,
+        "schedule_rev": 0,
+        "webhook_rev": 0,
+        "btrelay_rev": 0,
+        "bthc_rev": 0,
+        "available_updates": {
+          "beta": {
+            "version": "2.0.1-beta3"
+          }
+        },
+        "reset_reason": 4,
+        "utc_offset": 7200
+      },
+      "wifi": {
+        "sta_ip": "192.0.2.50",
+        "status": "got ip",
+        "ssid": "reseau-essai",
+        "channel": 6,
+        "rssi": -63,
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "sta_ip6": [
+          "fe80::aab0:c1ff:fe00:50"
+        ]
+      },
+      "ws": {
+        "connected": false
+      }
+    },
+    "config": {
+      "ble": {
+        "rpc": {
+          "enable": true
+        }
+      },
+      "bthome": {},
+      "cloud": {
+        "enable": false,
+        "server": "iot.shelly.cloud:6012/jrpc"
+      },
+      "input:0": {
+        "id": 0,
+        "name": null,
+        "type": "switch",
+        "enable": true,
+        "invert": false,
+        "factory_reset": true
+      },
+      "knx": {
+        "enable": false,
+        "ia": "15.15.255",
+        "routing": {
+          "addr": "224.0.23.12:3671"
+        }
+      },
+      "matter": {
+        "enable": false
+      },
+      "mqtt": {
+        "enable": true,
+        "server": "192.0.2.1",
+        "client_id": "shelly1minig3-a8b0c1000050",
+        "user": null,
+        "ssl_ca": null,
+        "topic_prefix": "shelly1minig3-a8b0c1000050",
+        "rpc_ntf": true,
+        "status_ntf": false,
+        "use_client_cert": false,
+        "enable_rpc": true,
+        "enable_control": true
+      },
+      "script:1": {
+        "id": 1,
+        "name": "Scan BLE",
+        "enable": true
+      },
+      "switch:0": {
+        "id": 0,
+        "name": null,
+        "in_mode": "follow",
+        "in_locked": false,
+        "initial_state": "match_input",
+        "auto_on": false,
+        "auto_on_delay": 60.0,
+        "auto_off": false,
+        "auto_off_delay": 60.0,
+        "counts": {
+          "enable": true
+        }
+      },
+      "sys": {
+        "device": {
+          "name": "Mini1G3Essai",
+          "mac": "A8B0C1000050",
+          "fw_id": "20260710-101122/2.0.0-g87fbfa4",
+          "discoverable": true,
+          "eco_mode": false,
+          "tls_check_cert_validity_time": true,
+          "enhanced_security": false
+        },
+        "location": {
+          "tz": "Europe/Brussels",
+          "lat": 50.85,
+          "lon": 4.35
+        },
+        "debug": {
+          "level": 2,
+          "file_level": null,
+          "mqtt": {
+            "enable": false
+          },
+          "websocket": {
+            "enable": true
+          },
+          "file_log": {
+            "enable": false
+          },
+          "udp": {
+            "addr": null
+          }
+        },
+        "ui_data": {
+          "device_revision": "1-15"
+        },
+        "rpc_udp": {
+          "dst_addr": null,
+          "listen_port": null
+        },
+        "sntp": {
+          "server": "time.cloudflare.com"
+        },
+        "cfg_rev": 23
+      },
+      "wifi": {
+        "ap": {
+          "ssid": "reseau-essai-ap",
+          "is_open": true,
+          "enable": false,
+          "range_extender": {
+            "enable": false
+          }
+        },
+        "sta": {
+          "ssid": "reseau-essai",
+          "is_open": false,
+          "enable": true,
+          "ipv4mode": "dhcp",
+          "ip": null,
+          "netmask": null,
+          "gw": null,
+          "nameserver": null
+        },
+        "sta1": {
+          "ssid": null,
+          "is_open": true,
+          "enable": false,
+          "ipv4mode": "dhcp",
+          "ip": null,
+          "netmask": null,
+          "gw": null,
+          "nameserver": null
+        },
+        "roam": {
+          "rssi_thr": -80,
+          "interval": 60
+        }
+      },
+      "ws": {
+        "enable": false,
+        "server": null,
+        "ssl_ca": "ca.pem"
+      }
+    },
+    "notifystatus": null,
+    "annonce": {
+      "name": "Mini1G3Essai",
+      "id": "shelly1minig3-a8b0c1000050",
+      "mac": "A8B0C1000050",
+      "slot": 0,
+      "model": "S3SW-001X8EU",
+      "gen": 3,
+      "fw_id": "20260710-101122/2.0.0-g87fbfa4",
+      "ver": "2.0.0",
+      "app": "Mini1G3",
+      "auth_en": false,
+      "auth_domain": null,
+      "matter": false,
+      "provision": "complete",
+      "enhanced_security": false
+    }
+  }
+}

@@ -301,6 +301,35 @@ function mqttbeControlesRepetition() {
                     . 'noierait l\'historique de Jeedom.');
 
     /*
+     * Un message RETENU n'est pas un message qui vient d'arriver.
+     *
+     * Le broker rejoue les messages retenus à chaque abonnement, donc à chaque
+     * démarrage du démon. Pour un état, c'est exactement ce qu'on veut : la
+     * valeur rejouée EST la valeur courante. Pour un événement — un appui sur
+     * un bouton —, c'est un geste vieux de plusieurs semaines rejoué comme s'il
+     * venait d'avoir lieu, et le scénario qu'il déclenche est introuvable.
+     */
+    $routeur = mqttbeRouteurNeuf();
+    $collecteur = new MqttbeCollecteur();
+    $routeur->onValue(array($collecteur, 'pousse'));
+    $routeur->apply(mqttbeTable(1, 'essai/events', array(
+        mqttbeCible(1, array('type' => 'json', 'path' => 'event'), null,
+                    array('mode' => 'always', 'ignore_retained' => 1)),
+        mqttbeCible(2, array('type' => 'json', 'path' => 'event'), null,
+                    array('mode' => 'always')),
+    )));
+    $routeur->route('essai/events', '{"event":"single_push"}', 0, true);
+    $titre = 'un événement rejoué par le broker n\'atteint pas la commande qui le refuse';
+    $resultats[] = ($collecteur->valeurs == array(array(2, 'single_push'))) ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'obtenu ' . json_encode($collecteur->valeurs) . ' : attendu la seule '
+                    . 'commande 2, celle qui n\'a rien demandé.');
+    $routeur->route('essai/events', '{"event":"single_push"}', 0, false);
+    $titre = 'le même événement, publié pour de bon, atteint les deux commandes';
+    $resultats[] = (count($collecteur->valeurs) === 3) ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'obtenu ' . json_encode($collecteur->valeurs) . ' : refuser les '
+                    . 'messages retenus ne doit pas faire taire la commande.');
+
+    /*
      * keepalive : la seule mesure de ce banc qui prenne du temps réel, et elle
      * le vaut. Sans réémission périodique, le champ « dernière communication »
      * d'un capteur parfaitement stable vieillit indéfiniment, et Jeedom finit

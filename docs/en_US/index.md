@@ -45,7 +45,14 @@ Three practical consequences, worth knowing:
 
 - **there is nothing to configure on the device** beyond enabling MQTT, which
   you have to do anyway. The "RPC notifications" and "MQTT control" settings are
-  on out of the box, and the plugin will never ask you to touch them;
+  on out of the box, and the plugin will never ask you to touch them. If one of
+  them has been switched off on your device, it says so in its log: without RPC
+  notifications a device is discovered normally and every one of its commands
+  stays empty, which looks like a plugin failure without being one;
+- **a device that does not answer is asked differently.** The plugin starts by
+  putting questions to it; if it stays silent, it simply asks it to announce
+  itself and publish its state, which a Shelly answers even when its RPC calls
+  have been disabled;
 - **the name you gave the device in the Shelly app is picked up**, along with
   the name of each output when there is more than one. Unlike the first
   generation, the plugin does not have to go and fetch it from the device: the
@@ -64,10 +71,12 @@ supply the topics yourself. How to do it is described below.
 
 Better said up front, so that nobody waits in vain:
 
-- **Gen2+ discovery has not yet been proven against real hardware.** It is
-  written from the manufacturer's official documentation and checked against
-  reconstructed conversations, no device having been available at the time of
-  writing. That means something specific: the checks prove the plugin does what
+- **Gen2+ discovery is proven on one model only.** Three Shelly 1 Mini Gen3 are
+  discovered on their own, with all their commands, and their conversation is
+  replayed by the test bench. Everything else — shutters, lights, strips, energy
+  meters, awake battery sensors — is written from the manufacturer's official
+  documentation and checked against reconstructed conversations. That means
+  something specific for those devices: the checks prove the plugin does what
   was intended, not that a real Shelly answers that way. If a device does not
   introduce itself as it should, that is an expected shortcoming rather than a
   surprise — report it and it will be fixed;
@@ -81,7 +90,8 @@ Better said up front, so that nobody waits in vain:
   event and the component concerned in a single message; the plugin turns that
   into two commands, *Last event* and *Event component*. A scenario reacting to
   a double press on the second input tests both. Less direct than one command
-  per input, and just as accurate;
+  per input, and just as accurate. One message can also carry several presses —
+  two buttons pressed at once on an i4 — and only the first is reported;
 - **Tasmota**, **Zigbee2MQTT** and the **Home Assistant** discovery protocol come
   after that.
 

@@ -242,7 +242,7 @@ class mqttbeCmd extends cmd {
 
         $payload = (string) $this->getConfiguration('payload', '');
         if (isset($_options['slider'])) {
-            $payload = str_replace('#slider#', $_options['slider'], $payload);
+            $payload = str_replace('#slider#', $this->valeurCurseur($_options['slider']), $payload);
         }
         if (isset($_options['color'])) {
             $payload = str_replace('#color#', $_options['color'], $payload);
@@ -265,6 +265,23 @@ class mqttbeCmd extends cmd {
         }
         if (isset($_options['message'])) {
             $payload = str_replace('#message#', $_options['message'], $payload);
+            /*
+             * Le même texte, mais échappé, pour une charge utile JSON.
+             *
+             * `#message#` est substitué tel quel : c'est ce qu'il faut pour un
+             * appareil qui attend le texte nu, et c'est une charge utile
+             * invalide dès que ce texte contient un guillemet, une barre
+             * oblique inverse ou un retour à la ligne — l'appareil rejette
+             * alors l'appel sans un mot, et la commande passe pour cassée.
+             * `#message_json#` porte le texte DÉJÀ entre guillemets, échappé
+             * par json_encode : un adapter qui compose du JSON écrit
+             * `"value":#message_json#`, et jamais `"value":"#message#"`.
+             */
+            $payload = str_replace(
+                '#message_json#',
+                json_encode((string) $_options['message'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                $payload
+            );
         }
 
         mqttbeDaemon::publish(
@@ -274,5 +291,42 @@ class mqttbeCmd extends cmd {
             $this->getConfiguration('retain', 0) == 1
         );
         return null;
+    }
+
+    /**
+     * La valeur d'un curseur, telle que l'appareil l'attend.
+     *
+     * Un curseur Jeedom va de 0 à 100 — c'est ce que les widgets de lumière
+     * supposent, et ce que le cœur envoie tant que `minValue` et `maxValue`
+     * n'en décident pas autrement. Or tous les appareils ne comptent pas ainsi :
+     * la voie blanche d'un Shelly Gen2 se règle de 0 à 255. Sans conversion, le
+     * curseur poussé à fond donne 100 sur 255, soit 39 % de la puissance — et
+     * comme l'état relit la même échelle, le curseur semble refuser de monter
+     * plus haut. Le défaut est invisible à la relecture et parfaitement visible
+     * dans le salon.
+     *
+     * Deux réglages, posés par l'adapter au moment de la découverte :
+     * `slider_scale`, le facteur, et `slider_round`, le nombre de décimales à
+     * garder — zéro pour un entier, ce que la plupart des appareils exigent.
+     * Absents, la valeur passe telle quelle : c'est le cas de toutes les
+     * commandes qui comptent déjà en pourcents.
+     *
+     * Une valeur non numérique n'est jamais touchée : elle ne vient pas d'un
+     * curseur, et la corriger reviendrait à inventer.
+     */
+    private function valeurCurseur($_valeur) {
+        if (!is_numeric($_valeur)) {
+            return $_valeur;
+        }
+        $echelle = $this->getConfiguration('slider_scale', '');
+        if (!is_numeric($echelle) || (float) $echelle == 0.0) {
+            return $_valeur;
+        }
+        $nombre = (float) $_valeur * (float) $echelle;
+        $decimales = $this->getConfiguration('slider_round', '');
+        $nombre = round($nombre, is_numeric($decimales) ? max(0, min(6, (int) $decimales)) : 0);
+        /* Un entier doit s'écrire sans partie décimale : `"white":255.0` est du
+         * JSON valide, mais l'appareil attend un entier et refuse le reste. */
+        return (floor($nombre) == $nombre) ? (string) (int) $nombre : (string) $nombre;
     }
 }

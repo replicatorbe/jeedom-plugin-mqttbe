@@ -10,7 +10,7 @@
         "mac": "A8B0C1000030",
         "model": "SNSW-001P16EU",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "Plus1PM",
         "auth_en": false,
@@ -69,7 +69,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 7971,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -89,7 +88,7 @@
             "device": {
               "name": "Chaudiere",
               "mac": "A8B0C1000030",
-              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
               "eco_mode": false,
               "discoverable": true
             },
@@ -114,33 +113,82 @@
             "channel": 6,
             "rssi": -52
           },
-          "config": {}
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
         },
         {
           "key": "mqtt",
           "status": {
             "connected": true
           },
-          "config": {}
+          "config": {
+            "enable": true,
+            "server": "192.0.2.1:1883",
+            "client_id": "shellyplus1pm-a8b0c1000030",
+            "user": null,
+            "ssl_ca": null,
+            "topic_prefix": "shellyplus1pm-a8b0c1000030",
+            "rpc_ntf": true,
+            "status_ntf": false,
+            "use_client_cert": false,
+            "enable_rpc": true,
+            "enable_control": true
+          }
         },
         {
           "key": "cloud",
           "status": {
             "connected": false
           },
-          "config": {}
+          "config": {
+            "enable": true,
+            "server": "iot.shelly.cloud:6012/jrpc"
+          }
         },
         {
           "key": "ble",
           "status": {},
-          "config": {}
+          "config": {
+            "enable": true,
+            "rpc": {
+              "enable": true
+            },
+            "observer": {
+              "enable": false
+            }
+          }
         },
         {
           "key": "ws",
           "status": {
             "connected": false
           },
-          "config": {}
+          "config": {
+            "enable": false,
+            "server": null,
+            "ssl_ca": "ca.pem"
+          }
         }
       ]
     },
@@ -153,10 +201,11 @@
         "mac": "A8B0C1000031",
         "model": "SNSW-102P16EU",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "Plus2PM",
         "auth_en": false,
+        "auth_domain": null,
         "profile": "cover"
       },
       "composants": [
@@ -226,7 +275,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 7971,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -242,7 +290,7 @@
             "device": {
               "name": "Volet salon",
               "mac": "A8B0C1000031",
-              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
               "eco_mode": false,
               "discoverable": true,
               "profile": "cover"
@@ -268,7 +316,29 @@
             "channel": 6,
             "rssi": -58
           },
-          "config": {}
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
         }
       ]
     },
@@ -281,10 +351,11 @@
         "mac": "A8B0C1000032",
         "model": "SPSW-004PE16EU",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "Pro4PM",
-        "auth_en": false
+        "auth_en": false,
+        "auth_domain": null
       },
       "composants": [
         {
@@ -415,7 +486,7 @@
           "key": "input:0",
           "status": {
             "id": 0,
-            "state": false
+            "state": null
           },
           "config": {
             "id": 0,
@@ -428,7 +499,7 @@
           "key": "input:1",
           "status": {
             "id": 1,
-            "state": false
+            "state": null
           },
           "config": {
             "id": 1,
@@ -441,7 +512,7 @@
           "key": "input:2",
           "status": {
             "id": 2,
-            "state": false
+            "state": null
           },
           "config": {
             "id": 2,
@@ -454,7 +525,7 @@
           "key": "input:3",
           "status": {
             "id": 3,
-            "state": false
+            "state": null
           },
           "config": {
             "id": 3,
@@ -470,7 +541,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 7971,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -486,7 +556,7 @@
             "device": {
               "name": "Tableau",
               "mac": "A8B0C1000032",
-              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
               "eco_mode": false,
               "discoverable": true
             },
@@ -509,7 +579,29 @@
             "ssid": null,
             "rssi": 0
           },
-          "config": {}
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
         },
         {
           "key": "eth",
@@ -533,10 +625,11 @@
         "mac": "A8B0C1000033",
         "model": "SNSN-0013A",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "PlusHT",
-        "auth_en": false
+        "auth_en": false,
+        "auth_domain": null
       },
       "muet": true,
       "notifyfullstatus": {
@@ -557,7 +650,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 41,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -608,10 +700,11 @@
         "mac": "A8B0C1000034",
         "model": "SPEM-003CEBEU",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "Pro3EM",
         "auth_en": false,
+        "auth_domain": null,
         "profile": "triphase"
       },
       "composants": [
@@ -671,7 +764,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 7971,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -687,7 +779,7 @@
             "device": {
               "name": "Compteur general",
               "mac": "A8B0C1000034",
-              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
               "eco_mode": false,
               "discoverable": true,
               "profile": "triphase"
@@ -713,7 +805,29 @@
             "channel": 6,
             "rssi": -64
           },
-          "config": {}
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
         },
         {
           "key": "eth",
@@ -733,10 +847,11 @@
         "mac": "A8B0C1000035",
         "model": "SNDC-0D4P10WW",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "PlusRGBWPM",
         "auth_en": false,
+        "auth_domain": null,
         "profile": "rgbw"
       },
       "composants": [
@@ -781,7 +896,7 @@
           "key": "input:0",
           "status": {
             "id": 0,
-            "state": false
+            "state": null
           },
           "config": {
             "id": 0,
@@ -797,7 +912,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 7971,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -813,7 +927,7 @@
             "device": {
               "name": "Bandeau",
               "mac": "A8B0C1000035",
-              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
               "eco_mode": false,
               "discoverable": true,
               "profile": "rgbw"
@@ -839,7 +953,29 @@
             "channel": 6,
             "rssi": -58
           },
-          "config": {}
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
         }
       ]
     },
@@ -852,10 +988,11 @@
         "mac": "A8B0C1000036",
         "model": "S3SW-001X8EU",
         "gen": 3,
-        "fw_id": "20240101-000000/1.0.3-g0e9a1b2",
+        "fw_id": "20230912-000000/1.0.3-g0e9a1b2",
         "ver": "1.0.3",
         "app": "Mini1G3",
-        "auth_en": false
+        "auth_en": false,
+        "auth_domain": null
       },
       "sans_getcomponents": true,
       "status": {
@@ -880,7 +1017,6 @@
           "restart_required": false,
           "time": "16:06",
           "unixtime": 1789644518,
-          "last_sync_ts": 1789644518,
           "uptime": 7971,
           "ram_size": 254744,
           "ram_free": 151560,
@@ -925,7 +1061,7 @@
           "device": {
             "name": null,
             "mac": "A8B0C1000036",
-            "fw_id": "20260101-000000/1.4.4-g6d2a586",
+            "fw_id": "20230912-000000/1.0.3-g0e9a1b2",
             "eco_mode": false,
             "discoverable": true
           },
@@ -952,10 +1088,11 @@
         "mac": "A8B0C1000037",
         "model": "S3PL-00112EU",
         "gen": 3,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "PlugSG3",
-        "auth_en": false
+        "auth_en": false,
+        "auth_domain": null
       },
       "composants": [
         {
@@ -1072,13 +1209,25 @@
           }
         },
         {
+          "key": "button:204",
+          "status": {},
+          "config": {
+            "id": 204,
+            "name": "Scene cinema",
+            "meta": {
+              "ui": {
+                "view": "button"
+              }
+            }
+          }
+        },
+        {
           "key": "sys",
           "status": {
             "mac": "A8B0C1000037",
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 7971,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -1094,7 +1243,7 @@
             "device": {
               "name": "Prise salon",
               "mac": "A8B0C1000037",
-              "fw_id": "20260101-000000/1.4.4-g6d2a586",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
               "eco_mode": false,
               "discoverable": true
             },
@@ -1119,7 +1268,29 @@
             "channel": 6,
             "rssi": -58
           },
-          "config": {}
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
         }
       ]
     },
@@ -1132,10 +1303,11 @@
         "mac": "A8B0C1000038",
         "model": "SNSN-0031Z",
         "gen": 2,
-        "fw_id": "20260101-000000/1.4.4-g6d2a586",
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
         "ver": "1.4.4",
         "app": "PlusSmoke",
-        "auth_en": false
+        "auth_en": false,
+        "auth_domain": null
       },
       "muet": true,
       "notifyfullstatus": {
@@ -1156,7 +1328,6 @@
             "restart_required": false,
             "time": "16:06",
             "unixtime": 1789644518,
-            "last_sync_ts": 1789644518,
             "uptime": 12,
             "ram_size": 254744,
             "ram_free": 151560,
@@ -1192,6 +1363,134 @@
         }
       },
       "composants": []
+    },
+    "duobulb": {
+      "prefixe": "shellyduobulbg3-a8b0c1000039",
+      "sur_pile": false,
+      "deviceinfo": {
+        "name": "Lampe de chevet",
+        "id": "shellyduobulbg3-a8b0c1000039",
+        "mac": "A8B0C1000039",
+        "model": "S3BL-D010009AEU",
+        "gen": 3,
+        "fw_id": "20241017-000000/1.4.4-g6d2a586",
+        "ver": "1.4.4",
+        "app": "DuoBulbG3",
+        "auth_en": false,
+        "auth_domain": null
+      },
+      "composants": [
+        {
+          "key": "cct:0",
+          "status": {
+            "id": 0,
+            "source": "MQTT",
+            "output": true,
+            "brightness": 60.0,
+            "ct": 3200
+          },
+          "config": {
+            "id": 0,
+            "name": null,
+            "initial_state": "restore_last",
+            "ct_range": [
+              2700,
+              6500
+            ],
+            "transition_duration": 0.5
+          }
+        },
+        {
+          "key": "sys",
+          "status": {
+            "mac": "A8B0C1000039",
+            "restart_required": false,
+            "time": "16:06",
+            "unixtime": 1789644518,
+            "uptime": 40122,
+            "ram_size": 254744,
+            "ram_free": 151560,
+            "fs_size": 458752,
+            "fs_free": 180224,
+            "cfg_rev": 12,
+            "kvs_rev": 0,
+            "schedule_rev": 0,
+            "webhook_rev": 0,
+            "available_updates": {}
+          },
+          "config": {
+            "device": {
+              "name": "Lampe de chevet",
+              "mac": "A8B0C1000039",
+              "fw_id": "20241017-000000/1.4.4-g6d2a586",
+              "eco_mode": false,
+              "discoverable": true
+            },
+            "location": {
+              "tz": "Europe/Brussels",
+              "lat": 50.85,
+              "lon": 4.35
+            },
+            "sntp": {
+              "server": "time.google.com"
+            },
+            "cfg_rev": 12
+          }
+        },
+        {
+          "key": "wifi",
+          "status": {
+            "sta_ip": "192.0.2.39",
+            "status": "got ip",
+            "ssid": "reseau-essai",
+            "bssid": "aa:bb:cc:dd:ee:ff",
+            "channel": 6,
+            "rssi": -61
+          },
+          "config": {
+            "ap": {
+              "ssid": "reseau-essai-ap",
+              "is_open": false,
+              "enable": false
+            },
+            "sta": {
+              "ssid": "reseau-essai",
+              "is_open": false,
+              "enable": true,
+              "ipv4mode": "dhcp"
+            },
+            "sta1": {
+              "ssid": null,
+              "is_open": true,
+              "enable": false,
+              "ipv4mode": "dhcp"
+            },
+            "roam": {
+              "rssi_thr": -80,
+              "interval": 60
+            }
+          }
+        },
+        {
+          "key": "mqtt",
+          "status": {
+            "connected": true
+          },
+          "config": {
+            "enable": true,
+            "server": "192.0.2.1:1883",
+            "client_id": "shellyduobulbg3-a8b0c1000039",
+            "user": null,
+            "ssl_ca": null,
+            "topic_prefix": "shellyduobulbg3-a8b0c1000039",
+            "rpc_ntf": true,
+            "status_ntf": false,
+            "use_client_cert": false,
+            "enable_rpc": true,
+            "enable_control": true
+          }
+        }
+      ]
     }
   }
 }

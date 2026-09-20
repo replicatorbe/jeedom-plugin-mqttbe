@@ -282,6 +282,42 @@ function mqttbeModeleGen2($_appareil, $_ctx = null) {
     return empty($ctx->modeles) ? null : $ctx->modeles[count($ctx->modeles) - 1];
 }
 
+/*
+ * La charge utile d'une action, telle que Jeedom la publiera.
+ *
+ * Elle rejoue mqttbeCmd::execute() — et elle doit continuer de le faire : un
+ * contrôle qui substituerait autrement que le cœur validerait une charge utile
+ * que personne n'enverra jamais. Le curseur passe donc par l'échelle et
+ * l'arrondi que le canal déclare, et le texte est échappé comme json_encode le
+ * fait.
+ */
+function mqttbeChargeGen2($_canal, $_curseur = 100, $_message = 'sal"ut\\ à' . "\n" . 'tous') {
+    $valeurs = $_canal->value();
+    $reglage = (isset($valeurs['slider']) && is_array($valeurs['slider'])) ? $valeurs['slider'] : array();
+    $curseur = $_curseur;
+    if (isset($reglage['scale']) && is_numeric($reglage['scale'])) {
+        $decimales = isset($reglage['round']) ? (int) $reglage['round'] : 0;
+        $nombre = round($_curseur * (float) $reglage['scale'], $decimales);
+        $curseur = (floor($nombre) == $nombre) ? (string) (int) $nombre : (string) $nombre;
+    }
+    return str_replace(
+        array('#slider#', '#red#', '#green#', '#blue#', '#message_json#', '#message#'),
+        array((string) $curseur, '255', '128', '0',
+              json_encode((string) $_message, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+              'bonjour'),
+        $_canal->sinkPayload());
+}
+
+function mqttbeCommandesGen2($_ctx, $_prefixe) {
+    $vues = array();
+    foreach ($_ctx->publications as $publication) {
+        if ($publication['topic'] === $_prefixe . '/command') {
+            $vues[] = $publication['payload'];
+        }
+    }
+    return $vues;
+}
+
 function mqttbeCanauxGen2($_modele) {
     $canaux = array();
     foreach ($_modele->channels() as $canal) {
@@ -732,11 +768,11 @@ function mqttbeControlesShellyGen2() {
                     . 'connexion à chaque appui.';
             }
             /* Ce que Jeedom substitue réellement : un nombre pour un curseur et
-             * pour chaque composante de couleur, une chaîne pour un message. */
-            $charge = str_replace(
-                array('#slider#', '#red#', '#green#', '#blue#', '#message#'),
-                array('42', '255', '128', '0', 'bonjour'),
-                $canal->sinkPayload());
+             * pour chaque composante de couleur, une chaîne pour un message —
+             * et un message qui porte un guillemet, une barre oblique inverse et
+             * un retour à la ligne, parce que c'est là que la charge utile se
+             * brise, et nulle part ailleurs. */
+            $charge = mqttbeChargeGen2($canal, 42);
             $decode = json_decode($charge, true);
             if (!is_array($decode)) {
                 $fautes[] = $nom . '/' . $canal->key() . ' : charge utile illisible après '
@@ -836,6 +872,27 @@ function mqttbeControlesShellyGen2() {
     if ($ctxVivant->requetesVers($prefixeE) === 0) {
         $fautes[] = 'un NotifyStatus retenu n\'a rien déclenché : c\'est pourtant ainsi qu\'un '
             . 'appareil se signale au démarrage du démon.';
+    }
+    /*
+     * Et la protection ne vaut pas que pendant la découverte : les deux
+     * commandes d'événement disent au démon d'ignorer ce que le broker rejoue.
+     * Sans ce drapeau, l'adapter se garderait d'un événement retenu le temps de
+     * découvrir l'appareil, et le routage le servirait à Jeedom une fois
+     * l'équipement créé — c'est-à-dire là où un scénario part.
+     */
+    foreach ($modeles as $nomModele => $modeleEvenements) {
+        foreach (mqttbeCanauxGen2($modeleEvenements) as $cleCanal => $canalEvenement) {
+            if (strpos($cleCanal, 'event.') !== 0) {
+                continue;
+            }
+            $valeursEvenement = $canalEvenement->value();
+            $repetition = isset($valeursEvenement['repeat']) ? $valeursEvenement['repeat'] : array();
+            if (empty($repetition['ignore_retained'])) {
+                $fautes[] = $nomModele . '/' . $cleCanal . ' : la commande accepterait un '
+                    . 'événement rejoué par le broker, et déclencherait au démarrage du démon un '
+                    . 'scénario que personne n\'a demandé.';
+            }
+        }
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
@@ -1119,7 +1176,16 @@ function mqttbeControlesShellyGen2() {
      * ------------------------------------------------------------------- */
     $titre = 'captures anonymisées';
     $fautes = array();
-    $brut = file_get_contents(mqttbeRacine() . '/tests/fixtures/shelly/gen2/conversations.json');
+    /* Les deux jeux de données, et surtout la capture réelle : c'est elle qui
+     * sort d'une vraie maison, et c'est donc elle qui publierait un vrai réseau
+     * si l'anonymisation avait manqué quelque chose. */
+    $brut = '';
+    foreach (array('conversations.json', 'capture-reelle.json') as $fichier) {
+        $chemin = mqttbeRacine() . '/tests/fixtures/shelly/gen2/' . $fichier;
+        if (is_readable($chemin)) {
+            $brut .= file_get_contents($chemin);
+        }
+    }
     if (preg_match_all('/\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\b192\.168\.\d{1,3}\.\d{1,3}\b'
         . '|\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/', $brut, $trouves)) {
         $fautes[] = 'adresse d\'un réseau réel : ' . implode(', ', array_unique($trouves[0]))
@@ -1127,7 +1193,11 @@ function mqttbeControlesShellyGen2() {
     }
     if (preg_match_all('/"ssid"\s*:\s*"([^"]+)"/', $brut, $ssids)) {
         foreach (array_unique($ssids[1]) as $ssid) {
-            if ($ssid !== 'reseau-essai') {
+            /* Un seul nom fabriqué, et ses variantes : le point d'accès d'un
+             * Shelly porte son propre SSID, distinct de celui du réseau auquel
+             * il se connecte. La règle reste sans exception — tout ce qui ne
+             * commence pas par « reseau-essai » est le nom d'un vrai réseau. */
+            if (strpos($ssid, 'reseau-essai') !== 0) {
                 $fautes[] = 'SSID « ' . $ssid . ' » : le nom d\'un vrai réseau.';
             }
         }
@@ -1178,6 +1248,628 @@ function mqttbeControlesShellyGen2() {
             . 'tenue par appareil.';
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 23. Un testament retenu ne fait parler personne
+     *
+     * `<P>/online` à `false` n'est pas publié par l'appareil : c'est son
+     * testament, publié par le broker, et il est RETENU. Un appareil débranché
+     * depuis six mois le rejoue donc à chaque démarrage du démon. L'interroger
+     * coûte trois appels, trois expirations et un avertissement, pour un
+     * appareil dont le broker vient de dire qu'il n'est plus là.
+     * ------------------------------------------------------------------- */
+    $titre = 'un « online » à false ne déclenche aucune question, et son retour la relance';
+    $fautes = array();
+    $ctxMort = new MqttbeContexteEssaiGen2();
+    $adapterMort = mqttbeAdapterGen2();
+    $prefixeMort = 'shellyplus1pm-a8b0c1000040';
+    $adapterMort->onTick($ctxMort);
+    $adapterMort->onMessage($prefixeMort . '/online', 'false', true, $ctxMort);
+    for ($tour = 0; $tour < 4; $tour++) {
+        $ctxMort->avance(6);
+        $adapterMort->onTick($ctxMort);
+    }
+    if ($ctxMort->requetesVers($prefixeMort) !== 0) {
+        $fautes[] = $ctxMort->requetesVers($prefixeMort) . ' appel(s) RPC à un appareil que le '
+            . 'broker déclare hors ligne — sur un parc où quelques appareils sont morts, c\'est '
+            . 'autant de questions sans réponse à chaque démarrage du démon.';
+    }
+    $adapterMort->onMessage($prefixeMort . '/online', 'true', true, $ctxMort);
+    $ctxMort->avance(1);
+    $adapterMort->onTick($ctxMort);
+    if ($ctxMort->requetesVers($prefixeMort) === 0) {
+        $fautes[] = 'l\'appareil est revenu et personne ne lui parle : une suspension qui ne se '
+            . 'lève pas est un appareil perdu pour toujours.';
+    }
+    /* Et la conversation en cours s'arrête s'il repart. */
+    $adapterMort->onMessage($prefixeMort . '/online', 'false', true, $ctxMort);
+    $gele = $ctxMort->requetesVers($prefixeMort);
+    for ($tour = 0; $tour < 4; $tour++) {
+        $ctxMort->avance(6);
+        $adapterMort->onTick($ctxMort);
+    }
+    if ($ctxMort->requetesVers($prefixeMort) !== $gele) {
+        $fautes[] = 'la conversation continue après le testament : les trois tentatives se '
+            . 'consomment pendant que l\'appareil est absent, et il n\'en restera aucune à son retour.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 24. La seconde porte : « MQTT control »
+     *
+     * Des Gen2 sur secteur restent muets au RPC, et un appareil dont
+     * `enable_rpc` a été coupé ne répondra jamais. La documentation décrit une
+     * autre voie, active d'usine (`enable_control` vaut `true`) et qui ne
+     * dépend pas du RPC : `announce` et `status_update` sur `<P>/command`.
+     * Elle n'est frappée qu'après le silence, et rien n'en dépend.
+     * ------------------------------------------------------------------- */
+    $titre = 'RPC muet : on frappe à la seconde porte, et le statut suffit';
+    $fautes = array();
+    $ctxMuet = new MqttbeContexteEssaiGen2();
+    $adapterMuet = mqttbeAdapterGen2();
+    $prefixeMuet = 'shellyplus2pm-a8b0c1000041';
+    $adapterMuet->onTick($ctxMuet);
+    $adapterMuet->onMessage($prefixeMuet . '/online', 'true', true, $ctxMuet);
+    for ($tour = 0; $tour < 6; $tour++) {
+        $ctxMuet->avance(6);
+        $adapterMuet->onTick($ctxMuet);
+    }
+    $commandes = mqttbeCommandesGen2($ctxMuet, $prefixeMuet);
+    foreach (array('announce', 'status_update') as $attendue) {
+        if (!in_array($attendue, $commandes, true)) {
+            $fautes[] = '« ' . $attendue . ' » n\'a jamais été demandé sur ' . $prefixeMuet
+                . '/command : l\'appareil muet au RPC reste muet, alors qu\'une autre porte '
+                . 'était ouverte.';
+        }
+    }
+    if ($ctxMuet->requetesVers($prefixeMuet) > 3) {
+        $fautes[] = $ctxMuet->requetesVers($prefixeMuet) . ' appels RPC à un appareil qui ne '
+            . 'répond pas : trois tentatives, puis on essaie autre chose.';
+    }
+    /* Il répond, mais par la seconde porte. */
+    $adapterMuet->onMessage($prefixeMuet . '/status', json_encode(array(
+        'switch:0' => array('id' => 0, 'output' => true, 'apower' => 12.5),
+        'sys'      => array('mac' => 'A8B0C1000041', 'uptime' => 4212, 'ram_free' => 150000),
+        'wifi'     => array('sta_ip' => '192.0.2.41', 'status' => 'got ip', 'rssi' => -55),
+    )), false, $ctxMuet);
+    if (empty($ctxMuet->modeles)) {
+        $fautes[] = 'aucun équipement après un statut complet reçu sur ' . $prefixeMuet
+            . '/status : la réponse à status_update n\'est pas exploitée.';
+    } else {
+        $modeleMuet = $ctxMuet->modeles[count($ctxMuet->modeles) - 1];
+        $clesMuet = mqttbeClesGen2($modeleMuet);
+        foreach (array('switch.0.state', 'switch.0.power', 'sys.uptime') as $attendu) {
+            if (!in_array($attendu, $clesMuet, true)) {
+                $fautes[] = 'commande « ' . $attendu . ' » absente du modèle bâti sur le statut '
+                    . 'diffusé (obtenues : ' . implode(', ', $clesMuet) . ').';
+            }
+        }
+        if ($modeleMuet->confidence() !== 'certain') {
+            $fautes[] = 'confiance « ' . $modeleMuet->confidence() . ' » alors que l\'appareil a '
+                . 'livré son statut entier : un inventaire complet est un inventaire complet, '
+                . 'quelle que soit la porte par laquelle il est arrivé.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 25. Un curseur publie une valeur que l'appareil accepte
+     *
+     * C'est le défaut le plus coûteux de tous, parce qu'il ne se voit ni à la
+     * relecture, ni dans un journal : la commande existe, elle s'actionne, et
+     * il ne se passe rien — ou pas ce qu'on demande.
+     *
+     *   la voie blanche se règle de 0 à 255, le curseur va de 0 à 100 : sans
+     *     conversion, il plafonne à 39 % de la puissance ;
+     *   la température de couleur se règle en KELVINS : un curseur 0-100
+     *     n'envoie que des valeurs hors plage, toutes refusées ;
+     *   un nombre virtuel a les bornes que son propriétaire lui a données.
+     * ------------------------------------------------------------------- */
+    $titre = 'curseurs : la valeur publiée est dans l\'échelle de l\'appareil';
+    $fautes = array();
+
+    $modeleBulbe = mqttbeModeleGen2($appareils['duobulb']);
+    if ($modeleBulbe === null) {
+        $fautes[] = 'la lampe blanc réglable n\'a produit aucun modèle.';
+    } else {
+        $canauxBulbe = mqttbeCanauxGen2($modeleBulbe);
+        if (!isset($canauxBulbe['cct.0.color_temp'])) {
+            $fautes[] = 'aucune commande de température de couleur sur une lampe qui en a une.';
+        } else {
+            $valeurs = $canauxBulbe['cct.0.color_temp']->value();
+            $bornes = isset($valeurs['slider']) ? $valeurs['slider'] : array();
+            if (!isset($bornes['min']) || !isset($bornes['max'])) {
+                $fautes[] = 'la température de couleur n\'a pas de bornes : le curseur restera au '
+                    . '0-100 du cœur, et l\'appareil refusera chacune de ses positions.';
+            } elseif ((int) $bornes['min'] !== 2700 || (int) $bornes['max'] !== 6500) {
+                $fautes[] = 'bornes ' . $bornes['min'] . '-' . $bornes['max'] . ' K au lieu du '
+                    . '« ct_range » que l\'appareil annonce (2700-6500).';
+            }
+        }
+    }
+
+    $modeleRgbw = mqttbeModeleGen2($appareils['rgbw']);
+    $canauxRgbw = ($modeleRgbw === null) ? array() : mqttbeCanauxGen2($modeleRgbw);
+    if (!isset($canauxRgbw['rgbw.0.white'])) {
+        $fautes[] = 'aucune commande de voie blanche sur un bandeau qui en publie une.';
+    } else {
+        /* Les deux extrémités sont exactes, et le milieu est à l'unité près :
+         * 2,55 ne s'écrit pas en binaire, et 50 × 2,55 vaut 127,4999… Un
+         * demi-point sur 255 ne se voit pas ; le plafond à 39 %, si. */
+        foreach (array(100 => array(255, 255), 0 => array(0, 0), 50 => array(127, 128))
+                 as $curseur => $plage) {
+            $charge = json_decode(mqttbeChargeGen2($canauxRgbw['rgbw.0.white'], $curseur), true);
+            $blanc = isset($charge['params']['white']) ? $charge['params']['white'] : null;
+            if (!is_int($blanc) || $blanc < $plage[0] || $blanc > $plage[1]) {
+                $fautes[] = 'curseur à ' . $curseur . ' % : la charge utile porte « '
+                    . var_export($blanc, true) . ' » au lieu de ' . $plage[0] . ' — la voie blanche '
+                    . 'se compte de 0 à 255.';
+            }
+        }
+    }
+
+    $modelePerso = mqttbeModeleGen2($appareils['prefixe_personnalise']);
+    $canauxPerso = ($modelePerso === null) ? array() : mqttbeCanauxGen2($modelePerso);
+    $configNombre = array();
+    foreach ($appareils['prefixe_personnalise']['composants'] as $composant) {
+        if ($composant['key'] === 'number:201') {
+            $configNombre = $composant['config'];
+        }
+    }
+    if (!isset($canauxPerso['number.201.set'])) {
+        $fautes[] = 'aucun réglage pour le nombre virtuel 201.';
+    } elseif (isset($configNombre['min'], $configNombre['max'])) {
+        $valeurs = $canauxPerso['number.201.set']->value();
+        $bornes = isset($valeurs['slider']) ? $valeurs['slider'] : array();
+        if (!isset($bornes['min']) || !isset($bornes['max'])
+            || (float) $bornes['min'] !== (float) $configNombre['min']
+            || (float) $bornes['max'] !== (float) $configNombre['max']) {
+            $fautes[] = 'le nombre virtuel est réglé de ' . $configNombre['min'] . ' à '
+                . $configNombre['max'] . ' dans l\'appareil, et son curseur ne le sait pas.';
+        }
+    }
+    /* Le bouton virtuel : aucun état, rien qu'une écriture — et c'est bien pour
+     * cela qu'il existe. */
+    if (!isset($canauxPerso['button.204.single_push'])) {
+        $fautes[] = 'le bouton virtuel n\'a produit aucune commande : son statut est vide, et une '
+            . 'garde « pas de valeur, pas de commande » l\'écarte au lieu de l\'actionner.';
+    } else {
+        $charge = json_decode(mqttbeChargeGen2($canauxPerso['button.204.single_push']), true);
+        if (!isset($charge['params']['event']) || $charge['params']['event'] !== 'single_push') {
+            $fautes[] = 'Button.Trigger sans « event » : le paramètre est obligatoire, et il ne '
+                . 's\'appelle pas « event_type », qui est celui d\'Input.Trigger.';
+        }
+    }
+    /* Et un texte qui porte un guillemet reste du JSON. */
+    if (isset($canauxPerso['text.202.set'])) {
+        $charge = json_decode(mqttbeChargeGen2($canauxPerso['text.202.set'], 0, 'a "b" \\ c'), true);
+        if (!is_array($charge) || !isset($charge['params']['value'])
+            || $charge['params']['value'] !== 'a "b" \\ c') {
+            $fautes[] = 'un texte contenant un guillemet ou une barre oblique inverse brise la '
+                . 'charge utile : l\'appareil la rejette sans un mot.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 26. Une configuration qui change relance l'inventaire
+     *
+     * Renommer une sortie dans l'application Shelly, changer le profil d'un
+     * 2PM, régler une entrée en bouton, ajouter un composant virtuel : tout
+     * cela change les commandes qu'il faudrait créer, et l'appareil le dit —
+     * par l'événement `config_changed`, et par sa révision de configuration.
+     * Sans cette relecture, un équipement reste figé sur l'inventaire du jour
+     * de sa découverte, et personne ne le sait.
+     * ------------------------------------------------------------------- */
+    $titre = 'une configuration qui change relance l\'inventaire, et lui seul';
+    $fautes = array();
+    $ctxChange = new MqttbeContexteEssaiGen2();
+    $adapterChange = mqttbeAdapterGen2();
+    mqttbeRejoueGen2($adapterChange, $ctxChange, $appareils['plus1pm']);
+    $prefixeChange = $appareils['plus1pm']['prefixe'];
+    $trameChange = json_encode(array(
+        'src' => $appareils['plus1pm']['deviceinfo']['id'],
+        'dst' => $prefixeChange . '/events',
+        'method' => 'NotifyEvent',
+        'params' => array('ts' => 1789644600.0, 'events' => array(
+            array('component' => 'switch:0', 'id' => 0, 'event' => 'config_changed',
+                  'restart_required' => false, 'cfg_rev' => 27, 'ts' => 1789644600.0))),
+    ));
+    $avantChange = $ctxChange->requetesVers($prefixeChange);
+
+    /* Retenu, l'événement dit un changement passé : le rejouer au démarrage du
+     * démon ferait réinterroger tout le parc sans raison. */
+    $adapterChange->onMessage($prefixeChange . '/events/rpc', $trameChange, true, $ctxChange);
+    $ctxChange->avance(1);
+    $adapterChange->onTick($ctxChange);
+    if ($ctxChange->requetesVers($prefixeChange) !== $avantChange) {
+        $fautes[] = 'un « config_changed » RETENU relance la découverte : au démarrage du démon, '
+            . 'tout le parc serait réinterrogé sur des changements vieux de plusieurs semaines.';
+    }
+
+    $adapterChange->onMessage($prefixeChange . '/events/rpc', $trameChange, false, $ctxChange);
+    $ctxChange->avance(1);
+    $adapterChange->onTick($ctxChange);
+    $requeteChange = $ctxChange->derniereRequete($prefixeChange . '/rpc');
+    /* Le compte, et pas seulement la dernière requête : la découverte vient de
+     * se terminer sur un `Shelly.GetComponents`, et lire la dernière ligne du
+     * journal des publications dirait « oui » même si rien n'était reparti. */
+    if ($ctxChange->requetesVers($prefixeChange) <= $avantChange) {
+        $fautes[] = 'aucune question n\'est repartie après « config_changed » : l\'équipement '
+            . 'gardera les commandes d\'avant jusqu\'à une relance faite à la main.';
+    } elseif ($requeteChange === null || $requeteChange['method'] !== 'Shelly.GetComponents') {
+        $fautes[] = 'après « config_changed », l\'appareil n\'est pas réinterrogé : son équipement '
+            . 'gardera les commandes d\'avant jusqu\'à une relance faite à la main.';
+    } elseif (!isset($requeteChange['params']['offset']) || (int) $requeteChange['params']['offset'] !== 0) {
+        $fautes[] = 'l\'inventaire est redemandé au milieu de la pagination, et non depuis le début.';
+    }
+    /* Et l'équipement n'est pas vidé entre la demande et la réponse : tant que
+     * l'appareil n'a pas reparlé, il garde tout ce qu'on savait de lui. */
+    $dernierChange = empty($ctxChange->modeles) ? null : $ctxChange->modeles[count($ctxChange->modeles) - 1];
+    if ($dernierChange !== null && $dernierChange->countChannels() < 5) {
+        $fautes[] = 'l\'équipement a été vidé en attendant une réponse qui n\'est pas encore venue.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 27. Un champ disparu emporte sa commande
+     *
+     * « Certaines clés de statut n'existent que dans certaines situations ;
+     * quand elles disparaissent, la charge utile les porte avec la valeur
+     * `null` » — la documentation, mot pour mot. Une sonde débranchée, un tore
+     * retiré : la commande qui les lisait n'a plus rien à lire, et la garder
+     * afficherait pour toujours la dernière valeur mesurée.
+     * ------------------------------------------------------------------- */
+    $titre = 'un champ annoncé disparu n\'est plus lu, ses voisins restent';
+    $fautes = array();
+    $ctxDisparu = new MqttbeContexteEssaiGen2();
+    $adapterDisparu = mqttbeAdapterGen2();
+    mqttbeRejoueGen2($adapterDisparu, $ctxDisparu, $appareils['plus1pm']);
+    $prefixeDisparu = $appareils['plus1pm']['prefixe'];
+    $avantDisparu = empty($ctxDisparu->modeles) ? array()
+        : mqttbeClesGen2($ctxDisparu->modeles[count($ctxDisparu->modeles) - 1]);
+    if (!in_array('switch.0.energy', $avantDisparu, true)) {
+        $fautes[] = 'la capture ne porte pas de compteur d\'énergie : le contrôle ne prouve rien.';
+    }
+    $adapterDisparu->onMessage($prefixeDisparu . '/events/rpc', json_encode(array(
+        'src' => $appareils['plus1pm']['deviceinfo']['id'],
+        'method' => 'NotifyStatus',
+        'params' => array('ts' => 1789644700.0,
+            'switch:0' => array('id' => 0, 'aenergy' => null, 'apower' => 11.0)),
+    )), false, $ctxDisparu);
+    $apresDisparu = empty($ctxDisparu->modeles) ? array()
+        : mqttbeClesGen2($ctxDisparu->modeles[count($ctxDisparu->modeles) - 1]);
+    if (in_array('switch.0.energy', $apresDisparu, true)) {
+        $fautes[] = 'le compteur d\'énergie survit à sa disparition : la commande affichera '
+            . 'éternellement la dernière valeur lue.';
+    }
+    if (!in_array('switch.0.power', $apresDisparu, true)) {
+        $fautes[] = 'la puissance a disparu avec l\'énergie : un « null » ne concerne que la clé '
+            . 'qu\'il porte.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 28. Une réponse sans « dst » est une réponse
+     *
+     * La page normative donne `dst` pour obligatoire ; les exemples engendrés
+     * du même site le montrent absent — et ce sont exactement ceux dont la clé
+     * s'appelle `params` au lieu de `result`. Exiger `dst` ferait donc jeter en
+     * silence la réponse même que le repli prétend rattraper. La corrélation
+     * par le numéro de requête suffit : ce numéro, nous seuls l'avons attribué.
+     * ------------------------------------------------------------------- */
+    $titre = 'une réponse sans « dst » est acceptée, celle d\'un autre client non';
+    $fautes = array();
+    $ctxSansDst = new MqttbeContexteEssaiGen2();
+    $adapterSansDst = mqttbeAdapterGen2();
+    $prefixeSansDst = $appareils['plus1pm']['prefixe'];
+    $idSansDst = $appareils['plus1pm']['deviceinfo']['id'];
+    $adapterSansDst->onTick($ctxSansDst);
+    $adapterSansDst->onMessage($prefixeSansDst . '/online', 'true', true, $ctxSansDst);
+    $adapterSansDst->onTick($ctxSansDst);
+    $requeteSansDst = $ctxSansDst->derniereRequete($prefixeSansDst . '/rpc');
+    if ($requeteSansDst === null) {
+        $fautes[] = 'aucune question posée : le contrôle ne prouve rien.';
+    } else {
+        /* Celle d'un autre client, qui aurait recopié le « user_1 » des
+         * exemples : elle ne nous est pas destinée. */
+        $adapterSansDst->onMessage($requeteSansDst['src'] . '/rpc', json_encode(array(
+            'id' => $requeteSansDst['id'], 'src' => $idSansDst, 'dst' => 'user_1',
+            'result' => $appareils['plus1pm']['deviceinfo'])), false, $ctxSansDst);
+        $ctxSansDst->avance(1);
+        $adapterSansDst->onTick($ctxSansDst);
+        $suite = $ctxSansDst->derniereRequete($prefixeSansDst . '/rpc');
+        if ($suite !== null && $suite['method'] !== 'Shelly.GetDeviceInfo') {
+            $fautes[] = 'la réponse adressée à « user_1 » a été prise pour la nôtre : sur un broker '
+                . 'partagé, deux Jeedom se voleraient leurs réponses.';
+        }
+        /* Et la même, sans « dst » et avec « params » : elle est bien pour nous. */
+        $adapterSansDst->onMessage($requeteSansDst['src'] . '/rpc', json_encode(array(
+            'id' => $requeteSansDst['id'], 'src' => $idSansDst,
+            'params' => $appareils['plus1pm']['deviceinfo'])), false, $ctxSansDst);
+        $ctxSansDst->avance(1);
+        $adapterSansDst->onTick($ctxSansDst);
+        $suite = $ctxSansDst->derniereRequete($prefixeSansDst . '/rpc');
+        if ($suite === null || $suite['method'] !== 'Shelly.GetComponents') {
+            $fautes[] = 'une réponse sans « dst » est jetée : la conversation s\'arrête à sa '
+                . 'première question, sans un mot dans le journal.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 29. Toutes les erreurs ne disent pas « méthode inconnue »
+     *
+     * Le repli GetStatus + GetConfig répond à UN cas : un micrologiciel qui ne
+     * connaît pas `Shelly.GetComponents`, et qui le dit par un 404 « No handler
+     * for ». Un `-103 INVALID ARGUMENT` dit autre chose ; le traiter de même
+     * écrirait dans le journal une cause fausse, et c'est ce journal qu'on lira
+     * le jour où la découverte n'aboutira pas.
+     * ------------------------------------------------------------------- */
+    $titre = 'une erreur qui n\'est pas un 404 ne se lit pas « méthode inconnue »';
+    $fautes = array();
+    $ctxErreur = new MqttbeContexteEssaiGen2();
+    $adapterErreur = mqttbeAdapterGen2();
+    $prefixeErreur = $appareils['plus1pm']['prefixe'];
+    $idErreur = $appareils['plus1pm']['deviceinfo']['id'];
+    $adapterErreur->onTick($ctxErreur);
+    $adapterErreur->onMessage($prefixeErreur . '/online', 'true', true, $ctxErreur);
+    $adapterErreur->onTick($ctxErreur);
+    mqttbeRepondGen2($adapterErreur, $ctxErreur, $prefixeErreur, $idErreur,
+                     $appareils['plus1pm']['deviceinfo']);
+    $adapterErreur->onTick($ctxErreur);
+    mqttbeRepondGen2($adapterErreur, $ctxErreur, $prefixeErreur, $idErreur, null,
+                     array('code' => -103, 'message' => 'Invalid argument offset'));
+    $ctxErreur->avance(1);
+    $adapterErreur->onTick($ctxErreur);
+    foreach ($ctxErreur->publications as $publication) {
+        $decode = json_decode($publication['payload'], true);
+        if (is_array($decode) && isset($decode['method']) && $decode['method'] === 'Shelly.GetStatus') {
+            $fautes[] = 'un « -103 » déclenche le repli des vieux micrologiciels : les deux plus '
+                . 'grosses réponses de l\'API sont demandées pour rien.';
+            break;
+        }
+    }
+    foreach ($ctxErreur->journal as $ligne) {
+        if (strpos($ligne, 'ne connaît pas Shelly.GetComponents') !== false) {
+            $fautes[] = 'le journal attribue à l\'appareil une ignorance qu\'il n\'a pas déclarée : '
+                . '« ' . $ligne . ' ».';
+            break;
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 30. Ce qui reste à dire quand le plugin ne peut rien faire
+     *
+     * Deux situations où l'équipement créé ne vaudra pas ce qu'il promet, et
+     * où la seule chose utile est de le dire :
+     *   `rpc_ntf` à `false` — toutes les commandes liront un topic que
+     *     l'appareil ne publie plus. Le plugin ne touche pas à la configuration
+     *     d'un appareil, et ce réglage n'est pas le sien ;
+     *   un inventaire amputé — l'appareil annonce plus de composants qu'il
+     *     n'en livre. Le publier comme « certain » serait un mensonge.
+     * ------------------------------------------------------------------- */
+    $titre = 'un réglage ou un inventaire qui trahit l\'équipement est dit, pas caché';
+    $fautes = array();
+    $appareilSourd = $appareils['plus1pm'];
+    $trouve = false;
+    foreach ($appareilSourd['composants'] as $index => $composant) {
+        if ($composant['key'] === 'mqtt') {
+            $appareilSourd['composants'][$index]['config']['rpc_ntf'] = false;
+            $trouve = true;
+        }
+    }
+    if (!$trouve) {
+        $fautes[] = 'la capture ne porte pas de composant « mqtt » : le contrôle ne prouve rien.';
+    }
+    $ctxSourd = new MqttbeContexteEssaiGen2();
+    mqttbeRejoueGen2(mqttbeAdapterGen2(), $ctxSourd, $appareilSourd);
+    $dit = false;
+    foreach ($ctxSourd->journal as $ligne) {
+        if (strpos($ligne, 'rpc_ntf') !== false) {
+            $dit = true;
+        }
+    }
+    if (!$dit) {
+        $fautes[] = 'un appareil dont les notifications sont coupées est découvert sans un mot : '
+            . 'toutes ses commandes resteront vides, et le journal laissera croire à une panne du '
+            . 'plugin.';
+    }
+
+    $ctxAmpute = new MqttbeContexteEssaiGen2();
+    $adapterAmpute = mqttbeAdapterGen2();
+    $prefixeAmpute = 'shellypro4pm-a8b0c1000042';
+    $adapterAmpute->onTick($ctxAmpute);
+    $adapterAmpute->onMessage($prefixeAmpute . '/online', 'true', true, $ctxAmpute);
+    $adapterAmpute->onTick($ctxAmpute);
+    mqttbeRepondGen2($adapterAmpute, $ctxAmpute, $prefixeAmpute, 'shellypro4pm-a8b0c1000042',
+        array('id' => 'shellypro4pm-a8b0c1000042', 'mac' => 'A8B0C1000042',
+              'model' => 'SPSW-004PE16EU', 'gen' => 2, 'ver' => '1.4.4', 'app' => 'Pro4PM'));
+    $adapterAmpute->onTick($ctxAmpute);
+    /* Il annonce quarante composants et en livre deux, puis plus rien. */
+    mqttbeRepondGen2($adapterAmpute, $ctxAmpute, $prefixeAmpute, 'shellypro4pm-a8b0c1000042',
+        array('components' => array(
+            array('key' => 'switch:0', 'status' => array('id' => 0, 'output' => true),
+                  'config' => array('id' => 0, 'name' => null)),
+            array('key' => 'sys', 'status' => array('mac' => 'A8B0C1000042', 'uptime' => 12),
+                  'config' => array())),
+              'cfg_rev' => 9, 'offset' => 0, 'total' => 40));
+    $adapterAmpute->onTick($ctxAmpute);
+    mqttbeRepondGen2($adapterAmpute, $ctxAmpute, $prefixeAmpute, 'shellypro4pm-a8b0c1000042',
+        array('components' => array(), 'cfg_rev' => 9, 'offset' => 2, 'total' => 40));
+    $ctxAmpute->avance(1);
+    $adapterAmpute->onTick($ctxAmpute);
+    if (empty($ctxAmpute->modeles)) {
+        $fautes[] = 'un inventaire amputé ne donne aucun équipement : ce qui est connu vaut mieux '
+            . 'que rien.';
+    } else {
+        $modeleAmpute = $ctxAmpute->modeles[count($ctxAmpute->modeles) - 1];
+        if ($modeleAmpute->confidence() === 'certain') {
+            $fautes[] = 'deux composants sur quarante, et l\'équipement est « certain » : la '
+                . 'confiance ne sert plus à rien si elle ne dit pas cela.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 31. Une capture RÉELLE, rejouée telle quelle
+     *
+     * Tous les contrôles qui précèdent rejouent des conversations
+     * reconstituées d'après la documentation : ils prouvent que l'adapter fait
+     * ce qu'on a voulu, jamais qu'un Shelly réel réponde ainsi. Celui-ci est
+     * d'une autre nature. Il rejoue l'octet qu'un Shelly 1 Mini Gen3 en
+     * micrologiciel 2.0.0 a publié le 20 septembre 2026, anonymisé et rien de
+     * plus — ordre des clés, valeurs nulles, pagination comprises.
+     *
+     * Et cette pagination-là, aucune lecture de la documentation ne permettait
+     * de la deviner : l'appareil annonce QUATORZE composants, en livre ONZE à
+     * l'offset 0, et les trois derniers à l'offset 11. Un adapter qui
+     * supposerait une page entière, ou une taille de page fixe, perdrait
+     * silencieusement `sys`, `wifi` et `ws` — c'est-à-dire la durée de
+     * fonctionnement, le signal et rien de moins.
+     * ------------------------------------------------------------------- */
+    $titre = 'capture réelle : la conversation d\'un Gen3 en 2.0.0, rejouée octet pour octet';
+    $fautes = array();
+    $reelle = mqttbeLitJsonGen2('capture-reelle.json');
+    if ($reelle === null || !isset($reelle['appareil']['deviceinfo'])) {
+        $resultats[] = mqttbeIndecis($titre, 'tests/fixtures/shelly/gen2/capture-reelle.json est '
+            . 'absent ou illisible.');
+    } else {
+        $vrai      = $reelle['appareil'];
+        $prefixeR  = $vrai['deviceinfo']['id'];
+        $ctxReel   = new MqttbeContexteEssaiGen2();
+        $adapterR  = mqttbeAdapterGen2();
+        $adapterR->onTick($ctxReel);
+        $adapterR->onMessage($prefixeR . '/online', 'true', true, $ctxReel);
+        $adapterR->onTick($ctxReel);
+
+        /* On ne répond QUE ce que l'appareil a réellement répondu. Une question
+         * que la capture ne couvre pas est une question qu'il n'a jamais reçue,
+         * et l'inventer reviendrait à retomber dans la conversation imaginaire
+         * que ce contrôle sert justement à quitter. */
+        $demandes = array();
+        for ($tour = 0; $tour < 8; $tour++) {
+            $requete = $ctxReel->derniereRequete($prefixeR . '/rpc');
+            if ($requete === null) {
+                break;
+            }
+            $signature = $requete['method']
+                . (isset($requete['params']['offset']) ? ':' . $requete['params']['offset'] : '');
+            if (in_array($signature, $demandes, true)) {
+                break;
+            }
+            $demandes[] = $signature;
+            $resultat = null;
+            if ($requete['method'] === 'Shelly.GetDeviceInfo') {
+                $resultat = $vrai['deviceinfo'];
+            } elseif ($requete['method'] === 'Shelly.GetComponents') {
+                foreach ($vrai['pages'] as $page) {
+                    if ((int) $page['offset'] === (int) $requete['params']['offset']) {
+                        $resultat = $page;
+                    }
+                }
+            }
+            if ($resultat === null) {
+                $fautes[] = 'l\'adapter demande « ' . $signature . ' », ce que l\'appareil réel n\'a '
+                    . 'jamais eu à répondre : la pagination ne suit pas ce que la capture montre.';
+                break;
+            }
+            mqttbeRepondGen2($adapterR, $ctxReel, $prefixeR, $prefixeR, $resultat);
+            $ctxReel->avance(1);
+            $adapterR->onTick($ctxReel);
+        }
+
+        $attendues = array('Shelly.GetDeviceInfo', 'Shelly.GetComponents:0', 'Shelly.GetComponents:11');
+        if ($demandes !== $attendues) {
+            $fautes[] = 'conversation « ' . implode(' | ', $demandes) . " » au lieu de «\u{a0}"
+                . implode(' | ', $attendues) . ' ».';
+        }
+
+        if (empty($ctxReel->modeles)) {
+            $fautes[] = 'aucun équipement : la conversation réelle n\'aboutit pas.';
+        } else {
+            $modeleReel = $ctxReel->modeles[count($ctxReel->modeles) - 1];
+            if ($modeleReel->uid() !== 'shelly:a8b0c1000050') {
+                $fautes[] = 'uid « ' . $modeleReel->uid() . ' » : la MAC de la capture est ailleurs.';
+            }
+            if ($modeleReel->confidence() !== 'certain') {
+                $fautes[] = 'confiance « ' . $modeleReel->confidence() . ' » après une conversation '
+                    . 'complète et paginée jusqu\'au bout.';
+            }
+            $clesReelles = mqttbeClesGen2($modeleReel);
+            $exigees = array('online', 'switch.0.state', 'switch.0.on', 'switch.0.off',
+                             'switch.0.toggle', 'switch.0.temperature', 'input.0.state',
+                             'wifi.rssi', 'wifi.status', 'cloud.connected', 'sys.uptime',
+                             'sys.ram_free', 'sys.restart', 'event.name', 'event.component');
+            foreach ($exigees as $cleExigee) {
+                if (!in_array($cleExigee, $clesReelles, true)) {
+                    $fautes[] = 'commande « ' . $cleExigee . ' » absente (obtenues : '
+                        . implode(', ', $clesReelles) . ').';
+                }
+            }
+            /* L'appareil n'a QUE des mises à jour bêta en attente : sa clé
+             * `available_updates` ne porte pas de `stable`. Créer la commande
+             * reviendrait à afficher « null » pour toujours. C'est le seul
+             * contrôle du dépôt où cette forme vienne d'un vrai appareil. */
+            if (in_array('sys.update', $clesReelles, true)) {
+                $fautes[] = 'une commande de mise à jour a été créée alors que l\'appareil ne '
+                    . 'propose qu\'une bêta : elle n\'afficherait jamais rien.';
+            }
+            /* Un Shelly 1 Mini Gen3 n'a pas de wattmètre. */
+            foreach (array('switch.0.power', 'switch.0.energy', 'switch.0.voltage') as $absente) {
+                if (in_array($absente, $clesReelles, true)) {
+                    $fautes[] = 'commande « ' . $absente . ' » inventée : cet appareil ne publie '
+                        . 'aucune mesure de puissance.';
+                }
+            }
+
+            /* Et la vraie notification, telle qu'elle est arrivée : elle ne
+             * porte qu'un sous-ensemble de champs déjà connus, donc elle ne
+             * doit RIEN reconstruire. */
+            if (isset($vrai['notifystatus'])) {
+                $avantNotif = count($ctxReel->modeles);
+                $adapterR->onMessage($prefixeR . '/events/rpc',
+                    json_encode($vrai['notifystatus']), false, $ctxReel);
+                if (count($ctxReel->modeles) !== $avantNotif) {
+                    $fautes[] = 'une notification de télémétrie ordinaire fait reconstruire le '
+                        . 'modèle : sur un compteur d\'énergie, ce serait plusieurs fois par seconde.';
+                }
+            }
+        }
+
+        /*
+         * Le repli des vieux micrologiciels, sur les mêmes charges utiles
+         * réelles — et la limite qu'il porte, vérifiée sur un vrai appareil :
+         * `Shelly.GetStatus` et `Shelly.GetConfig` n'énumèrent PAS les
+         * composants dynamiques. Les deux capteurs BTHome appairés à cet
+         * appareil figurent dans `Shelly.GetComponents` et dans aucune des deux
+         * autres réponses.
+         */
+        if (isset($vrai['status'], $vrai['config'])) {
+            $dynamiques = 0;
+            foreach ($vrai['pages'] as $page) {
+                foreach ($page['components'] as $composant) {
+                    if (strpos($composant['key'], 'bthomedevice:') === 0) {
+                        $dynamiques++;
+                    }
+                }
+            }
+            if ($dynamiques === 0) {
+                $fautes[] = 'la capture ne porte aucun composant dynamique : le contrôle du repli '
+                    . 'ne prouve rien.';
+            }
+            foreach (array('status', 'config') as $quoi) {
+                foreach (array_keys($vrai[$quoi]) as $cleReponse) {
+                    if (strpos($cleReponse, 'bthomedevice:') === 0) {
+                        $fautes[] = 'Shelly.Get' . ucfirst($quoi) . ' énumère « ' . $cleReponse
+                            . ' » : la capture contredit ce que le repli suppose.';
+                    }
+                }
+            }
+        }
+        $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+    }
 
     return $resultats;
 }

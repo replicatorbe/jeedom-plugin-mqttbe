@@ -10,9 +10,11 @@ première fois.
 Chaque jalon a un critère d'acceptation vérifiable. Un jalon n'est pas terminé
 tant que son critère ne passe pas sur du vrai matériel et un vrai broker.
 
-**État au 17 septembre 2026 : jalons 0, 1, 2 et 4 terminés et éprouvés** sur un
-Mosquitto 1.5.7 et un parc Shelly réel. **Le jalon 3 est écrit et contrôlé hors
-ligne, mais pas éprouvé** : voir ci-dessous.
+**État au 20 septembre 2026 : jalons 0, 1, 2 et 4 terminés et éprouvés** sur un
+Mosquitto 1.5.7 et un parc Shelly réel. **Le jalon 3 l'est désormais lui aussi,
+mais pour un seul modèle** : trois Shelly 1 Mini Gen3 en micrologiciel 2.0.0,
+découverts seuls, avec quinze commandes chacun. Volets, lumières et compteurs
+d'énergie restent écrits d'après la documentation — voir ci-dessous.
 
 Deux choses ont bougé depuis, et l'ordre ci-dessous n'en rendait plus compte :
 
@@ -37,9 +39,19 @@ L'adapter a donc été écrit d'après la documentation officielle et contrôlé
 des conversations reconstituées, avec exactement la réserve que ce plan
 annonçait : **un jeu de données écrit d'après une lecture de la documentation
 encode la compréhension qu'on en a, et peut donc confirmer une erreur qu'on
-partagerait avec lui.** Les vingt-deux contrôles de `tests/check-shelly-gen2.php`
+partagerait avec lui.** Les trente contrôles de `tests/check-shelly-gen2.php`
 établissent que l'adapter fait ce qu'on a voulu, jamais qu'un Shelly réel répond
 ainsi.
+
+**Cette réserve s'est vérifiée.** L'adapter a été relu une seconde fois, ligne
+par ligne, contre les pages officielles — transport MQTT, méthodes
+d'énumération, composants champ par champ, notifications — et cette relecture a
+trouvé ce que les contrôles ne pouvaient pas trouver, puisqu'ils partageaient
+les hypothèses de l'adapter : deux commandes que l'appareil aurait refusées ou
+plafonnées, une voie de découverte entière déclarée impossible à tort, un
+inventaire qui ne se rafraîchissait jamais. Le détail est au jalon 3. La leçon,
+elle, tient en une phrase : **contre une documentation, le contrôle utile n'est
+pas le test qu'on écrit, c'est la relecture qu'on refait.**
 
 **La validation sur matériel reste donc entière, et le critère d'acceptation
 n'est pas atteint.** Trois points en particulier ne se tranchent pas sans
@@ -114,7 +126,7 @@ base sur re-réception d'une découverte identique.
 
 ---
 
-## Jalon 3 — Shelly Gen2 / Gen3 / Gen4 *(écrit, non éprouvé)*
+## Jalon 3 — Shelly Gen2 / Gen3 / Gen4 *(éprouvé sur Gen3, partiellement)*
 
 - Adapter `shelly.gen2` : écoute de `+/online` et `+/events/rpc` — les deux
   seuls topics actifs par défaut sur un Shelly moderne.
@@ -123,9 +135,15 @@ base sur re-réception d'une découverte identique.
   `Shelly.GetStatus` + `Shelly.GetConfig` pour les firmwares plus anciens.
 - Modélisation des composants : `switch`, `cover`, `light`, `rgb`, `rgbw`,
   `cct`, `input`, `pm1`, `em`, `em1`, `emdata`, `temperature`, `humidity`,
-  `voltmeter`, `devicepower`, `smoke`, `flood`, `gas`, composants virtuels
+  `voltmeter`, `devicepower`, `smoke`, `flood`, ~~`gas`~~, composants virtuels
   (`boolean`, `number`, `text`, `enum`). Le `profile` du périphérique tranche
   `switch` contre `cover`.
+
+  **`gas` n'existe pas en génération 2** : ce plan se trompait. La page
+  `ComponentsAndServices/Gas` n'existe pas, le changelog Gen2 ne mentionne
+  jamais `Gas.`, et le détecteur de gaz est un appareil de génération 1, dont
+  l'adapter `shelly.gen1` s'occupe déjà. Le vocabulaire garde `alarm.gas` et
+  `sensor.co2` pour lui.
 - Lecture par `NotifyStatus`, écriture par RPC (`Switch.Set`, `Switch.Toggle`,
   `Cover.GoToPosition`, `Light.Set`…), disponibilité par `<prefix>/online`.
 - `NotifyEvent` → commandes d'événement (`btn_down`, `single_push`,
@@ -170,26 +188,128 @@ qui valide toute l'approche.
 - `Shelly.ListMethods` n'est pas appelée : une requête de plus pour deviner ce
   qu'une erreur dit déjà.
 
-**Les trois points qui ne se trancheront que sur matériel :**
+**Ce qu'une relecture systématique de la documentation a corrigé ensuite**, et
+qui n'était pas dans l'écriture initiale :
 
-1. **`shellies/command` + `announce` répond-il vraiment sur un Gen2 ?** La
-   documentation officielle l'affirme, un fil communautaire affirme le
-   contraire, et aucune des intégrations existantes ne s'en sert — toutes font
-   saisir la liste des appareils à la main. Si cela répond, la découverte est
-   immédiate ; sinon, `online` et `events/rpc` la font quand même. L'essai coûte
-   une minute et vaut d'être fait en premier.
-2. **Le champ `src` d'une notification reste-t-il l'identifiant de l'appareil
-   quand un préfixe personnalisé est défini ?** Les deux exemples observés dans
-   la nature avaient un préfixe d'usine, donc indiscernable.
-3. **Le délai de réponse réel d'un appareil sur secteur.** Aucun chiffre n'est
-   documenté ; cinq secondes et trois tentatives sont un pari généreux, à
-   ajuster.
+- **Il y a une QUATRIÈME voie de découverte, et l'en-tête de l'adapter disait
+  l'inverse.** « MQTT control » — `enable_control` vaut `true` d'usine depuis la
+  version 0.14.0 — fait répondre l'appareil à deux commandes publiées sur
+  `<P>/command` : `announce` rend l'identité sur `<P>/announce`, `status_update`
+  rend le statut complet sur `<P>/status`. Ce n'est pas `status_ntf`, que le
+  critère d'acceptation interdit de toucher : ces topics ne publient rien
+  spontanément, ils répondent. L'adapter s'en sert désormais APRÈS le silence du
+  RPC, et c'est la seule voie qui reste ouverte quand `enable_rpc` a été coupé.
+- **Deux commandes étaient inutilisables**, et rien ne pouvait le montrer sans
+  matériel ni sans relire la documentation champ par champ : la voie blanche se
+  règle de 0 à 255 et recevait un curseur 0-100 — elle plafonnait à 39 % de sa
+  puissance ; la température de couleur se règle en KELVINS et recevait le même
+  curseur — toutes ses positions étaient refusées par l'appareil. Le modèle sait
+  maintenant porter l'échelle et les bornes d'un curseur (`value.slider`), ce
+  dont profite aussi le nombre virtuel, qui a les bornes que son propriétaire
+  lui a données.
+- **Un « online » à `false` est un testament, publié par le broker et retenu.**
+  Il déclenchait une conversation RPC avec un appareil débranché, à chaque
+  démarrage du démon.
+- **Un inventaire ne se rafraîchissait jamais.** `config_changed`,
+  `component_added`, `component_removed` et la révision `sys.cfg_rev` remettent
+  désormais l'énumération en route — pour cet appareil-là seulement.
+- **Un champ disparu laissait sa commande derrière lui.** La documentation dit
+  qu'une clé qui disparaît revient à `null` ; elle survivait à la fusion des
+  deltas.
+- **Un événement retenu ne se route plus.** L'adapter s'en gardait pendant la
+  découverte ; le routage le servait quand même à Jeedom une fois l'équipement
+  créé, c'est-à-dire là où un scénario part. Les canaux portent désormais
+  `repeat.ignore_retained`, que la table de routage transmet et que le démon
+  applique — par cible, jamais globalement : pour une commande d'état, la valeur
+  rejouée par le broker EST la valeur courante, et la refuser laisserait la
+  commande vide jusqu'à la prochaine publication de l'appareil.
+- Corrections plus petites, toutes documentées : un `dst` absent ne fait plus
+  jeter la réponse (les exemples engendrés du site n'en portent pas), seul un
+  404 déclenche le repli des vieux micrologiciels, un inventaire tronqué reste
+  `probable` au lieu de passer `certain`, les actions idempotentes publient en
+  QoS 1 — le seul niveau que la documentation reconnaisse sur ce canal —, un
+  texte contenant un guillemet ne brise plus la charge utile, `rpc_ntf` à
+  `false` est dit au journal, et le sommeil d'un appareil se lit dans
+  `sys.wakeup_period` plutôt que dans un catalogue écrit à la main.
+- Composants ajoutés d'après la documentation : `rgbcct`, le bouton virtuel
+  (`Button.Trigger`), `Smoke.Mute` et l'état `mute`, `cloud.connected`,
+  `wifi.status`, `illuminance.illumination`, l'état textuel d'un volet — qui est
+  la seule information d'un volet non calibré —, et les mesures converties d'une
+  entrée (`xpercent`, `counts.xtotal`, `freq`, `xfreq`).
+- La frontière du repli n'est pas « avant la 1.0 » mais **avant la 1.2.0** : des
+  appareils en 1.0.3 refusent `Shelly.GetComponents`.
 
-**Et une limite qui, elle, ne se corrigera pas** : `events/rpc` n'étant pas
-retenu, les commandes gardent leur dernière valeur au redémarrage du démon
-jusqu'à ce que l'appareil reparle. `NotifyFullStatus` n'est poussé sur MQTT que
-par les appareils sur pile, et `status/<composant>` suppose de retourner
-`status_ntf` sur l'appareil — ce que le critère d'acceptation interdit.
+**CE QUE LE MATÉRIEL A DIT — 20 septembre 2026.**
+
+Trois Shelly 1 Mini Gen3 (S3SW-001X8EU, micrologiciel **2.0.0**) et un Shelly
+Plus Smoke se sont révélés joignables sur le broker de production. Ils étaient
+là depuis le début ; personne ne les avait cherchés sur MQTT. Le critère
+d'acceptation est donc **atteint pour ce modèle** : les trois appareils sont
+apparus seuls, sans que rien ne soit touché dans leur configuration, avec
+quinze commandes chacun — état, trois actions, température interne, entrée,
+signal, état Wi-Fi, liaison au cloud, durée de fonctionnement, mémoire libre,
+redémarrage, les deux commandes d'événement et la disponibilité.
+
+Ce que cette confrontation a appris, et qu'aucune lecture ne donnait :
+
+1. **`shellies/command` + `announce` RÉPOND sur un Gen3.** La documentation avait
+   raison, le fil communautaire avait tort : l'appareil publie son identité sur
+   `shellies/announce` **et** sur `<P>/announce`, avec la charge utile de
+   `Shelly.GetDeviceInfo`. La découverte est donc immédiate, sans attendre qu'un
+   état change.
+2. **`<P>/online` à `true` EST retenu.** Vérifié sur les quatre appareils, le
+   détecteur de fumée endormi compris. L'argument « tout le parc se signale au
+   démarrage du démon » tient.
+3. **La pagination de `Shelly.GetComponents` n'a rien d'une page fixe.**
+   L'appareil annonce quatorze composants, en livre **onze** à l'offset 0 et les
+   **trois** derniers à l'offset 11 — la coupe suit la taille de la trame, pas un
+   nombre. Un adapter qui supposerait une page entière perdrait `sys`, `wifi` et
+   `ws`, c'est-à-dire la durée de fonctionnement et le signal.
+4. **`Shelly.GetStatus` et `Shelly.GetConfig` n'énumèrent pas les composants
+   dynamiques.** Les deux capteurs BTHome appairés à l'appareil figurent dans
+   `Shelly.GetComponents` et dans aucune des deux autres réponses. La réserve
+   écrite plus haut est donc exacte, et elle vient maintenant d'un appareil.
+5. **Le délai de réponse est d'environ 200 ms** sur secteur. Cinq secondes et
+   trois tentatives sont très généreux ; rien ne presse de les réduire.
+6. **`available_updates` peut ne porter qu'une bêta.** C'est le cas de ces
+   appareils, et c'est exactement la forme qui faisait afficher « null » pour
+   toujours avant correction.
+7. **`NotifyStatus` porte bien `dst: "<préfixe>/events"`** sur MQTT — la forme
+   que les captures reconstituées supposaient sans pouvoir la vérifier.
+
+La conversation complète est conservée, anonymisée, dans
+`tests/fixtures/shelly/gen2/capture-reelle.json`, et rejouée octet pour octet
+par un contrôle dédié. **C'est la seule capture du dépôt dont on puisse dire
+qu'un Shelly réel répond ainsi.**
+
+**Ce qui reste à éprouver**, et qui demande du matériel qu'on n'a pas :
+
+1. **Un appareil à préfixe de topic personnalisé.** Le champ `src` d'une
+   notification y reste-t-il l'identifiant de l'appareil ? Aucune page ne le dit,
+   et les quatre appareils du parc ont le préfixe d'usine. Sans conséquence
+   grave : la MAC n'est acceptée que sous la forme de douze caractères
+   hexadécimaux, un préfixe personnalisé n'en fabriquera donc pas une fausse.
+2. **Un volet, une lumière, un compteur d'énergie, un appareil sur pile
+   éveillé.** Le seul modèle éprouvé est un interrupteur sans wattmètre : tout ce
+   qui touche à `cover`, `light`, `rgbw`, `cct`, `em` et `devicepower` reste
+   écrit d'après la documentation. Le détecteur de fumée du parc, lui, dort — il
+   n'a livré que sa disponibilité, ce qui est le comportement attendu.
+3. **Un micrologiciel antérieur à la 1.2.0**, pour éprouver le repli
+   `GetStatus` + `GetConfig` sur l'appareil qui le rend nécessaire. Les charges
+   utiles de ces deux méthodes, elles, sont capturées.
+
+**Et deux limites qui ne se corrigeront pas ici** :
+
+- `events/rpc` n'étant pas retenu, les commandes gardent leur dernière valeur au
+  redémarrage du démon jusqu'à ce que l'appareil reparle. `NotifyFullStatus`
+  n'est poussé sur MQTT que par les appareils sur pile, et `<P>/status` ne
+  répond qu'à une demande — il sert la découverte, pas l'état courant, qu'une
+  commande lit sur un topic et un seul ;
+- un `NotifyEvent` peut porter plusieurs événements à la fois, et les commandes
+  d'événement lisent le premier. Un sélecteur est un chemin par points, et un
+  chemin ne parcourt pas un tableau : c'est le langage de sélecteurs du noyau
+  qu'il faudrait étendre, pas cet adapter. Même cause pour `errors[]`, que le
+  routeur écarte comme tout tableau.
 
 ---
 

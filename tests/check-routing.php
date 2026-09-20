@@ -129,6 +129,12 @@ function mqttbeControlesRoutage() {
     $arrondi = mqttbeCmdEssai($beta, 'Température',
         array('topic' => 'essai/temp', 'round' => '0', 'keepalive' => '60', 'repeat' => 'always'));
     $muette = mqttbeCmdEssai($eteint, 'Muette', array('topic' => 'essai/zoulou'));
+    /* Une commande qui lit un ÉVÉNEMENT : ce que le broker rejoue ne doit pas
+     * l'alimenter, sans quoi un appui sur un bouton vieux de trois semaines
+     * déclencherait un scénario au démarrage du démon. */
+    $evenement = mqttbeCmdEssai($beta, 'Dernier événement',
+        array('topic' => 'essai/events/rpc', 'path' => 'params.events.0.event',
+              'repeat' => 'always', 'ignore_retained' => '1'), 'info', 'string');
 
     $table = mqttbeRouting::build();
 
@@ -293,6 +299,21 @@ function mqttbeControlesRoutage() {
                           . ' au lieu de ' . var_export($valeur, true);
             }
         }
+    }
+    /* Le drapeau des événements voyage jusqu'au démon, et il vaut zéro partout
+     * ailleurs : des milliers de commandes d'état comptent dessus pour que le
+     * broker leur rejoue bien leur dernière valeur au démarrage. */
+    $cible = mqttbeCible($table, $evenement->getId());
+    if ($cible === null || !isset($cible['repeat']['ignore_retained'])
+        || $cible['repeat']['ignore_retained'] !== 1) {
+        $fautes[] = 'la commande d\'événement ne dit pas au démon d\'ignorer ce que le broker '
+            . 'rejoue : au démarrage, elle rejouera le dernier appui reçu.';
+    }
+    $cible = mqttbeCible($table, $puissance->getId());
+    if ($cible !== null && isset($cible['repeat']['ignore_retained'])
+        && $cible['repeat']['ignore_retained'] !== 0) {
+        $fautes[] = 'une commande d\'état refuse les messages retenus : elle resterait vide '
+            . 'jusqu\'à la prochaine publication de l\'appareil, qui peut ne jamais venir.';
     }
     $cible = mqttbeCible($table, $arrondi->getId());
     if ($cible !== null && ($cible['repeat']['mode'] !== 'always' || $cible['repeat']['keepalive'] !== 60)) {

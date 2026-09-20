@@ -48,7 +48,14 @@ Trois conséquences pratiques, et il vaut mieux les connaître :
 - **il n'y a rien à régler sur l'appareil**, hormis activer MQTT — ce que vous
   devez faire de toute façon. Les réglages « notifications RPC » et « contrôle
   MQTT » sont actifs en sortie d'usine, et le plugin ne vous demandera pas d'y
-  toucher ;
+  toucher. Si l'un d'eux a été coupé chez vous, il le dit dans son journal :
+  sans les notifications RPC, un appareil se découvre normalement et toutes ses
+  commandes restent vides, ce qui ressemble à une panne du plugin sans en être
+  une ;
+- **un appareil qui ne répond pas est relancé autrement.** Le plugin commence
+  par lui poser des questions ; s'il reste muet, il lui demande simplement de
+  s'annoncer et de publier son état, ce à quoi un Shelly répond même quand ses
+  appels RPC ont été désactivés ;
 - **le nom que vous avez donné à l'appareil dans l'application Shelly est
   repris**, ainsi que celui de chaque sortie s'il y en a plusieurs. Le plugin
   n'a pas besoin d'aller le chercher sur l'appareil comme il le fait pour la
@@ -69,13 +76,16 @@ bas.
 
 Autant le dire tout de suite, pour que personne n'attende en vain :
 
-- **la découverte des Gen2+ n'a pas encore été éprouvée sur du matériel réel.**
-  Elle est écrite d'après la documentation officielle du constructeur et
-  vérifiée sur des conversations reconstituées, faute d'appareil disponible au
-  moment de l'écrire. Cela veut dire quelque chose de précis : les contrôles
-  prouvent que le plugin fait ce qu'on a voulu, pas qu'un Shelly réel répond
-  ainsi. Si un appareil ne se présente pas comme il le devrait, c'est un défaut
-  attendu et non une surprise — signalez-le, il sera corrigé ;
+- **la découverte des Gen2+ n'est éprouvée que sur un modèle.** Trois Shelly 1
+  Mini Gen3 sont découverts seuls, avec toutes leurs commandes, et leur
+  conversation est rejouée par le banc d'essai. Tout le reste — volets,
+  lumières, bandeaux, compteurs d'énergie, capteurs sur pile éveillés — est
+  écrit d'après la documentation officielle du constructeur et vérifié sur des
+  conversations reconstituées. Cela veut dire quelque chose de précis : pour ces
+  appareils-là, les contrôles prouvent que le plugin fait ce qu'on a voulu, pas
+  qu'un Shelly réel répond ainsi. Si l'un d'eux ne se présente pas comme il le
+  devrait, c'est un défaut attendu et non une surprise — signalez-le, il sera
+  corrigé ;
 - **les valeurs d'un Gen2 ne sont pas rafraîchies au redémarrage de Jeedom.**
   Un Gen2 n'annonce ses mesures qu'au moment où elles changent, et rien de ce
   qu'il publie n'est conservé par le broker. Les commandes gardent donc la
@@ -88,7 +98,9 @@ Autant le dire tout de suite, pour que personne n'attende en vain :
   même message ; le plugin en fait deux commandes, *Dernier événement* et
   *Composant de l'événement*. Un scénario qui veut réagir au double appui de la
   deuxième entrée teste les deux. C'est moins direct qu'une commande par
-  entrée, et tout aussi exact ;
+  entrée, et tout aussi exact. Un même message peut d'ailleurs porter plusieurs
+  appuis — deux boutons pressés en même temps sur un i4 —, et seul le premier
+  est remonté ;
 - **Tasmota**, **Zigbee2MQTT** et le protocole d'annonce de **Home Assistant**
   viendront ensuite.
 

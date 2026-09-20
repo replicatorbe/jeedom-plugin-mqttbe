@@ -911,9 +911,35 @@ class mqttbeFactory {
             if ($encoding !== '') {
                 $_cmd->setConfiguration('encoding', $encoding);
             }
+            /*
+             * Les bornes et l'échelle d'un curseur.
+             *
+             * Un curseur sans bornes va de 0 à 100 : c'est le défaut du cœur, et
+             * il convient à tout ce qui se règle en pourcents. Il ne convient
+             * pas à une température de couleur, qui se règle en kelvins entre
+             * 2700 et 6500 — un curseur 0-100 n'y produit que des valeurs que
+             * l'appareil refuse, et la commande ne fait jamais rien.
+             *
+             * L'échelle, elle, répond au cas inverse : le curseur garde ses
+             * pourcents, parce que le widget de lumière les suppose, et c'est la
+             * valeur publiée qui est convertie dans l'unité de l'appareil.
+             *
+             * Les quatre réglages viennent du modèle, donc de l'adapter, qui
+             * seul sait ce que l'appareil accepte. Ils ne sont écrits que s'il
+             * en parle : une commande déjà bornée à la main n'est pas touchée
+             * par un modèle qui se tait.
+             */
+            $curseur = array();
+            if (isset($_channel['value']['slider']) && is_array($_channel['value']['slider'])) {
+                $curseur = $_channel['value']['slider'];
+            }
             self::applyTuning($_cmd, array(
                 'qos'    => isset($sink['qos']) ? (int) $sink['qos'] : null,
                 'retain' => isset($sink['retain']) ? (int) ((bool) $sink['retain']) : null,
+                'minValue'     => self::pick(array($curseur), 'min'),
+                'maxValue'     => self::pick(array($curseur), 'max'),
+                'slider_scale' => self::pick(array($curseur), 'scale'),
+                'slider_round' => self::pick(array($curseur), 'round'),
             ), array('qos' => 0, 'retain' => 0), $_isNew);
             return;
         }
@@ -963,6 +989,10 @@ class mqttbeFactory {
             'repeat'      => self::pick(array($repeat), 'mode'),
             'keepalive'   => self::pick(array($repeat), 'keepalive'),
             'minInterval' => self::pick(array($repeat), 'minInterval'),
+            /* Une commande qui lit un événement et non un état : le démon ne
+             * doit pas la remplir avec ce que le broker rejoue. */
+            'ignore_retained' => isset($repeat['ignore_retained'])
+                               ? (int) ((bool) $repeat['ignore_retained']) : null,
         ), array(
             /* Aucun défaut pour map, scale, offset et round : une clé écrite à
              * vide n'est pas une clé absente, et un lecteur qui interroge

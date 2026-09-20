@@ -354,9 +354,12 @@ class MqttbeRouter {
             }
         }
 
-        $always = false; $keepalive = 300; $minInterval = 0;
+        $always = false; $keepalive = 300; $minInterval = 0; $skipRetained = false;
         if (isset($_raw['repeat']) && is_array($_raw['repeat'])) {
             $repeat = $_raw['repeat'];
+            if (isset($repeat['ignore_retained'])) {
+                $skipRetained = (bool) $repeat['ignore_retained'];
+            }
             if (isset($repeat['mode'])) {
                 $always = ((string) $repeat['mode'] === 'always');
             }
@@ -383,6 +386,7 @@ class MqttbeRouter {
             'always'      => $always,
             'keepalive'   => $keepalive,
             'minInterval' => $minInterval,
+            'skipRetained' => $skipRetained,
         );
     }
 
@@ -427,9 +431,12 @@ class MqttbeRouter {
      * et n'alloue que ce qui sert : au mieux (topic sans cible déjà vu) elle
      * coûte un isset et un incrément.
      *
-     * $_retained est reçu pour mémoire : un état rejoué par le broker est
-     * l'état courant de l'appareil, et il se route exactement comme un autre.
-     * C'est la découverte, au jalon suivant, qui aura besoin de la nuance.
+     * $_retained sépare deux choses que le broker mélange. Un ÉTAT rejoué est
+     * l'état courant de l'appareil : il se route exactement comme un autre, et
+     * c'est même tout l'intérêt d'un message retenu. Un ÉVÉNEMENT rejoué, lui,
+     * dit un geste passé — un appui sur un bouton, vieux de trois semaines — et
+     * le router déclencherait, au démarrage du démon, un scénario que personne
+     * n'a demandé. Les cibles qui le savent portent `ignore_retained`.
      */
     public function route($_topic, $_payload, $_qos = 0, $_retained = false) {
         $this->received++;
@@ -454,6 +461,12 @@ class MqttbeRouter {
 
             foreach ($indices as $index) {
                 $target = $this->targets[$index];
+
+                /* Un événement rejoué par le broker n'a pas lieu maintenant. */
+                if ($_retained && $target['skipRetained']) {
+                    $this->ignored++;
+                    continue;
+                }
 
                 if ($target['path'] === null) {
                     $value = $payload;

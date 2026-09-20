@@ -1,7 +1,7 @@
 {
     "id": "mqttbe",
     "name": "MQTT BE",
-    "pluginVersion": "0.6",
+    "pluginVersion": "0.7",
     "description": {
         "fr_FR": "Relie Jeedom à un broker MQTT et découvre tout seul les équipements qui s'y annoncent. Les Shelly sont reconnus de la première à la quatrième génération : le plugin interroge l'appareil au lieu de chercher sa fiche dans un catalogue, et crée ses commandes avec leurs unités et leurs types génériques, énergies converties en kWh comprises. Les Gen2+ sont découverts par leur protocole RPC, porté par MQTT lui-même : rien à régler sur l'appareil, et les capteurs sur pile ne sont jamais réveillés pour rien. Les passerelles OpenMQTTGateway et leurs capteurs Bluetooth le sont aussi. Tasmota, Zigbee2MQTT et le Home Assistant Discovery viendront ensuite. La création manuelle reste possible pour tout le reste. Il ne demande que l'adresse du broker et n'installe aucune dépendance.",
         "en_US": "Connects Jeedom to an MQTT broker and discovers by itself the devices announcing themselves on it. Shelly devices are recognised from the first generation to the fourth: the plugin asks the device what it can do rather than looking its model up in a catalogue, and builds commands with their units and Jeedom generic types, energy readings converted to kWh included. Gen2+ devices are discovered through their RPC protocol, carried over MQTT itself: nothing to change on the device, and battery sensors are never woken for nothing. OpenMQTTGateway bridges and their Bluetooth sensors are covered too. Tasmota, Zigbee2MQTT and Home Assistant Discovery will follow. Anything else can still be created by hand. It only asks for the broker address and installs no dependency."

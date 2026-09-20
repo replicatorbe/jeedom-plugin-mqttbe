@@ -337,6 +337,19 @@ class mqttbeRouting {
              * désactive la réémission. */
             'keepalive'   => max(0, (int) $keepalive),
             'minInterval' => max(0, $minInterval),
+            /*
+             * « Ce message dit un geste, pas un état. »
+             *
+             * Le broker rejoue les messages retenus à chaque abonnement, donc à
+             * chaque démarrage du démon. Pour un état, c'est exactement ce qu'on
+             * veut. Pour un appui sur un bouton, cela déclenche des semaines
+             * plus tard un scénario que personne n'a demandé — et le coupable
+             * est introuvable, puisque le message porte la date du jour.
+             *
+             * La commande le sait, ou ne le sait pas : par défaut, non, et rien
+             * ne change pour les milliers de commandes d'état.
+             */
+            'ignore_retained' => (int) ((bool) $_cmd->getConfiguration('ignore_retained', 0)),
         );
     }
 
