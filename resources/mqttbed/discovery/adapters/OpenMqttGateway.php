@@ -201,6 +201,22 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     const PERIODE_PURGE       = 60;
 
     /*
+     * Depuis combien de temps le démon doit tourner avant de s'étonner qu'un
+     * préfixe n'ait pas dit qui il était.
+     *
+     * Le broker rejoue les annonces retenues à l'abonnement, et rien ne garantit
+     * qu'elles arrivent avant les trames. Mais surtout, L'INTERVALLE D'ANNONCE
+     * NE NOUS APPARTIENT PAS : il se règle sur la passerelle, et cinq minutes
+     * — la première valeur essayée — ont suffi à faire accuser une passerelle
+     * parfaitement vivante, qui publiait trois cents trames pendant ce
+     * temps-là et dont l'annonce, simplement, venait plus tard. Une demi-heure
+     * laisse passer les intervalles longs sans rien perdre de ce qu'on cherche :
+     * un appareil qui ne s'annonce qu'à son démarrage ne s'annoncera jamais.
+     * Voir surveilleAnonymes().
+     */
+    const DELAI_ANONYME = 1800;
+
+    /*
      * Et une PASSERELLE se périme comme une balise.
      *
      * Renommer une passerelle dans son interface web lui donne un préfixe de
@@ -2098,6 +2114,91 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         $_ctx->remember(self::ID . ':purge', $_maintenant);
         $this->purgeBalises($_ctx, $_maintenant);
         $this->purgePasserelles($_ctx, $_maintenant);
+        $this->surveilleAnonymes($_ctx, $_maintenant);
+    }
+
+    /*
+     * UNE PASSERELLE QUI PUBLIE SANS S'ÊTRE PRÉSENTÉE, ET QU'ON NE PEUT PAS
+     * CRÉER — MAIS QU'ON NOMME.
+     *
+     * L'identité d'une passerelle est sa `mac`, et elle n'arrive que par
+     * SYStoMQTT : sans lui, aucun équipement ne peut être créé, et c'est un
+     * choix assumé — mieux vaut une passerelle absente qu'un fantôme qui
+     * ressuscitera sous un autre nom à chaque redémarrage (voir recoitSys).
+     *
+     * Mais se taire là-dessus était une faute. Une passerelle qui publie ses
+     * trames Bluetooth depuis des heures sans s'être jamais présentée est
+     * exactement le cas où l'utilisateur voit ses balises remonter, cherche
+     * sa passerelle dans la liste, ne l'y trouve pas, et n'a RIEN pour
+     * comprendre : le journal du plugin est muet, la découverte marche, et
+     * pourtant il manque un équipement. C'est arrivé sur un Shelly qui
+     * émulait une passerelle par script : le script ne publiait son identité
+     * qu'au démarrage, et y renonçait sans bruit quand MQTT n'était pas
+     * encore connecté. Deux appareils sur trois s'étaient présentés, le
+     * troisième jamais — même script, ordre de démarrage différent.
+     *
+     * Le contrôle ne tourne qu'une fois par minute, à la purge, et jamais
+     * avant que le démon n'ait eu le temps de recevoir les annonces retenues
+     * que le broker rejoue à l'abonnement : s'en plaindre au démarrage serait
+     * crier au loup à chaque redémarrage. Une plainte par heure et par
+     * préfixe, comme les autres.
+     */
+    private function surveilleAnonymes($_ctx, $_maintenant) {
+        $depart = $_ctx->recall(self::ID . ':depart');
+        if (!is_numeric($depart)) {
+            $_ctx->remember(self::ID . ':depart', $_maintenant);
+            return;
+        }
+        if (($_maintenant - (float) $depart) < self::DELAI_ANONYME) {
+            return;
+        }
+        foreach ($this->balises($_ctx) as $mac) {
+            $dossier = $this->dossier($_ctx, 'ble:' . $mac);
+            if (empty($dossier['gws']) || !is_array($dossier['gws'])) {
+                continue;
+            }
+            foreach ($dossier['gws'] as $slug => $vue) {
+                /* Seulement ce qui publie ENCORE : un préfixe qui s'est taché
+                 * il y a deux heures n'appelle pas d'explication, il a
+                 * disparu. */
+                if (($_maintenant - $this->nombre($vue, 'vu', 0)) > self::FRAICHEUR_GW) {
+                    continue;
+                }
+                $gw = $this->dossier($_ctx, 'gw:' . $slug);
+                if (!empty($gw)) {
+                    continue;
+                }
+                $base = isset($vue['topic']) ? self::baseDepuisTopic((string) $vue['topic']) : '';
+                if ($base === '') {
+                    continue;
+                }
+                /*
+                 * CE QUE LE MESSAGE PEUT DIRE, ET CE QU'IL NE PEUT PAS.
+                 *
+                 * Il ne dit pas « aucun équipement n'existe » : cet adapter ne
+                 * connaît pas Jeedom et ne sait rien de ce qui est en base — la
+                 * passerelle a très bien pu être découverte hier, quand son
+                 * annonce passait. Il dit ce qu'il sait : depuis que ce démon
+                 * tourne, ce préfixe n'a pas dit qui il était.
+                 */
+                $this->plainte($_ctx, 'anon:' . $slug,
+                    'la passerelle « ' . $this->citation($base) . ' » publie des trames Bluetooth '
+                    . 'mais n\'a pas publié son identité sur « '
+                    . $this->citation($base . '/' . self::SYS) . ' » depuis le démarrage du démon : '
+                    . 'tant qu\'elle ne l\'aura pas fait, son équipement de passerelle ne peut être '
+                    . 'ni créé ni mis à jour. Ses mesures, elles, remontent normalement. Une '
+                    . 'passerelle OpenMQTTGateway republie ce message périodiquement ; un appareil '
+                    . 'qui ne l\'envoie qu\'à son démarrage l\'aura fait avant d\'être connecté au '
+                    . 'broker.');
+            }
+        }
+    }
+
+    /* La base d'un topic de trame : ce qui précède « /BTtoMQTT/ ». */
+    private static function baseDepuisTopic($_topic) {
+        $marque = '/' . self::BT . '/';
+        $pos = strpos($_topic, $marque);
+        return ($pos === false || $pos === 0) ? '' : substr($_topic, 0, $pos);
     }
 
     /*

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5 — 20 September 2026
+
+### A gateway that never introduces itself is now named
+
+A Bluetooth gateway is recognised by its hardware address, which it publishes on
+its identity topic — and nowhere else. Without that message no gateway device
+can be created: that is a deliberate choice, a gateway missing from the list
+being better than a ghost device that would come back under another name at
+every restart.
+
+- **But the plugin now says so.** A gateway that has been publishing Bluetooth
+  frames for half an hour without introducing itself leaves a warning in the
+  log, with its prefix and the topic expected from it. Without it, you saw its
+  beacons coming through, looked for the gateway in the list, did not find it —
+  and nothing anywhere said why. The half hour is not idle caution: the interval
+  between two announcements is set on the gateway, and a shorter delay accused a
+  perfectly live gateway whose announcement simply came later. The warning
+  repeats at most once an hour.
+
+This happens with gateways emulated by a script: a device that only publishes
+its identity at startup will have tried before being connected to the broker,
+and never tries again. An OpenMQTTGateway bridge republishes that message
+periodically.
+
 ## 0.4 — 20 September 2026
 
 ### A device can have two roles

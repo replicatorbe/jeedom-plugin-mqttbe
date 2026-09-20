@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5 — 20 septembre 2026
+
+### Une passerelle qui ne se présente pas est désormais nommée
+
+Une passerelle Bluetooth est reconnue par son adresse matérielle, qu'elle publie
+sur son topic d'identité — et elle seule. Sans ce message, aucun équipement de
+passerelle ne peut être créé : c'est un choix, mieux vaut une passerelle absente
+de la liste qu'un équipement fantôme qui réapparaîtrait sous un autre nom à
+chaque redémarrage.
+
+- **Mais le plugin le dit maintenant.** Une passerelle qui publie ses trames
+  Bluetooth depuis une demi-heure sans s'être présentée laisse un avertissement
+  au journal, avec son préfixe et le topic qu'on attend d'elle. Sans cela, on
+  voyait ses balises remonter, on cherchait la passerelle dans la liste, on ne
+  l'y trouvait pas — et rien nulle part ne disait pourquoi. La demi-heure n'est
+  pas de la prudence gratuite : l'intervalle entre deux annonces se règle sur la
+  passerelle, et un délai plus court accusait une passerelle parfaitement
+  vivante dont l'annonce venait simplement plus tard. L'avertissement se répète
+  au plus une fois par heure.
+
+Le cas se rencontre avec les passerelles émulées par script : un appareil qui ne
+publie son identité qu'au démarrage l'aura tenté avant d'être connecté au
+broker, et n'essaiera plus jamais. Une passerelle OpenMQTTGateway, elle, republie
+ce message périodiquement.
+
 ## 0.4 — 20 septembre 2026
 
 ### Un appareil peut avoir deux rôles

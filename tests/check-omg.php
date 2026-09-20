@@ -2210,6 +2210,82 @@ function mqttbeControlesOmg() {
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
+    /* ----------------------------------------------------------------- 37 ---
+     * UNE PASSERELLE QUI NE SE PRÉSENTE PAS EST NOMMÉE.
+     *
+     * Son identité est sa `mac`, et sans SYStoMQTT on ne l'a pas : aucun
+     * équipement de passerelle ne peut être créé, et c'est assumé. Mais se
+     * taire là-dessus laissait l'utilisateur devant une énigme entière — ses
+     * balises remontent, sa passerelle n'est nulle part, et le journal ne dit
+     * rien. Cas réel : trois Shelly émulant une passerelle par script, le même
+     * script sur les trois, et le troisième qui ne s'était jamais présenté
+     * parce que son script avait renoncé — MQTT n'était pas encore connecté au
+     * moment où il l'a tenté, et il ne réessaie jamais. */
+    $titre = 'une passerelle qui publie sans se présenter est nommée au journal';
+    $fautes = array();
+    $adapterN = new MqttbeOpenMqttGateway();
+    $ctxN = new MqttbeContexteEssaiOmg();
+    $trameN = '{"id":"D3:46:4C:E6:95:4B","rssi":-69,"servicedatauuid":"0xfeed",'
+            . '"servicedata":"020027C7F131EBF80754","brand":"Tile","model":"Smart Tracker",'
+            . '"model_id":"TILE","type":"TRACK"}';
+    /* Une passerelle en règle, et une qui se tait : la plainte doit désigner
+     * la seconde et laisser la première tranquille. */
+    $adapterN->onMessage('bt/OMG_ESP32_BLE_SEJOUR/SYStoMQTT',
+        '{"mac":"A8:B0:C1:00:10:01","env":"esp32dev-ble","version":"v1.7.0"}', true, $ctxN);
+    for ($i = 0; $i < 40; $i++) {
+        $adapterN->onMessage('bt/OMG_ESP32_BLE_SEJOUR/BTtoMQTT/D3464CE6954B', $trameN, false, $ctxN);
+        $adapterN->onMessage('Mini1G3Vestiaire/BTtoMQTT/D3464CE6954B', $trameN, false, $ctxN);
+        $ctxN->avance(60);
+        $adapterN->onTick($ctxN);
+    }
+    $nomme = false;
+    $accuseATort = false;
+    foreach ($ctxN->journal as $ligne) {
+        if (strpos($ligne, 'Mini1G3Vestiaire') !== false && strpos($ligne, 'warning') === 0) {
+            $nomme = true;
+        }
+        if (strpos($ligne, 'OMG_ESP32_BLE_SEJOUR') !== false && strpos($ligne, 'warning') === 0) {
+            $accuseATort = true;
+        }
+    }
+    if (!$nomme) {
+        $fautes[] = 'la passerelle qui publie sans jamais s\'identifier ne laisse aucune trace : '
+                  . 'l\'utilisateur voit ses balises remonter, cherche sa passerelle dans la liste, '
+                  . 'ne l\'y trouve pas, et rien ne lui dit pourquoi.';
+    }
+    if ($accuseATort) {
+        $fautes[] = 'une passerelle parfaitement identifiée est signalée elle aussi : le '
+                  . 'journal se remplirait d\'avertissements sur un parc qui va bien.';
+    }
+    /*
+     * ET PAS TROP TÔT. Deux raisons, et la seconde a été apprise en production :
+     * le broker rejoue les annonces retenues à l'abonnement sans garantir
+     * qu'elles arrivent avant les trames ; et surtout L'INTERVALLE D'ANNONCE
+     * APPARTIENT À LA PASSERELLE. Une vraie OpenMQTTGateway, vivante, publiant
+     * trois cents trames en cinq minutes, s'est fait accuser parce que son
+     * annonce venait plus tard — un avertissement faux, sur un parc qui allait
+     * bien, est pire que pas d'avertissement du tout.
+     */
+    $adapterN2 = new MqttbeOpenMqttGateway();
+    $ctxN2 = new MqttbeContexteEssaiOmg();
+    /* Deux minutes et trois battements : assez pour que la purge tourne et que
+     * le contrôle s'exécute pour de bon — sans quoi ce contre-essai passerait
+     * quel que soit le délai, le premier appel ne faisant que noter l'heure du
+     * départ. */
+    for ($i = 0; $i < 20; $i++) {
+        $adapterN2->onMessage('Mini1G3Vestiaire/BTtoMQTT/D3464CE6954B', $trameN, false, $ctxN2);
+        $ctxN2->avance(60);
+        $adapterN2->onTick($ctxN2);
+    }
+    foreach ($ctxN2->journal as $ligne) {
+        if (strpos($ligne, 'warning') === 0 && strpos($ligne, 'Mini1G3Vestiaire') !== false) {
+            $fautes[] = 'la plainte part au bout de vingt minutes : une passerelle dont '
+                      . 'l\'intervalle d\'annonce est long serait accusée alors qu\'elle va '
+                      . 'parfaitement bien, et chaque redémarrage du démon crierait au loup.';
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
     return $resultats;
 }
 
