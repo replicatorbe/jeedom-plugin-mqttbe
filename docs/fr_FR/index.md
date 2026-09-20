@@ -210,6 +210,13 @@ moment. Ce délai se règle dans la configuration du plugin, section *Découvert
 Plusieurs passerelles ne font pas plusieurs équipements : le même traceur entendu
 par trois passerelles reste un seul équipement, avec trois mesures de signal.
 
+Une passerelle n'a rien d'obligatoirement dédié : **un Shelly de deuxième
+génération ou plus récent porte une radio Bluetooth et sait exécuter un
+script**, ce qui suffit à lui faire rapporter les balises qu'il entend. La
+marche à suivre, le script, et le piège qui fait qu'une telle passerelle peut
+rester invisible sans qu'aucune erreur ne se déclare, sont dans
+[Faire d'un Shelly une passerelle Bluetooth](shelly-passerelle-ble.md).
+
 ### Ce que le plugin ne crée pas tout seul
 
 Une passerelle Bluetooth entend aussi le téléphone d'un visiteur, la montre du

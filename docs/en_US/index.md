@@ -198,6 +198,12 @@ heard it for a while. That delay is set in the plugin configuration, under
 Several gateways do not make several devices: the same tracker heard by three
 gateways stays one device, with three signal readings.
 
+A gateway need not be dedicated hardware: **a second-generation or newer Shelly
+carries a Bluetooth radio and can run a script**, which is enough to have it
+report the beacons it hears. The procedure, the script, and the trap that can
+leave such a gateway invisible without any error being raised are covered in
+[Turning a Shelly into a Bluetooth gateway](shelly-passerelle-ble.md).
+
 ### What the plugin does not create on its own
 
 A Bluetooth gateway also hears a visitor's phone, the neighbour's watch and the
