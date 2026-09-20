@@ -2286,6 +2286,97 @@ function mqttbeControlesOmg() {
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
+    /* ----------------------------------------------------------------- 38 ---
+     * « JE LA VOIS TOUJOURS » : LA PREUVE DE VIE DES CANDIDATES.
+     *
+     * Un modèle n'est réémis que si sa signature a changé — c'est la règle qui
+     * empêche de réécrire la base à chaque trame, et elle est contrôlée
+     * ailleurs. Mais elle laissait la file d'adoption de Jeedom dater ses
+     * candidats de la dernière MODIFICATION en croyant dater la dernière VUE,
+     * si bien qu'une balise bien présente y vieillissait comme un fantôme.
+     * Mesuré sur l'installation réelle : cinquante candidats, tous vus pour la
+     * dernière fois soixante-six heures plus tôt, et la file pleine.
+     *
+     * Une candidate encore en inventaire repart donc périodiquement, telle
+     * quelle. C'est le seul modèle de cet adapter qui soit émis SANS que rien
+     * n'ait changé. */
+    $titre = 'une candidate toujours vue repart vers Jeedom, une disparue non';
+    $fautes = array();
+    $adapterV = new MqttbeOpenMqttGateway();
+    $ctxV = new MqttbeContexteEssaiOmg();
+    /* Adresse PUBLIQUE : elle entre dans la file sans attendre la rotation, et
+     * le contrôle porte alors sur la seule preuve de vie. */
+    $topicV = $reperes['SAM'] . '/BTtoMQTT/A8B0C100CA01';
+    $trameV = '{"id":"A8:B0:C1:00:CA:01","mac_type":0,"rssi":-70,"manufacturerdata":"a705"}';
+    $adapterV->onMessage($topicV, $trameV, false, $ctxV);
+    $ctxV->avance(1);
+    $adapterV->onTick($ctxV);
+    $premier = mqttbeCompteModelesOmg($ctxV, 'ble:a8b0c100ca01');
+    if ($premier !== 1) {
+        $fautes[] = $premier . ' modèle(s) après la première trame, attendu 1.';
+    }
+    /* Une heure, trame toutes les deux minutes : la balise est là, elle ne
+     * change pas. Elle doit avoir donné signe de vie plusieurs fois. */
+    for ($i = 0; $i < 30; $i++) {
+        $adapterV->onMessage($topicV, $trameV, false, $ctxV);
+        $ctxV->avance(120);
+        $adapterV->onTick($ctxV);
+    }
+    $preuves = mqttbeCompteModelesOmg($ctxV, 'ble:a8b0c100ca01') - $premier;
+    if ($preuves < 2) {
+        $fautes[] = $preuves . ' preuve(s) de vie en une heure pour une balise vue sans '
+                  . 'interruption : Jeedom ne peut pas distinguer ce qui est encore là de ce '
+                  . 'qui est parti, et sa file d\'adoption se remplit de fantômes.';
+    }
+    /* Et pas davantage : une preuve par quart d'heure, pas une par battement.
+     * Le compte exact dépend de l'ordre des purges, on borne largement. */
+    if ($preuves > 8) {
+        $fautes[] = $preuves . ' modèles en une heure pour une balise qui n\'a pas changé : '
+                  . 'la preuve de vie est devenue un flux, et chaque message traverse le '
+                  . 'callback puis la fabrique.';
+    }
+    /*
+     * La balise se tait : les preuves doivent cesser. On laisse passer une
+     * demi-heure — la dernière trame est encore fraîche au début du silence,
+     * et une preuve de plus n'y ment pas — puis on exige le silence complet.
+     * C'est lui que la file d'adoption doit finir par lire.
+     */
+    for ($i = 0; $i < 15; $i++) {
+        $ctxV->avance(120);
+        $adapterV->onTick($ctxV);
+    }
+    $avantSilence = mqttbeCompteModelesOmg($ctxV, 'ble:a8b0c100ca01');
+    for ($i = 0; $i < 30; $i++) {
+        $ctxV->avance(120);
+        $adapterV->onTick($ctxV);
+    }
+    if (mqttbeCompteModelesOmg($ctxV, 'ble:a8b0c100ca01') !== $avantSilence) {
+        $fautes[] = 'une balise muette depuis une demi-heure envoie encore des preuves de vie : '
+                  . 'l\'inventaire se souvient d\'elle, ce qui n\'est pas la voir, et elle ne '
+                  . 'quitterait jamais la file d\'adoption.';
+    }
+    /* Une balise ADOPTÉE, elle, n'a rien à prouver : son équipement existe, et
+     * la fabrique le reconnaît inchangé sans rien écrire. */
+    $adapterW = new MqttbeOpenMqttGateway();
+    $ctxW = new MqttbeContexteEssaiOmg();
+    $ctxW->pose('omg', array('bleAdoptAll' => true));
+    $topicW = $reperes['SAM'] . '/BTtoMQTT/A8B0C100CA02';
+    $trameW = '{"id":"A8:B0:C1:00:CA:02","mac_type":0,"rssi":-70,"tempc":21.4}';
+    $adapterW->onMessage($topicW, $trameW, false, $ctxW);
+    $ctxW->avance(1);
+    $adapterW->onTick($ctxW);
+    $apresW = mqttbeCompteModelesOmg($ctxW, 'ble:a8b0c100ca02');
+    for ($i = 0; $i < 30; $i++) {
+        $adapterW->onMessage($topicW, $trameW, false, $ctxW);
+        $ctxW->avance(120);
+        $adapterW->onTick($ctxW);
+    }
+    if (mqttbeCompteModelesOmg($ctxW, 'ble:a8b0c100ca02') !== $apresW) {
+        $fautes[] = 'un capteur adopté réémet des preuves de vie : il a un équipement, la '
+                  . 'question ne se pose pas pour lui, et c\'est autant de messages pour rien.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
     return $resultats;
 }
 

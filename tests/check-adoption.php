@@ -397,19 +397,27 @@ function mqttbeControlesAdoption() {
         . 'adopter en a été chassé, et la liste devient inutilisable.');
 
     /* ------------------------------------------------------------------ 9 ---
-     * Un passant finit par s'oublier.
+     * Un passant finit par s'oublier — ET EN QUELQUES HEURES.
      *
-     * Sans péremption, un téléphone aperçu une fois il y a trois semaines
-     * gardait sa place à vie et participait à l'éviction : il faisait sortir de
-     * la file un appareil qu'on voit tous les jours. */
+     * Le délai était d'une semaine, et il ne pouvait rien trier : la date qu'il
+     * compare est posée à l'arrivée d'un modèle, or un modèle n'est réémis que
+     * s'il a CHANGÉ. Elle datait donc la dernière modification et non la
+     * dernière vue, si bien qu'une balise bien présente vieillissait exactement
+     * comme un fantôme. Sur l'installation réelle : cinquante candidats — la
+     * file pleine —, tous vus pour la dernière fois soixante-six heures plus
+     * tôt, aucun revu depuis, et plus une place pour un appareil du jour.
+     *
+     * L'adapter envoie désormais une preuve de vie par quart d'heure pour
+     * chaque candidate qu'il voit encore. La date veut enfin dire ce qu'elle
+     * dit, et le délai peut être court. */
     $titre = 'le candidat qu\'on ne voit plus quitte la file';
     mqttbeAdoptionRAZ(array('discovery::autoCreate' => 0));
     $maintenant = time();
     mqttbeFilePosee(array(
-        'omg:ble:vieux000001' => mqttbeEntreeFile('omg:ble:vieux000001', 'Vu il y a huit jours',
-                                                  $maintenant - 700000, $maintenant - 691200),
-        'omg:ble:frais000001' => mqttbeEntreeFile('omg:ble:frais000001', 'Vu hier',
-                                                  $maintenant - 90000, $maintenant - 86400),
+        'omg:ble:vieux000001' => mqttbeEntreeFile('omg:ble:vieux000001', 'Vu il y a dix heures',
+                                                  $maintenant - 40000, $maintenant - 36000),
+        'omg:ble:frais000001' => mqttbeEntreeFile('omg:ble:frais000001', 'Vu il y a une heure',
+                                                  $maintenant - 7200, $maintenant - 3600),
     ));
     $fautes = array();
     $file = mqttbeDaemon::pendingQueue();
@@ -417,11 +425,21 @@ function mqttbeControlesAdoption() {
         $fautes[] = 'la file est devenue illisible.';
     } else {
         if (isset($file['omg:ble:vieux000001'])) {
-            $fautes[] = 'le candidat vu il y a huit jours est toujours là.';
+            $fautes[] = 'le candidat vu il y a dix heures est toujours là : sur une passerelle '
+                      . 'qui voit passer la rue, la file se remplit en une soirée de téléphones '
+                      . 'qui ne reviendront jamais.';
         }
         if (!isset($file['omg:ble:frais000001'])) {
-            $fautes[] = 'le candidat vu hier a disparu : la péremption mord trop tôt.';
+            $fautes[] = 'le candidat vu il y a une heure a disparu : la péremption mord trop tôt, '
+                      . 'et la file s\'efface pendant qu\'on la regarde.';
         }
+    }
+    /* La file doit aussi survivre un moment à l'arrêt du démon : ses candidats
+     * restent adoptables sans lui, et l'utilisateur qui coupe la découverte
+     * pour regarder ne doit pas voir sa liste fondre. */
+    if (mqttbeDaemon::PENDING_TTL < 4 * 3600) {
+        $fautes[] = 'le délai est tombé sous quatre heures : la file ne survivrait plus à un '
+                  . 'arrêt du démon, alors que ce qu\'elle contient reste parfaitement adoptable.';
     }
     $resultats[] = mqttbeAdoptionVerdict($titre, $fautes,
         "La file conserve à vie des appareils qui ne sont plus là, et ce sont eux "

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6 — 20 September 2026
+
+### The adoption queue no longer keeps passers-by
+
+A Bluetooth gateway sees a visitor's phone go past, a neighbour's watch, the car
+stereo stopped at the lights. Those devices have no business in Jeedom, and the
+adoption queue is there so you can set them aside — provided it empties itself.
+
+- **A candidate you no longer see is cleared within hours** instead of a week.
+  The delay already existed, but it could not sort anything: the date it
+  compared was that of the candidate's last CHANGE, not of its last appearance —
+  and a device that is really there does not change. On a real installation the
+  queue was full of fifty candidates last seen sixty-six hours earlier, with no
+  room left for a device seen today.
+- **The daemon now says what it still sees.** Every candidate still within range
+  gives a sign of life every quarter of an hour, whether it changed or not. That
+  is what finally gives meaning to the last-seen date, and what allows the delay
+  to be short. An adopted device has nothing to prove: it has its own device.
+- **The queue stays readable after the daemon stops**: what it holds remains
+  adoptable without it, and six hours leave time to decide.
+
 ## 0.5 — 20 September 2026
 
 ### A gateway that never introduces itself is now named

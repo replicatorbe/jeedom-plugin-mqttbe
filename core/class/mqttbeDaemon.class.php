@@ -53,10 +53,27 @@ class mqttbeDaemon {
      * fouillis. Elle est coupée au plus intéressant, jamais au plus récent. */
     const PENDING_MAX = 50;
 
-    /* Un candidat qu'on n'a pas revu depuis une semaine n'est plus un candidat,
-     * c'est un souvenir. Le garder, c'est le laisser prendre la place d'un
-     * appareil bien présent le jour où la file déborde. */
-    const PENDING_TTL = 604800;
+    /*
+     * Un candidat qu'on ne voit plus n'est plus un candidat, c'est un souvenir.
+     * Le garder, c'est le laisser prendre la place d'un appareil bien présent
+     * le jour où la file déborde.
+     *
+     * LE DÉLAI ÉTAIT D'UNE SEMAINE, ET IL NE POUVAIT RIEN TRIER. La date qu'il
+     * compare est posée à l'arrivée d'un modèle ; or un modèle n'est réémis que
+     * s'il a CHANGÉ. Elle datait donc la dernière modification, pas la dernière
+     * vue, et une balise bien présente vieillissait exactement comme un
+     * fantôme. Mesuré sur l'installation réelle : cinquante candidats — la file
+     * pleine —, tous vus pour la dernière fois soixante-six heures plus tôt,
+     * aucun revu depuis, et plus une place pour un appareil du jour.
+     *
+     * L'adapter envoie maintenant une preuve de vie par quart d'heure pour
+     * chaque candidate encore en inventaire (voir PERIODE_PREUVE, côté démon) :
+     * la date dit enfin ce qu'elle dit, et six heures suffisent à écarter le
+     * téléphone d'un visiteur. Six et non trois : la file doit rester
+     * consultable un moment après l'arrêt du démon, ses candidats restant
+     * parfaitement adoptables sans lui.
+     */
+    const PENDING_TTL = 21600;
 
     /* Ce que vaut une adresse stable, dans la seule unité que la file
      * connaisse : des secondes de présence. Une adresse publique est gravée

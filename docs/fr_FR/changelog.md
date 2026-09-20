@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6 — 20 septembre 2026
+
+### La file d'adoption ne garde plus les passants
+
+Une passerelle Bluetooth voit passer le téléphone d'un visiteur, la montre d'un
+voisin, l'autoradio d'une voiture arrêtée au feu. Ces appareils n'ont rien à
+faire dans Jeedom, et la file d'adoption est là pour qu'on les écarte — encore
+faut-il qu'elle se vide d'elle-même.
+
+- **Un candidat qu'on ne voit plus s'efface en quelques heures** au lieu d'une
+  semaine. Le délai existait déjà, mais il ne pouvait rien trier : la date qu'il
+  comparait était celle du dernier CHANGEMENT du candidat, pas de sa dernière
+  apparition — et un appareil bien présent ne change pas. Sur une installation
+  réelle, la file était pleine de cinquante candidats vus pour la dernière fois
+  soixante-six heures plus tôt, sans une place pour un appareil du jour.
+- **Le démon dit maintenant ce qu'il voit encore.** Chaque candidat toujours à
+  portée donne signe de vie par quart d'heure, qu'il ait changé ou non. C'est ce
+  qui donne enfin un sens à la date de dernière vue, et ce qui permet au délai
+  d'être court. Un appareil adopté, lui, n'a rien à prouver : son équipement
+  existe.
+- **La file reste consultable après l'arrêt du démon** : ce qu'elle contient
+  demeure adoptable sans lui, et six heures laissent le temps de décider.
+
 ## 0.5 — 20 septembre 2026
 
 ### Une passerelle qui ne se présente pas est désormais nommée

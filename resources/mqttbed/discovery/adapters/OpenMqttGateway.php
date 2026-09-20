@@ -217,6 +217,30 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     const DELAI_ANONYME = 1800;
 
     /*
+     * PREUVE DE VIE DES CANDIDATES.
+     *
+     * Un modèle n'est réémis que si sa signature a changé — c'est ce qui évite
+     * de réécrire la base à chaque trame. Mais côté Jeedom, la file d'adoption
+     * datait ses candidats de la dernière fois qu'un modèle était ARRIVÉ, et
+     * croyait dater la dernière fois que la balise avait été VUE. Les deux
+     * n'ont rien à voir : une balise bien présente et stable ne réémet jamais.
+     *
+     * Résultat mesuré sur l'installation réelle : cinquante candidats, tous vus
+     * pour la dernière fois soixante-six heures plus tôt, aucun revu depuis, et
+     * aucun moyen pour Jeedom de le savoir — la file était pleine de fantômes
+     * et refusait les vivants.
+     *
+     * Les candidates encore en inventaire repartent donc vers Jeedom à
+     * intervalle régulier, qu'elles aient changé ou non. C'est le seul message
+     * de ce fichier qui soit émis SANS que rien ait changé, et il est là pour
+     * dire précisément cela : « je la vois toujours ».
+     *
+     * Seulement les candidates : une balise `certain` a son équipement, que la
+     * fabrique reconnaît inchangé et n'écrit pas.
+     */
+    const PERIODE_PREUVE = 900;
+
+    /*
      * Et une PASSERELLE se périme comme une balise.
      *
      * Renommer une passerelle dans son interface web lui donne un préfixe de
@@ -779,8 +803,63 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         foreach ($this->passerelles($_ctx) as $slug) {
             $this->emetPasserelle($_ctx, $slug);
         }
+        /* Avant de battre les balises : celles qui attendent une décision
+         * disent qu'elles sont toujours là. */
+        $this->prouveCandidates($_ctx, $maintenant, $reglages);
+
         foreach ($this->balises($_ctx) as $mac) {
             $this->suitBalise($_ctx, $mac, $maintenant, $reglages);
+        }
+    }
+
+    /*
+     * « JE LA VOIS TOUJOURS » : les candidates repartent vers Jeedom.
+     *
+     * Rien n'a changé pour elles — c'est justement le propos. On efface leur
+     * marque d'émission, et le battement qui suit les réémet telles quelles.
+     * Jeedom y lit une date de dernière vue qui veut enfin dire ce qu'elle
+     * dit, et peut écarter ce qui n'est plus là. Voir PERIODE_PREUVE.
+     *
+     * Ce n'est pas gratuit, mais c'est peu : quelques dizaines de modèles par
+     * quart d'heure, qui n'écrivent rien en base — la fabrique ne crée pas un
+     * candidat, elle le range dans la file.
+     */
+    private function prouveCandidates($_ctx, $_maintenant, $_reglages) {
+        $quand = $_ctx->recall(self::ID . ':preuve');
+        if (!is_numeric($quand)) {
+            /* Premier passage : on note l'heure sans rien réémettre. Le démon
+             * vient de démarrer, tout le parc part déjà vers Jeedom. */
+            $_ctx->remember(self::ID . ':preuve', $_maintenant);
+            return;
+        }
+        if (($_maintenant - (float) $quand) < self::PERIODE_PREUVE) {
+            return;
+        }
+        $_ctx->remember(self::ID . ':preuve', $_maintenant);
+        foreach ($this->balises($_ctx) as $mac) {
+            $cle     = 'ble:' . $mac;
+            $dossier = $this->dossier($_ctx, $cle);
+            if (empty($dossier) || !isset($dossier['emis'])) {
+                continue;
+            }
+            /*
+             * ET SEULEMENT CE QU'ON VOIT ENCORE.
+             *
+             * L'inventaire garde une balise plusieurs heures après sa dernière
+             * trame — c'est ce qui lui permet de la reconnaître si elle revient.
+             * S'en servir pour prouver une présence, c'est jurer de ce dont on
+             * se souvient : la balise partie continuait d'envoyer signe de vie
+             * pendant des heures, et la file d'adoption ne l'aurait jamais
+             * écartée. On ne prouve que ce qu'on a vu depuis la dernière preuve.
+             */
+            if (($_maintenant - $this->nombre($dossier, 'vu', 0)) > self::PERIODE_PREUVE) {
+                continue;
+            }
+            if ($this->confiance($dossier, $_reglages) !== 'guess') {
+                continue;
+            }
+            unset($dossier['emis']);
+            $this->range($_ctx, $cle, $dossier);
         }
     }
 
