@@ -196,22 +196,69 @@ class mqttbeFactory {
         if (empty($keys)) {
             return null;
         }
+        /* L'uid vient en tête : c'est l'identité, le reste n'est qu'un chemin. */
+        $uid = $keys[0];
         /* Le uid est le logicalId de l'équipement : le chemin le plus court et
          * le plus sûr, il passe par un index de la base. */
         foreach ($keys as $key) {
             $eqLogic = eqLogic::byLogicalId($key, 'mqttbe');
-            if (is_object($eqLogic)) {
+            if (is_object($eqLogic) && self::claimable($uid, $key, $eqLogic)) {
                 return $eqLogic;
             }
         }
         $index = self::aliasIndex();
         foreach ($keys as $key) {
             $normal = self::normalizeKey($key);
-            if ($normal !== '' && isset($index[$normal])) {
+            if ($normal !== '' && isset($index[$normal])
+                && self::claimable($uid, $key, $index[$normal])) {
                 return $index[$normal];
             }
         }
         return null;
+    }
+
+    /*
+     * LA FAMILLE D'UNE IDENTITÉ : ce qui précède le premier deux-points.
+     *
+     * `shelly:d0cf13c40a3c` et `omg:d0cf13c40a3c` ne sont pas le même appareil
+     * vu deux fois : c'est le même BOÎTIER dans deux rôles, et ces rôles ont
+     * des topics disjoints. Un Shelly Mini G3 qui fait tourner un script de
+     * passerelle Bluetooth est l'un et l'autre, et l'utilisateur veut les deux.
+     */
+    private static function uidFamily($_uid) {
+        $uid = trim((string) $_uid);
+        $pos = strpos($uid, ':');
+        return ($pos === false) ? '' : strtolower(substr($uid, 0, $pos));
+    }
+
+    /*
+     * CET ÉQUIPEMENT PEUT-IL ÊTRE REVENDIQUÉ PAR CETTE IDENTITÉ ?
+     *
+     * Par son uid exact, toujours : c'est lui, ou c'est l'identifiant d'hier
+     * qu'il a rangé dans ses alias.
+     *
+     * Par un CHEMIN — `mac:…`, `topic:…` —, seulement si les familles
+     * s'accordent. Sans cette réserve, deux adapters se disputaient un seul
+     * équipement : le Shelly s'annonce en `shelly:<mac>`, son script de
+     * passerelle publie un SYStoMQTT portant LA MÊME `mac`, donc `omg:<mac>`,
+     * et l'alias `mac:<mac>`, commun aux deux, les faisait tomber sur le même
+     * enregistrement. Relevé en production : dix reprises, « omg (précédemment
+     * shelly.gen2) » puis l'inverse deux secondes plus tard, et à chaque
+     * bascule le gagnant ne retrouvait pas les canaux de l'autre et les
+     * déclarait disparus — quatorze commandes sur dix-sept éteintes.
+     *
+     * Une famille vide — un uid sans deux-points, comme en produit la création
+     * à la main — ne s'oppose à rien : on ne sait pas de quoi il s'agit, et un
+     * silence ne vaut pas un refus.
+     */
+    private static function claimable($_uid, $_key, $_eqLogic) {
+        if ((string) $_key === (string) $_uid) {
+            return true;
+        }
+        $mine = self::uidFamily($_uid);
+        $his  = self::uidFamily((string) $_eqLogic->getConfiguration(
+            self::CONF_UID, (string) $_eqLogic->getLogicalId()));
+        return ($mine === '' || $his === '' || $mine === $his);
     }
 
     /* ----------------------------------------------------------- capacités */
@@ -496,9 +543,21 @@ class mqttbeFactory {
         if (!$_isNew) {
             foreach (array((string) $_eqLogic->getLogicalId(),
                            (string) $_eqLogic->getConfiguration(self::CONF_UID, '')) as $old) {
-                if ($old !== '' && $old !== $_uid) {
-                    $previousKeys[$old] = true;
+                if ($old === '' || $old === $_uid) {
+                    continue;
                 }
+                /* Mais JAMAIS l'identité d'une autre famille. Un uid d'une
+                 * autre famille rangé dans les alias serait retrouvé par
+                 * correspondance exacte, et rouvrirait par la fenêtre la
+                 * dispute que claimable() ferme à la porte : c'est ainsi que
+                 * les Shelly passerelles ont fini par porter `omg:<mac>` dans
+                 * leurs alias. */
+                $ancienne = self::uidFamily($old);
+                $nouvelle = self::uidFamily($_uid);
+                if ($ancienne !== '' && $nouvelle !== '' && $ancienne !== $nouvelle) {
+                    continue;
+                }
+                $previousKeys[$old] = true;
             }
         }
         $_eqLogic->setLogicalId($_uid);
@@ -1807,6 +1866,136 @@ class mqttbeFactory {
         foreach ($files as $file) {
             require_once $file;
         }
+    }
+
+    /* ------------------------------------------------ réparation d'identités */
+
+    /**
+     * Défait ce que la dispute entre deux adapters a laissé en base.
+     *
+     * claimable() empêche désormais un chemin — `mac:…`, `topic:…` — de faire
+     * franchir la frontière entre familles d'identités. Mais les équipements
+     * déjà créés portent le dégât : l'uid de l'AUTRE famille s'est rangé dans
+     * leurs alias à chaque reprise, et une correspondance exacte d'alias passe
+     * par-dessus la garde. Tant qu'il y est, les deux adapters retombent sur le
+     * même enregistrement.
+     *
+     * CE QU'ON RETIRE, ET CE QU'ON NE RETIRE JAMAIS. Un alias est un CHEMIN ou
+     * une IDENTITÉ, et seules les identités d'une autre famille s'en vont. Les
+     * chemins se reconnaissent à leur préfixe (voir pathAliasPrefixes) : c'est
+     * la convention que tous les adapters suivent et que `docs/ARCHITECTURE.md`
+     * décrit. Retirer un chemin serait pire que le mal — l'appareil ne serait
+     * plus reconnu par sa mac ni par son topic, et la découverte suivante le
+     * recréerait en double.
+     *
+     * Et les commandes que la bascule avait éteintes sont rallumées : sur ces
+     * équipements-là, « le canal a disparu » était faux — le canal existait,
+     * c'est l'adapter d'en face qui ne le connaissait pas.
+     *
+     * @return array le compte de ce qui a été défait.
+     */
+    public static function repairCrossFamilyAliases() {
+        $report = array('scanned' => 0, 'repaired' => 0, 'aliases' => 0, 'revived' => 0);
+        $all = eqLogic::byType('mqttbe');
+        if (!is_array($all)) {
+            return $report;
+        }
+        $chemins = self::pathAliasPrefixes();
+        foreach ($all as $eqLogic) {
+            $report['scanned']++;
+            $sienne = self::uidFamily((string) $eqLogic->getConfiguration(
+                self::CONF_UID, (string) $eqLogic->getLogicalId()));
+            if ($sienne === '') {
+                continue;
+            }
+            $aliases = $eqLogic->getConfiguration(self::CONF_ALIASES, array());
+            if (!is_array($aliases) || empty($aliases)) {
+                continue;
+            }
+            $gardes = array();
+            $retires = 0;
+            foreach ($aliases as $alias) {
+                $famille = self::uidFamily($alias);
+                if ($famille !== '' && $famille !== $sienne && !isset($chemins[$famille])) {
+                    $retires++;
+                    continue;
+                }
+                $gardes[] = $alias;
+            }
+            if ($retires === 0) {
+                continue;
+            }
+            $eqLogic->setConfiguration(self::CONF_ALIASES, array_values($gardes));
+            try {
+                $eqLogic->save();
+            } catch (Throwable $e) {
+                mqttbe::logger('warning', __("Réparation d'identité :", __FILE__)
+                    . ' ' . $eqLogic->getName() . ' — ' . $e->getMessage());
+                continue;
+            }
+            $report['repaired']++;
+            $report['aliases'] += $retires;
+            $report['revived'] += self::reviveOrphans($eqLogic);
+            mqttbe::logger('info', sprintf(
+                __('Identité réparée : %1$s — %2$d alias d\'une autre famille retiré(s)', __FILE__),
+                $eqLogic->getName(), $retires));
+        }
+        return $report;
+    }
+
+    /*
+     * LES PRÉFIXES QUI ANNONCENT UN CHEMIN, ET NON UNE IDENTITÉ.
+     *
+     * `mac:a8b0c1…` et `topic:shellies/…` disent par où l'appareil se présente.
+     * C'est tout ce que les adapters mettent dans `aliases` — la forme est la
+     * même dans les quatre adapters et `docs/ARCHITECTURE.md` la donne pour
+     * telle. Tout autre préfixe dans les alias y a été rangé par la fabrique
+     * elle-même, comme identifiant d'hier : c'est une IDENTITÉ.
+     *
+     * Un adapter qui inventerait demain un troisième chemin devrait s'ajouter
+     * ici. À défaut, le pire qui arrive est qu'une réparation le prenne pour
+     * l'identité d'un autre rôle et le retire — l'appareil serait alors recréé
+     * en double à la découverte suivante, ce qui se voit.
+     */
+    private static function pathAliasPrefixes() {
+        return array('mac' => true, 'topic' => true);
+    }
+
+    /**
+     * Rallume les commandes que la fabrique avait éteintes comme orphelines.
+     *
+     * Seules celles qui portent SA marque : une commande masquée à la main ne
+     * l'a jamais reçue, et la rallumer serait défaire le travail de
+     * l'utilisateur. La trace de présentation est remise d'aplomb en même
+     * temps, sans quoi le passage suivant prendrait ce retour à la visibilité
+     * pour une retouche et le figerait.
+     */
+    private static function reviveOrphans($_eqLogic) {
+        $cmds = cmd::byEqLogicId($_eqLogic->getId());
+        if (!is_array($cmds)) {
+            return 0;
+        }
+        $compte = 0;
+        foreach ($cmds as $cmd) {
+            if ((string) $cmd->getConfiguration(self::CONF_ORPHAN, '') === '') {
+                continue;
+            }
+            $cmd->setConfiguration(self::CONF_ORPHAN, null);
+            $cmd->setIsVisible(1);
+            $generated = $cmd->getConfiguration(self::CONF_GENERATED, array());
+            if (is_array($generated) && isset($generated['isVisible'])) {
+                $generated['isVisible'] = '1';
+                $cmd->setConfiguration(self::CONF_GENERATED, $generated);
+            }
+            try {
+                $cmd->save();
+                $compte++;
+            } catch (Throwable $e) {
+                mqttbe::logger('warning', __('Commande non rallumée :', __FILE__)
+                    . ' ' . $cmd->getHumanName() . ' — ' . $e->getMessage());
+            }
+        }
+        return $compte;
     }
 
     /* ------------------------------------------------- balayage des anonymes */

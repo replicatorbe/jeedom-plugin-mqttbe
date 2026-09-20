@@ -97,7 +97,10 @@
         "Équipement %1$s : %2$d écriture(s) refusée(s), empreinte non posée — le modèle sera repassé en revue au prochain message": "Device %1$s: %2$d write(s) rejected, fingerprint not stored — the model will be reviewed again on the next message",
         "Équipement %1$s repris par l'adapter %2$s (précédemment %3$s)": "Device %1$s taken over by adapter %2$s (previously %3$s)",
         "Balayage des balises non identifiées : %1$d supprimé(s), %2$d échec(s)%3$s.": "Sweep of unidentified beacons: %1$d removed, %2$d failure(s)%3$s.",
-        ", d'autres restent à traiter": ", more are left to handle"
+        ", d'autres restent à traiter": ", more are left to handle",
+        "Réparation d'identité :": "Identity repair:",
+        "Identité réparée : %1$s — %2$d alias d'une autre famille retiré(s)": "Identity repaired: %1$s — %2$d alias(es) from another family removed",
+        "Commande non rallumée :": "Command not switched back on:"
     },
     "plugins/mqttbe/core/class/mqttbeRouting.class.php": {
         "Routage : commande %1$s ignorée (%2$s)": "Routing: command %1$s ignored (%2$s)",
@@ -401,6 +404,8 @@
         "Arrêt du démon :": "Stopping the daemon:",
         "Mise à jour du plugin :": "Plugin update:",
         "Rechiffrement du mot de passe :": "Re-encrypting the password:",
-        "Retrait des messages :": "Removing messages:"
+        "Retrait des messages :": "Removing messages:",
+        "Identités réparées : %1$d équipement(s), %2$d alias retiré(s), %3$d commande(s) rallumée(s)": "Identities repaired: %1$d device(s), %2$d alias(es) removed, %3$d command(s) switched back on",
+        "Réparation des identités :": "Identity repair:"
     }
 }

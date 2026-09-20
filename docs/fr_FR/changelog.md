@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4 — 20 septembre 2026
+
+### Un appareil peut avoir deux rôles
+
+Un Shelly qui fait tourner un script de passerelle Bluetooth est deux choses à
+la fois : un relais, et une passerelle. Les deux rôles publient sur des topics
+différents, mais ils portent la même adresse matérielle — et c'est par elle que
+le plugin reconnaît un appareil déjà connu.
+
+- **Les deux rôles donnent désormais deux équipements.** Ils se disputaient le
+  même : le journal en garde dix reprises, « repris par l'adapter omg », puis
+  « repris par l'adapter shelly.gen2 » deux secondes plus tard. À chaque
+  bascule, celui qui prenait la main ne connaissait pas les commandes de
+  l'autre et les éteignait comme disparues — quatorze sur dix-sept. Une
+  adresse ou un topic ne fait plus reconnaître un appareil au-delà de sa
+  propre famille ; son identifiant, lui, le fait toujours, et un appareil qui
+  change de chemin reste reconnu comme avant.
+- **Les commandes éteintes par ces bascules se rallument**, à la mise à jour du
+  plugin. Sur ces équipements-là, « le canal a disparu » était faux : le canal
+  existait, c'est l'autre adapter qui ne le connaissait pas. Une commande que
+  vous avez masquée vous-même n'est pas touchée.
+
 ## 0.3 — 20 septembre 2026
 
 Cette version corrige un défaut qui remplissait Jeedom tout seul : sur une

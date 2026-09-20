@@ -887,6 +887,132 @@ function mqttbeControlesFabrique() {
 
 
 
+    /* ----------------------------------------------------------------------
+     * UN APPAREIL À DEUX RÔLES FAIT DEUX ÉQUIPEMENTS.
+     *
+     * Un Shelly Mini G3 sous script de passerelle Bluetooth est à la fois un
+     * relais et une passerelle. Les deux rôles ont des topics disjoints, mais
+     * la MÊME `mac` — le script publie `DEVICE.mac` —, donc le même alias.
+     * Cet alias les faisait tomber sur un seul équipement, que les deux
+     * adapters se reprenaient tour à tour : relevé en production, dix reprises
+     * et quatorze commandes sur dix-sept éteintes, l'adapter qui gagnait ne
+     * connaissant pas les canaux de l'autre. */
+    $titre = 'un appareil à deux rôles donne deux équipements, pas une dispute';
+    MqttbeFauxCoeur::reinitialise();
+    $mac = 'mac:d0cf13c40a3c';
+    $relais = mqttbeApplique(mqttbeModele('shelly:d0cf13c40a3c', 'Shelly 1 Mini Gen3', array(
+        mqttbeCanalInfo('switch.state', 'switch.state', 'shelly1minig3-d0cf13c40a3c/status/switch:0'),
+        mqttbeCanalInfo('temperature', 'sensor.temperature', 'shelly1minig3-d0cf13c40a3c/status/temp'),
+    ), 'e-r-1', array('adapter' => 'shelly.gen2', 'aliases' => array($mac))));
+    $passerelle = mqttbeApplique(mqttbeModele('omg:d0cf13c40a3c', 'OpenMQTTGateway C40A3C', array(
+        mqttbeCanalInfo('sys.rssi', 'connectivity.rssi', 'Mini1G3Cuisine/SYStoMQTT'),
+        mqttbeCanalInfo('sys.uptime', 'generic.numeric', 'Mini1G3Cuisine/SYStoMQTT'),
+    ), 'e-p-1', array('adapter' => 'omg', 'aliases' => array($mac))));
+    $fautes = array();
+    foreach (array('relais' => $relais, 'passerelle' => $passerelle) as $quoi => $bilan) {
+        if ($bilan['status'] === 'error') {
+            $fautes[] = $quoi . ' refusé : ' . implode(' / ', $bilan['messages']);
+        }
+    }
+    if (MqttbeFauxCoeur::nombreEquipements() !== 2) {
+        $fautes[] = MqttbeFauxCoeur::nombreEquipements() . ' équipement(s) au lieu de deux : le '
+                  . 'relais et sa passerelle se disputent le même enregistrement, et chacun '
+                  . 'éteint les commandes de l\'autre à son tour.';
+    }
+    /* Et chacun garde ses commandes : c'est ce que la dispute détruisait. */
+    if (MqttbeFauxCoeur::nombreCommandes() !== 4) {
+        $fautes[] = MqttbeFauxCoeur::nombreCommandes() . ' commande(s) au lieu de quatre.';
+    }
+    /* La passerelle ne doit pas avoir emporté l'identité du relais dans ses
+     * alias : une correspondance exacte d'alias passerait par-dessus la garde
+     * au passage suivant, et la dispute reprendrait. */
+    $eqP = eqLogic::byLogicalId('omg:d0cf13c40a3c', 'mqttbe');
+    if (is_object($eqP)) {
+        $alias = $eqP->getConfiguration('mqttbe::aliases', array());
+        if (is_array($alias) && in_array('shelly:d0cf13c40a3c', $alias, true)) {
+            $fautes[] = 'la passerelle porte « shelly:d0cf13c40a3c » dans ses alias : la dispute '
+                      . 'rouvrirait par la fenêtre ce que la garde ferme à la porte.';
+        }
+    }
+    /* Le relais, lui, reste reconnaissable par son propre chemin. */
+    $retour = mqttbeApplique(mqttbeModele('shelly:d0cf13c40a3c', 'Shelly 1 Mini Gen3', array(
+        mqttbeCanalInfo('switch.state', 'switch.state', 'shelly1minig3-d0cf13c40a3c/status/switch:0'),
+        mqttbeCanalInfo('temperature', 'sensor.temperature', 'shelly1minig3-d0cf13c40a3c/status/temp'),
+    ), 'e-r-2', array('adapter' => 'shelly.gen2', 'aliases' => array($mac))));
+    if ($retour['status'] === 'created') {
+        $fautes[] = 'le relais a été recréé alors qu\'il se présente par son propre identifiant : '
+                  . 'la garde de famille ne doit pas rendre un appareil méconnaissable à lui-même.';
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'deux adapters se reprennent le même équipement sans fin, et chacun éteint comme '
+      . 'disparues les commandes que l\'autre venait d\'écrire.');
+
+    /* ----------------------------------------------------------------------
+     * ET CE QUI EST DÉJÀ EN BASE SE RÉPARE.
+     *
+     * Les équipements nés de la dispute portent l'uid de l'autre famille dans
+     * leurs alias, et des commandes éteintes comme orphelines. La garde ne
+     * suffit pas à les défaire : une correspondance exacte d'alias passe
+     * par-dessus elle. */
+    $titre = 'les identités disputées se réparent, et les commandes se rallument';
+    MqttbeFauxCoeur::reinitialise();
+    mqttbeApplique(mqttbeModele('shelly:d0cf13c5163c', 'Shelly 1 Mini Gen3', array(
+        mqttbeCanalInfo('switch.state', 'switch.state', 'shelly1minig3-d0cf13c5163c/status/switch:0'),
+        mqttbeCanalInfo('temperature', 'sensor.temperature', 'shelly1minig3-d0cf13c5163c/status/temp'),
+    ), 'e-d-1', array('adapter' => 'shelly.gen2', 'aliases' => array('mac:d0cf13c5163c'))));
+    $eq = eqLogic::byLogicalId('shelly:d0cf13c5163c', 'mqttbe');
+    $fautes = array();
+    if (!is_object($eq)) {
+        $fautes[] = "l'équipement d'essai n'a pas été créé.";
+    } else {
+        /* L'état exact laissé par la dispute : l'uid de l'autre famille dans
+         * les alias, et une commande éteinte comme disparue. */
+        $eq->setConfiguration('mqttbe::aliases',
+            array('mac:d0cf13c5163c', 'topic:Mini1G3lampeterrasse', 'omg:d0cf13c5163c'));
+        $eq->save();
+        $cmds = mqttbeCommandesDe('shelly:d0cf13c5163c');
+        $victime = isset($cmds['temperature']) ? $cmds['temperature'] : null;
+        if ($victime === null) {
+            $fautes[] = 'commande d\'essai introuvable.';
+        } else {
+            $victime->setConfiguration('mqttbe::orphan', '2026-09-20 14:38:33');
+            $victime->setIsVisible(0);
+            $victime->save();
+        }
+        $bilan = mqttbeFactory::repairCrossFamilyAliases();
+        if ($bilan['repaired'] !== 1) {
+            $fautes[] = $bilan['repaired'] . ' équipement(s) réparé(s) au lieu d\'un.';
+        }
+        if ($bilan['aliases'] !== 1) {
+            $fautes[] = $bilan['aliases'] . ' alias retiré(s) au lieu d\'un : « omg:… » sur un '
+                      . 'équipement « shelly:… » est l\'identité d\'un autre rôle.';
+        }
+        $eq = eqLogic::byLogicalId('shelly:d0cf13c5163c', 'mqttbe');
+        $alias = is_object($eq) ? $eq->getConfiguration('mqttbe::aliases', array()) : array();
+        if (!is_array($alias) || !in_array('mac:d0cf13c5163c', $alias, true)
+            || !in_array('topic:Mini1G3lampeterrasse', $alias, true)) {
+            $fautes[] = 'un CHEMIN a été retiré avec l\'identité : l\'appareil ne serait plus '
+                      . 'reconnu par sa mac ni par son topic, et la découverte le recréerait.';
+        }
+        $cmds = mqttbeCommandesDe('shelly:d0cf13c5163c');
+        $victime = isset($cmds['temperature']) ? $cmds['temperature'] : null;
+        if ($victime === null) {
+            $fautes[] = 'la commande a disparu de l\'équipement réparé.';
+        } else {
+            if ((string) $victime->getConfiguration('mqttbe::orphan', '') !== '') {
+                $fautes[] = 'la commande porte toujours la marque « disparue » : sur cet '
+                          . 'équipement-là, le canal existait — c\'est l\'adapter d\'en face qui '
+                          . 'ne le connaissait pas.';
+            }
+            if ((int) $victime->getIsVisible() !== 1) {
+                $fautes[] = 'la commande reste masquée après réparation.';
+            }
+        }
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'les équipements nés de la dispute la rejouent indéfiniment, avec des commandes '
+      . 'éteintes que rien ne rallume.');
+
     return $resultats;
 }
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4 — 20 September 2026
+
+### A device can have two roles
+
+A Shelly running a Bluetooth gateway script is two things at once: a relay, and
+a gateway. Both roles publish on different topics, but they carry the same
+hardware address — and that is what the plugin uses to recognise a device it
+already knows.
+
+- **Both roles now yield two devices.** They used to fight over a single one:
+  the log holds ten takeovers, "taken over by adapter omg", then "taken over by
+  adapter shelly.gen2" two seconds later. On each swing, whoever won did not
+  know the other's commands and switched them off as gone — fourteen out of
+  seventeen. An address or a topic no longer makes a device recognisable beyond
+  its own family; its identifier still does, and a device that changes path is
+  recognised as before.
+- **Commands switched off by those swings are switched back on**, when the
+  plugin updates. On those devices, "the channel is gone" was false: the channel
+  was there, it was the other adapter that did not know it. A command you hid
+  yourself is left alone.
+
 ## 0.3 — 20 September 2026
 
 This release fixes a flaw that filled Jeedom on its own: on a real installation,

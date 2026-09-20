@@ -67,6 +67,32 @@ function mqttbe_update() {
     } catch (Throwable $e) {
         log::add('mqttbe', 'error', __('Mise à jour du plugin :', __FILE__) . ' ' . $e->getMessage());
     }
+
+    /*
+     * Réparation des identités que deux adapters se disputaient.
+     *
+     * Un appareil peut avoir deux rôles — un relais Shelly qui fait aussi
+     * passerelle Bluetooth en est un — et ces rôles portent la même `mac`.
+     * L'alias qui en découlait les faisait tomber sur un seul équipement, que
+     * les deux adapters se reprenaient tour à tour en éteignant les commandes
+     * l'un de l'autre. La garde est posée dans la fabrique ; il reste à défaire
+     * ce qui est déjà en base, une fois, et à rallumer ce qui avait été éteint.
+     *
+     * Hors ligne et borné au parc du plugin : rien qui puisse faire expirer la
+     * page « Gestion des plugins ».
+     */
+    try {
+        if (class_exists('mqttbeFactory')) {
+            $repare = mqttbeFactory::repairCrossFamilyAliases();
+            if ($repare['repaired'] > 0) {
+                log::add('mqttbe', 'info', sprintf(
+                    __('Identités réparées : %1$d équipement(s), %2$d alias retiré(s), %3$d commande(s) rallumée(s)', __FILE__),
+                    $repare['repaired'], $repare['aliases'], $repare['revived']));
+            }
+        }
+    } catch (Throwable $e) {
+        log::add('mqttbe', 'error', __("Réparation des identités :", __FILE__) . ' ' . $e->getMessage());
+    }
 }
 
 /*
