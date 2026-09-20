@@ -277,14 +277,29 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     const FRAICHEUR_GW = 300;
 
     /*
-     * Une adresse BLE aléatoire tourne toutes les quinze minutes : un seul
-     * téléphone fabrique quatre-vingt-seize candidats par jour, et la file
-     * d'adoption, bornée, éjecte le traceur repéré la veille. On attend donc
-     * qu'une balise à adresse aléatoire ait duré PLUS QUE LA PÉRIODE DE
-     * ROTATION avant de la proposer : ce qui a survécu à la rotation ne
-     * tournait pas.
+     * UNE ADRESSE ALÉATOIRE N'EXISTE QU'APRÈS AVOIR DURÉ.
+     *
+     * Une adresse BLE aléatoire tourne — un quart d'heure chez Apple et sur
+     * Android, une demi-heure chez Microsoft. Un seul téléphone fabrique donc
+     * quatre-vingt-seize identités par jour, toutes distinctes, toutes vouées à
+     * ne désigner plus rien le lendemain. On attend qu'une telle balise ait
+     * duré PLUS QUE LA PLUS LONGUE DES ROTATIONS CONNUES avant de lui
+     * reconnaître une existence : ce qui a survécu à la rotation ne tournait
+     * pas.
+     *
+     * La règle vaut POUR LA CRÉATION COMME POUR LA FILE D'ADOPTION, et c'est
+     * ce qui a changé. Elle ne gardait que la file, au motif qu'une balise
+     * `certain` avait mérité son équipement — et un iPhone de la maison,
+     * décodé « iBeacon » et entendu à −70 dBm, méritait le sien toutes les
+     * vingt minutes. Cent quatre-vingt-dix équipements en trois jours sur
+     * l'installation réelle, aucun n'ayant jamais reçu la moindre valeur : à
+     * la trame suivante, l'adresse avait déjà changé.
+     *
+     * Ce qu'elle ne retarde pas : une adresse PUBLIQUE, gravée dans le
+     * matériel, n'attend rien. Et un traceur à adresse aléatoire figée — les
+     * Tile en sont — franchit le seuil en une heure, puis se crée tout seul.
      */
-    const ROTATION_ALEATOIRE = 1200;
+    const STABILITE_ALEATOIRE = 3600;
 
     /*
      * Le faisceau qui distingue « décodée » de « à moi ». Voir confiance().
@@ -1054,9 +1069,49 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * consulte aucun catalogue : elle regarde des NOMS DE CHAMPS. Le jour où la
      * passerelle est mise à jour et se met à décoder un capteur de plus,
      * celui-ci devient `certain` sans qu'on touche au plugin.
+     *
+     * MAIS UN FORMAT D'ANNONCE N'EST PAS UN APPAREIL.
+     *
+     * Un `model` suffisait, et c'était l'erreur. La passerelle sait lire des
+     * formats d'annonce STANDARDS — iBeacon, et de la même famille les trames
+     * de proximité d'Apple, de Microsoft, ou celles du traçage de contacts —
+     * qu'émettent un téléphone, une montre, un autoradio. Elle les nomme
+     * (`model: "iBeacon"`) tout en disant elle-même qu'elle ne sait pas de quel
+     * appareil il s'agit : `brand: "GENERIC"`. Le prendre pour une
+     * reconnaissance, c'est créer un équipement par téléphone présent, et ses
+     * commandes ne portent rien qui se lise — `uuid`, `major`, `minor` sont des
+     * numéros de trame, pas des mesures.
+     *
+     * On lit donc la MARQUE, qui est un champ de plus publié par la passerelle
+     * et non un catalogue. Elle tranche dans les deux sens :
+     *
+     *   — GÉNÉRIQUE, RIEN NE RATTRAPE. Pas même une mesure. C'est le point qui
+     *     a coûté le plus cher à comprendre : le décodeur générique tire des
+     *     octets d'un format d'annonce ce qu'il peut, et sur l'installation
+     *     réelle il en sortait une tension — 10,9 V sur une balise, 3,8 V sur
+     *     une autre, prises dans des octets qui ne veulent rien dire. Cette
+     *     valeur de fantaisie suffisait à faire passer la balise pour un
+     *     capteur, et elle protégeait ensuite cent cinq équipements morts du
+     *     balayage. Une mesure ne vaut que si l'on sait de QUOI elle vient.
+     *   — ABSENTE, ON NE CONCLUT RIEN CONTRE. Une marque qui manque n'est pas
+     *     un aveu : la balise est alors jugée sur ses champs, comme avant.
+     *
+     * Rien n'est perdu pour autant : ces balises partent en file d'adoption, et
+     * celui qui reconnaît la sienne l'adopte d'un clic. Et le jour où la
+     * passerelle reconnaît vraiment l'appareil, elle écrit « Apple » ou
+     * « Xiaomi » à la place de « GENERIC », et l'équipement se crée sans qu'on
+     * touche au plugin.
      */
+    const MARQUE_GENERIQUE = 'GENERIC';
+
     private function trameDecodee($_dossier) {
-        if ($this->texte($_dossier, 'modele') !== '' || $this->texte($_dossier, 'modeleId') !== '') {
+        $marque = strtoupper($this->texte($_dossier, 'marque'));
+        if ($marque === self::MARQUE_GENERIQUE) {
+            return false;
+        }
+        $nomme = $this->texte($_dossier, 'modele') !== ''
+              || $this->texte($_dossier, 'modeleId') !== '';
+        if ($nomme && $marque !== '') {
             return true;
         }
         $table = self::table();
@@ -1145,7 +1200,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             if ($modifie) {
                 $this->range($_ctx, $cle, $dossier);
             }
-            $this->emetBalise($_ctx, $_mac);
+            $this->emetBalise($_ctx, $_mac, $_reglages);
             return;
         }
 
@@ -1198,7 +1253,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         if ($modifie) {
             $this->range($_ctx, $cle, $dossier);
         }
-        $this->emetBalise($_ctx, $_mac);
+        $this->emetBalise($_ctx, $_mac, $_reglages);
     }
 
     /* Présence ou pièce : les deux champs qui ne peuvent pas attendre. */
@@ -1286,6 +1341,21 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * On exige donc un FAISCEAU plutôt qu'un champ (voir faisceau()), et le
      * faisceau, une fois acquis, ne se perd plus.
      *
+     * ET UNE ADRESSE QUI TOURNE NE MÉRITE AUCUN ÉQUIPEMENT.
+     *
+     * C'est la seconde condition, et elle ne doit rien au décodage. Un iPhone
+     * posé sur la table est décodé (il annonce un format standard), il est chez
+     * nous (−70 dBm) : décodée et faisceau, donc `certain`, donc un équipement.
+     * Puis son adresse tourne, et un équipement de plus. Sur l'installation
+     * réelle : cent quatre-vingt-dix en trois jours, tous vides, et le plafond
+     * de découverte à deux doigts d'être atteint — après quoi plus RIEN
+     * n'aurait été créé, pas même un Shelly.
+     *
+     * Une balise à adresse aléatoire attend donc d'avoir duré (voir
+     * adresseStable). Ce n'est pas un refus, c'est un délai : le traceur, dont
+     * l'adresse ne tourne pas, devient `certain` au bout d'une heure et se crée
+     * tout seul. Le téléphone, lui, n'atteint jamais l'heure.
+     *
      * `bleAdoptAll` fait passer toutes les balises en `certain` : c'est le sens
      * du réglage, pour qui veut vraiment tout.
      */
@@ -1293,10 +1363,32 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         if (!empty($_reglages['adoptAll'])) {
             return 'certain';
         }
-        if (!empty($_dossier['decodee']) && !empty($_dossier['faisceau'])) {
+        if (!empty($_dossier['decodee']) && !empty($_dossier['faisceau'])
+            && $this->adresseStable($_dossier)) {
             return 'certain';
         }
         return 'guess';
+    }
+
+    /*
+     * L'ADRESSE DE CETTE BALISE DÉSIGNERA-T-ELLE ENCORE QUELQUE CHOSE DEMAIN ?
+     *
+     * Publique, elle est gravée dans le matériel : oui, tout de suite. Aléatoire,
+     * elle peut être figée — un traceur — ou tourner au quart d'heure — un
+     * téléphone —, et rien dans la trame ne dit lequel. Seule la durée le dit :
+     * ce qui a survécu à la rotation ne tournait pas.
+     *
+     * Inconnue (la passerelle n'a pas publié `mac_type`), elle est traitée comme
+     * publique : c'est le comportement d'avant ce garde-fou, et refuser sur un
+     * champ manquant priverait d'équipement les balises d'une passerelle plus
+     * ancienne — un silence n'est pas un aveu.
+     */
+    private function adresseStable($_dossier) {
+        if ($this->texte($_dossier, 'macType') !== 'random') {
+            return true;
+        }
+        $duree = $this->nombre($_dossier, 'vu', 0) - $this->nombre($_dossier, 'depuis', 0);
+        return $duree >= self::STABILITE_ALEATOIRE;
     }
 
     /*
@@ -1444,7 +1536,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         return true;
     }
 
-    private function emetBalise($_ctx, $_mac) {
+    private function emetBalise($_ctx, $_mac, $_reglages = array()) {
         $cle     = 'ble:' . $_mac;
         $dossier = $this->dossier($_ctx, $cle);
         if (empty($dossier)) {
@@ -1454,24 +1546,32 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             return false;
         }
         /*
-         * UNE ADRESSE ALÉATOIRE TROP JEUNE N'ENTRE PAS DANS LA FILE D'ADOPTION.
+         * UNE ADRESSE ALÉATOIRE TROP JEUNE NE SORT PAS D'ICI.
          *
-         * Une adresse BLE aléatoire tourne toutes les quinze minutes : un seul
-         * téléphone dans la maison produit quatre-vingt-seize candidats par
-         * jour, tous distincts, tous inutiles — et la file, bornée, éjecte le
-         * traceur que l'utilisateur avait repéré la veille sans avoir eu le
-         * temps de l'adopter. On attend donc qu'une telle balise ait duré PLUS
-         * QUE LA PÉRIODE DE ROTATION : ce qui y a survécu ne tournait pas, et
-         * mérite d'être proposé.
+         * Une adresse BLE aléatoire tourne au quart d'heure : un seul téléphone
+         * dans la maison produit quatre-vingt-seize identités par jour, toutes
+         * distinctes, toutes inutiles — et la file, bornée, éjecte le traceur
+         * que l'utilisateur avait repéré la veille sans avoir eu le temps de
+         * l'adopter. On attend donc qu'une telle balise ait duré (voir
+         * STABILITE_ALEATOIRE) : ce qui y a survécu ne tournait pas.
+         *
+         * LA GARDE NE FAIT PLUS D'EXCEPTION POUR LES BALISES `certain`. Elle en
+         * faisait une — « elle a mérité son équipement, elle part tout de
+         * suite » — et c'est par là que cent quatre-vingt-dix équipements vides
+         * sont entrés : un iPhone décodé « iBeacon » et entendu à −70 dBm est
+         * `certain` à sa première trame, puis son adresse tourne, et le
+         * suivant l'est tout autant. Un modèle n'a rien à faire dehors tant que
+         * son identité n'est pas acquise, quelle que soit la confiance.
+         *
+         * LA SEULE EXCEPTION EST `bleAdoptAll`. Décochée par défaut, elle dit
+         * « crée tout ce que tu vois », éphémères compris ; la garder sous
+         * cette garde-ci reviendrait à lui faire dire autre chose que son nom,
+         * sans un mot pour l'expliquer.
          *
          * Rien n'est marqué comme émis : le modèle partira le jour où la balise
-         * aura assez duré. Et cela ne concerne que les candidates — une balise
-         * `certain` a mérité son équipement et part tout de suite.
+         * aura assez duré.
          */
-        if ($this->texte($dossier, 'confiance') !== 'certain'
-            && $this->texte($dossier, 'macType') === 'random'
-            && ($this->nombre($dossier, 'vu', 0) - $this->nombre($dossier, 'depuis', 0))
-               < self::ROTATION_ALEATOIRE) {
+        if (empty($_reglages['adoptAll']) && !$this->adresseStable($dossier)) {
             return false;
         }
         $modele = $this->construitBalise($dossier);

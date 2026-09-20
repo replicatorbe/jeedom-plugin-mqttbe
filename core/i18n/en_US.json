@@ -95,7 +95,9 @@
         "Équipement %1$s (%2$s) : %3$s, %4$d commande(s) touchée(s)": "Device %1$s (%2$s): %3$s, %4$d command(s) touched",
         "Équipement %1$s : %2$d commande(s) sur %3$d n'apparaissent plus dans le modèle — modèle incomplet ?": "Device %1$s: %2$d command(s) out of %3$d no longer appear in the model — incomplete model?",
         "Équipement %1$s : %2$d écriture(s) refusée(s), empreinte non posée — le modèle sera repassé en revue au prochain message": "Device %1$s: %2$d write(s) rejected, fingerprint not stored — the model will be reviewed again on the next message",
-        "Équipement %1$s repris par l'adapter %2$s (précédemment %3$s)": "Device %1$s taken over by adapter %2$s (previously %3$s)"
+        "Équipement %1$s repris par l'adapter %2$s (précédemment %3$s)": "Device %1$s taken over by adapter %2$s (previously %3$s)",
+        "Balayage des balises non identifiées : %1$d supprimé(s), %2$d échec(s)%3$s.": "Sweep of unidentified beacons: %1$d removed, %2$d failure(s)%3$s.",
+        ", d'autres restent à traiter": ", more are left to handle"
     },
     "plugins/mqttbe/core/class/mqttbeRouting.class.php": {
         "Routage : commande %1$s ignorée (%2$s)": "Routing: command %1$s ignored (%2$s)",
@@ -373,7 +375,27 @@
         "Délai d'absence d'une balise (s)": "Beacon away delay (s)",
         "Silence au bout duquel une balise Bluetooth est déclarée absente. C'est la définition même de la présence de vos traceurs : trop court, un objet posé dans un tiroir clignotera entre présent et absent ; trop long, vous apprendrez tard qu'il est parti. Un traceur n'émet pas en continu, d'où les cinq minutes par défaut.": "How long a Bluetooth beacon may stay silent before it is declared away. This is the very definition of your trackers' presence: too short and an object left in a drawer will flicker between present and away; too long and you will learn late that it has gone. A tracker does not broadcast continuously, hence the five-minute default.",
         "Plafond d'équipements découverts": "Discovered device ceiling",
-        "Au-delà de ce nombre, la découverte cesse de créer et met les appareils suivants en attente de votre décision. La découverte se fonde sur ce qui circule sur le broker, et rien n'oblige ce qui circule à être honnête. 0 retire le plafond.": "Past this number, discovery stops creating and holds the following devices for your decision. Discovery works from what flows on the broker, and nothing compels what flows there to be honest. 0 removes the ceiling."
+        "Au-delà de ce nombre, la découverte cesse de créer et met les appareils suivants en attente de votre décision. La découverte se fonde sur ce qui circule sur le broker, et rien n'oblige ce qui circule à être honnête. 0 retire le plafond.": "Past this number, discovery stops creating and holds the following devices for your decision. Discovery works from what flows on the broker, and nothing compels what flows there to be honest. 0 removes the ceiling.",
+        "Nettoyer les balises non identifiées": "Clean up unidentified beacons",
+        "Une passerelle Bluetooth voit passer les téléphones, et certains annoncent un format que la passerelle sait lire sans savoir de quel appareil il s'agit. Leur adresse change toutes les vingt minutes : chaque changement laissait un équipement de plus, muet dès sa création. Ce bouton les retrouve et les supprime.": "A Bluetooth gateway sees every phone going past, and some announce a format the gateway can read without knowing which device it belongs to. Their address changes every twenty minutes or so: each change used to leave behind one more device, mute from the moment it was created. This button finds them and removes them.",
+        "Le premier clic ne supprime rien : il affiche la liste de ce qui partirait, avec le nombre de commandes et de relevés concernés. Rien n'est écrit tant que vous n'avez pas confirmé.": "The first click removes nothing: it lists what would go, with the number of commands and of recorded readings involved. Nothing is written until you confirm.",
+        "Suppression…": "Removing…",
+        "Recherche…": "Searching…",
+        "supprimé(s)": "removed",
+        "équipement(s) supprimé(s).": "device(s) removed.",
+        "échec(s) — voir le journal.": "failure(s) — see the log.",
+        "Rien à nettoyer": "Nothing to clean up",
+        "Aucune balise non identifiée : rien à supprimer.": "No unidentified beacon: nothing to remove.",
+        "Équipement": "Device",
+        "Commandes": "Commands",
+        "Relevés": "Readings",
+        "Confirmer la suppression de": "Confirm removal of",
+        "équipement(s)": "device(s)",
+        "Rien de supprimé pour le moment": "Nothing removed yet",
+        "équipement(s) seraient supprimés, avec": "device(s) would be removed, along with",
+        "commande(s) et": "command(s) and",
+        "commande(s) portant des relevés. Relisez la liste, puis confirmez.": "command(s) carrying recorded readings. Read the list again, then confirm.",
+        "Sont épargnés : tout ce qui n'est pas une balise Bluetooth, tout ce que la passerelle a su nommer, tout ce qui a reçu quoi que ce soit dans les dernières vingt-quatre heures, tout ce que vous avez renommé ou complété d'une commande, et tout ce qui est utilisé dans un scénario, une vue ou un design.": "Left untouched: anything that is not a Bluetooth beacon, anything the gateway was able to name, anything that received something in the last twenty-four hours, anything you renamed or added a command to, and anything used in a scenario, a view or a design."
     },
     "plugins/mqttbe/plugin_info/install.php": {
         "Arrêt du démon :": "Stopping the daemon:",

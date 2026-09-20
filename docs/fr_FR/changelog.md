@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3 — 20 septembre 2026
+
+Cette version corrige un défaut qui remplissait Jeedom tout seul : sur une
+installation réelle, cent quatre-vingt-dix équipements créés en trois jours,
+trois par heure, jour et nuit, aucun n'ayant jamais reçu la moindre valeur.
+
+### Les balises Bluetooth qui n'en étaient pas
+
+- **Un format d'annonce n'est plus pris pour un appareil.** Une passerelle
+  OpenMQTTGateway sait lire des formats standards — iBeacon et ses semblables —
+  qu'émettent les téléphones, les montres et les autoradios. Elle les nomme tout
+  en disant qu'elle ne sait pas de quel appareil il s'agit : le plugin lisait le
+  nom et ignorait l'aveu. Il faut désormais que la passerelle ait reconnu une
+  marque — et une mesure ne rattrape pas une marque générique, car le décodage
+  d'un format d'annonce produit des valeurs de fantaisie : 10,9 V de tension
+  pour une balise. Ces balises-là sont proposées dans la file d'adoption plutôt
+  que créées : celui qui reconnaît la sienne l'adopte d'un clic. Le jour où la
+  passerelle reconnaît vraiment l'appareil, l'équipement se crée tout seul,
+  comme avant.
+- **Une adresse Bluetooth qui tourne ne fabrique plus un équipement par
+  rotation.** Un téléphone change d'adresse toutes les vingt minutes environ :
+  c'était un équipement neuf à chaque fois, muet dès sa création puisque
+  l'adresse avait déjà changé. Une adresse aléatoire doit maintenant avoir duré
+  une heure avant d'exister pour Jeedom. Un traceur, dont l'adresse ne tourne
+  pas, est donc créé au bout d'une heure — sans que vous ayez rien à faire ; un
+  téléphone ne franchit jamais ce seuil.
+- **Un bouton pour nettoyer ce qui a déjà été créé**, dans la configuration du
+  plugin. Le premier clic n'écrit rien : il affiche la liste de ce qui partirait,
+  avec le nombre de commandes et de relevés concernés. Sont épargnés tout ce qui
+  n'est pas une balise Bluetooth, tout ce que la passerelle a su nommer, tout ce
+  qui a reçu quoi que ce soit dans les dernières vingt-quatre heures, tout ce que
+  vous avez renommé ou complété d'une commande, et tout ce qui est utilisé dans
+  un scénario, une vue ou un design.
+
+Ce défaut menaçait plus que la lisibilité : le plafond d'équipements découverts
+était sur le point d'être atteint, et au-delà la découverte cesse de créer — y
+compris pour un Shelly.
+
 ## 0.2 — 17 septembre 2026
 
 Cette version apporte la découverte des Shelly de deuxième génération et

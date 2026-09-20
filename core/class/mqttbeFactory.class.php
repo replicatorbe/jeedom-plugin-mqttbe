@@ -1809,6 +1809,241 @@ class mqttbeFactory {
         }
     }
 
+    /* ------------------------------------------------- balayage des anonymes */
+
+    /*
+     * Silence au bout duquel une balise anonyme est tenue pour morte.
+     *
+     * Vingt-quatre heures, et c'est le même délai que celui au bout duquel le
+     * démon lui-même oublie une balise décodée : au-delà, plus rien ne la
+     * rafraîchira, et son équipement resterait figé sur sa dernière valeur pour
+     * toujours. Une balise vivante, elle, est collectée en permanence — ne
+     * serait-ce que par sa présence, republiée à la minute.
+     */
+    const SWEEP_SILENCE = 86400;
+
+    /*
+     * Préfixe des canaux que le démon CALCULE au lieu de les recevoir.
+     *
+     * Ils ne prouvent rien sur la vie d'une balise : ils voyagent en messages
+     * retenus, et le broker les rejoue tels quels au démarrage du démon. Voir
+     * sweepUnidentified().
+     */
+    const SWEEP_COMPUTED = 'state.';
+
+    /*
+     * Suppressions par appel.
+     *
+     * UNE REQUÊTE HTTP N'EST PAS ÉTERNELLE. Le premier balayage réel a porté
+     * sur cent vingt-quatre équipements et quatorze cents commandes, chacune
+     * sondée avant d'être touchée : il est passé, en deux minutes environ. Un
+     * parc quatre fois plus grand, lui, dépasserait le délai du serveur web, et
+     * la requête serait coupée en chemin — les suppressions déjà faites
+     * resteraient, mais la page n'apprendrait rien de ce qui vient de
+     * disparaître. On rend donc la main après cinquante, en disant qu'il en
+     * reste ; c'est la page qui redemande, et chaque lot laisse sa ligne au
+     * journal.
+     */
+    const SWEEP_LOT = 50;
+
+    /**
+     * Balaye les balises Bluetooth que personne n'a jamais pu identifier.
+     *
+     * POURQUOI CE BALAYAGE EXISTE. Une passerelle Bluetooth voit tout ce qui
+     * passe, et elle sait lire des FORMATS d'annonce — iBeacon et ses
+     * semblables — qu'émettent les téléphones. L'adapter y a vu des appareils
+     * reconnus : cent quatre-vingt-dix équipements en trois jours sur une
+     * installation réelle, trois par heure, aucun n'ayant jamais reçu la
+     * moindre valeur — à la trame suivante, l'adresse avait déjà changé. La
+     * découverte ne les fabrique plus (voir l'adapter OpenMQTTGateway), mais
+     * ceux qui sont en base y restent, et le plafond de création les compte.
+     *
+     * CE QU'IL NE TOUCHE JAMAIS, et c'est l'essentiel :
+     *
+     *   — ce qui n'est pas une balise : Shelly, passerelles, équipements créés
+     *     à la main ne sont même pas regardés ;
+     *   — ce que la passerelle a su nommer : une marque, et l'équipement reste,
+     *     fût-il muet ;
+     *   — CE QUI VIT. Une seule commande rafraîchie dans les dernières
+     *     vingt-quatre heures, et l'équipement est épargné. C'est le critère
+     *     qui décide, et c'est le seul qu'un appareil ne peut pas simuler :
+     *     une balise qu'on reçoit encore est une balise qui existe.
+     *     LA FRAÎCHEUR SE JUGE SUR CE QUE L'APPAREIL PUBLIE, jamais sur les
+     *     trois états que le démon CALCULE (présence, pièce, dernière vue) :
+     *     ceux-là sont posés retenus sur le broker, et le broker les rejoue au
+     *     démarrage du démon. Sur l'installation réelle, cent vingt-sept
+     *     balises mortes depuis trois jours paraissaient ainsi avoir parlé à
+     *     la seconde près — toutes à l'heure du dernier démarrage, et leurs
+     *     commandes de signal, elles, n'avaient jamais rien reçu.
+     *   — ce que vous avez renommé. La fabrique retient le nom qu'elle a écrit ;
+     *     s'il a changé, c'est que quelqu'un s'est penché dessus, et personne
+     *     ne renomme un équipement dont il ne veut pas ;
+     *   — ce que vous avez complété : une commande ajoutée à la main, que la
+     *     fabrique n'a pas écrite, vaut décision ;
+     *   — ce qui est cité ailleurs : un scénario, une vue, un design, une autre
+     *     commande. En cas de doute — une sonde qui ne conclut pas, un plugin
+     *     qui répond mal —, l'équipement est CONSERVÉ.
+     *
+     * CE QUI NE LE RETIENT PAS, ET POURQUOI. « Mesurer quelque chose » a
+     * d'abord été un critère, et il a échoué : sur l'installation réelle, la
+     * passerelle tirait de ces trames une tension — 10,9 V sur une balise —,
+     * et cette valeur de fantaisie protégeait cent cinq équipements morts.
+     * Ce qu'une balise anonyme prétend mesurer ne prouve rien ; qu'on la
+     * reçoive encore, si.
+     *
+     * Les relevés d'historique, eux, n'arrêtent pas le balayage : sur ces
+     * équipements-là, ils ne sont que la trace du défaut — deux ou trois points
+     * de présence, le temps que l'adresse tourne. Ils sont comptés et annoncés
+     * AVANT toute suppression ; c'est l'aperçu qui les fait lire, et
+     * l'utilisateur qui tranche.
+     *
+     * LE TRAVAIL EST BORNÉ (voir SWEEP_LOT) : l'aperçu compte tout, la
+     * suppression s'arrête après un lot et dit qu'il en reste. L'appelant
+     * redemande jusqu'à ce que `remaining` soit faux.
+     *
+     * @param bool $_apply false : on regarde. true : on supprime.
+     */
+    public static function sweepUnidentified($_apply = false) {
+        $report = array(
+            'applied'   => (bool) $_apply,
+            'scanned'   => 0,
+            'matched'   => 0,
+            'removed'   => 0,
+            'failed'    => 0,
+            'cmd'       => 0,
+            'history'   => 0,
+            'remaining' => false,
+            'devices'   => array(),
+            'messages'  => array(),
+        );
+        $all = eqLogic::byType('mqttbe');
+        if (!is_array($all)) {
+            return $report;
+        }
+        $limite = time() - self::SWEEP_SILENCE;
+        foreach ($all as $eqLogic) {
+            $report['scanned']++;
+            $uid = (string) $eqLogic->getConfiguration(self::CONF_UID, '');
+            if (strpos($uid, 'ble:') !== 0) {
+                continue;
+            }
+            /* Une marque, et c'est un appareil : la passerelle a su dire ce que
+             * c'était. « GENERIC » est au contraire son aveu qu'elle ne le sait
+             * pas, et un champ vide n'en dit pas davantage. */
+            $marque = strtoupper(trim((string) $eqLogic->getConfiguration(self::CONF_MANUFACTURER, '')));
+            if ($marque !== '' && $marque !== 'GENERIC') {
+                continue;
+            }
+            /* Le nom est-il encore celui de la fabrique ? */
+            $generated = $eqLogic->getConfiguration(self::CONF_GENERATED, array());
+            if (!is_array($generated) || !isset($generated['name'])
+                || (string) $generated['name'] !== (string) $eqLogic->getName()) {
+                continue;
+            }
+            $cmds = cmd::byEqLogicId($eqLogic->getId());
+            if (!is_array($cmds) || empty($cmds)) {
+                continue;
+            }
+            $vivante = false;
+            $ajoutee = false;
+            $cite    = false;
+            $releves = 0;
+            foreach ($cmds as $cmd) {
+                $cle = (string) $cmd->getConfiguration(self::CONF_KEY, '');
+                /* Une commande que la fabrique n'a pas écrite a été ajoutée à
+                 * la main : l'équipement a servi à quelqu'un. */
+                if ($cle === '') {
+                    $ajoutee = true;
+                    break;
+                }
+                if (strpos($cle, self::SWEEP_COMPUTED) !== 0 && self::sweepFresh($cmd, $limite)) {
+                    $vivante = true;
+                    break;
+                }
+                if (self::isReferenced($cmd)) {
+                    $cite = true;
+                    break;
+                }
+                if (self::historyProbe($cmd) === true) {
+                    $releves++;
+                }
+            }
+            if ($vivante || $ajoutee || $cite) {
+                continue;
+            }
+            $report['matched']++;
+            $report['cmd']     += count($cmds);
+            $report['history'] += $releves;
+            $report['devices'][] = array(
+                'id'      => (int) $eqLogic->getId(),
+                'name'    => (string) $eqLogic->getName(),
+                'uid'     => $uid,
+                'cmd'     => count($cmds),
+                'history' => $releves,
+            );
+            if (!$_apply) {
+                continue;
+            }
+            try {
+                $eqLogic->remove();
+                $report['removed']++;
+            } catch (Throwable $e) {
+                $report['failed']++;
+                $report['messages'][] = $eqLogic->getName() . ' : ' . $e->getMessage();
+            }
+            /* Le lot est plein : on rend la main plutôt que de se faire couper
+             * au milieu d'une suppression, sans trace de ce qui est parti. */
+            if ($report['removed'] + $report['failed'] >= self::SWEEP_LOT) {
+                $report['remaining'] = true;
+                break;
+            }
+        }
+        if ($_apply) {
+            /* L'index de la fabrique garde des objets qui n'existent plus : la
+             * découverte suivante croirait reconnaître ce qui vient d'être
+             * supprimé, et n'écrirait rien. */
+            self::resetCache();
+            mqttbe::logger('info', sprintf(
+                __('Balayage des balises non identifiées : %1$d supprimé(s), %2$d échec(s)%3$s.', __FILE__),
+                $report['removed'], $report['failed'],
+                $report['remaining'] ? __(", d'autres restent à traiter", __FILE__) : ''));
+        }
+        return $report;
+    }
+
+    /**
+     * Cette commande a-t-elle reçu quelque chose depuis la limite ?
+     *
+     * Les dates de collecte vivent dans le cache du coeur, et on les y lit
+     * directement : getCollectDate() exécute la commande quand la date est vide
+     * — ce qui, sur deux cents équipements morts, ferait deux mille exécutions
+     * pour apprendre que rien n'est arrivé.
+     *
+     * UNE DATE ILLISIBLE VAUT « VIVANTE ». Un cache indisponible, une date que
+     * strtotime() refuse : il vaut cent fois mieux conserver un équipement mort
+     * que supprimer un capteur qui parlait.
+     */
+    private static function sweepFresh($_cmd, $_limite) {
+        foreach (array('collectDate', 'valueDate') as $champ) {
+            try {
+                $date = (string) $_cmd->getCache($champ, '');
+            } catch (Throwable $e) {
+                return true;
+            }
+            if (trim($date) === '') {
+                continue;
+            }
+            $quand = strtotime($date);
+            if ($quand === false) {
+                return true;
+            }
+            if ($quand >= $_limite) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Réduit un modèle ou un canal en tableau.
      *

@@ -179,6 +179,26 @@ try {
         ajax::success(array('message' => __('Découverte relancée : les appareils se présentent, patientez quelques secondes.', __FILE__)));
     }
 
+    if (init('action') == 'sweep') {
+        /*
+         * Balayer les balises que personne n'a jamais pu identifier.
+         *
+         * DEUX APPELS, ET LE PREMIER N'ÉCRIT RIEN. Sans `apply`, l'action rend
+         * la liste de ce qui serait supprimé, avec le compte des commandes et
+         * des relevés d'historique qui partiraient avec : une suppression en
+         * masse ne se décide pas sur une phrase, elle se décide sur la liste.
+         * C'est la page qui redemande avec `apply` une fois l'utilisateur
+         * fixé.
+         *
+         * Le démon n'a rien à faire ici : ce sont des équipements en base, et
+         * le balayage doit fonctionner démon arrêté — c'est même là qu'on le
+         * lance, après avoir coupé ce qui remplissait la base.
+         */
+        $applique = (init('apply', 0) == 1);
+        $rapport = mqttbeFactory::sweepUnidentified($applique);
+        ajax::success($rapport);
+    }
+
     if (init('action') == 'adopt') {
         /*
          * Adopter un candidat : c'est l'utilisateur qui tranche, et le modèle

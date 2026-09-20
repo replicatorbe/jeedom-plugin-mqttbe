@@ -153,6 +153,19 @@ if (!isConnect('admin')) {
                 <span class="help-block" style="margin:2px 0 0 0;"><i class="fas fa-unlock"></i> {{Vos retouches survivent à la relance : une commande renommée, une unité corrigée ou un affichage masqué ne sont jamais réécrits. La découverte ne remet à jour que la plomberie — topic écouté et chemin dans la charge utile.}}</span>
             </div>
         </div>
+        <div class="form-group">
+            <label class="col-sm-3 control-label"></label>
+            <div class="col-sm-9">
+                <a class="btn btn-default" id="bt_mqttbeSweep"><i class="fas fa-broom"></i> {{Nettoyer les balises non identifiées}}</a>
+                <span id="span_mqttbeSweepResult" style="margin-left:10px;"></span>
+                <span class="help-block" style="margin:6px 0 0 0;">{{Une passerelle Bluetooth voit passer les téléphones, et certains annoncent un format que la passerelle sait lire sans savoir de quel appareil il s'agit. Leur adresse change toutes les vingt minutes : chaque changement laissait un équipement de plus, muet dès sa création. Ce bouton les retrouve et les supprime.}}</span>
+                <span class="help-block" style="margin:2px 0 0 0;"><i class="fas fa-eye"></i> {{Le premier clic ne supprime rien : il affiche la liste de ce qui partirait, avec le nombre de commandes et de relevés concernés. Rien n'est écrit tant que vous n'avez pas confirmé.}}</span>
+                <span class="help-block" style="margin:2px 0 0 0;"><i class="fas fa-shield-alt"></i> {{Sont épargnés : tout ce qui n'est pas une balise Bluetooth, tout ce que la passerelle a su nommer, tout ce qui a reçu quoi que ce soit dans les dernières vingt-quatre heures, tout ce que vous avez renommé ou complété d'une commande, et tout ce qui est utilisé dans un scénario, une vue ou un design.}}</span>
+                <!-- La liste est posée en TEXTE par le JS : ces noms viennent
+                     d'appareils qui écrivent ce qu'ils veulent. -->
+                <div id="div_mqttbeSweepList" class="hidden" style="margin:8px 0 0 0;max-height:30vh;overflow:auto;"></div>
+            </div>
+        </div>
     </fieldset>
 
     <fieldset>
@@ -248,6 +261,123 @@ if (!isConnect('admin')) {
      * d'erreur que l'essai de connexion — un démon arrêté répond par un échec
      * explicite plutôt que par un silence.
      */
+    /*
+     * Le balayage, en deux temps.
+     *
+     * Le premier clic demande l'aperçu — l'action ajax n'écrit rien sans
+     * `apply` — et remplit la liste. Le bouton devient alors une confirmation,
+     * et reprend son état d'origine dès que le travail est fait : une
+     * suppression en masse ne doit pas rester armée sous le curseur.
+     */
+    var mqttbeSweepArme = false;
+    /* Cumul des lots : la suppression revient ici tant qu'il reste du travail,
+     * et le compte affiché doit être celui de l'ensemble, pas du dernier lot. */
+    var mqttbeSweepTotal = 0;
+    var mqttbeSweepRates = 0;
+    $('#bt_mqttbeSweep').on('click', function () {
+        mqttbeSweepTotal = 0;
+        mqttbeSweepRates = 0;
+        mqttbeSweepLance($(this), mqttbeSweepArme);
+    });
+
+    /*
+     * Un lot, et le suivant s'il en reste.
+     *
+     * Le serveur s'arrête après cinquante suppressions et le dit : sur un parc
+     * assez grand, une requête unique dépasserait le délai du serveur web et
+     * serait coupée en chemin — les suppressions resteraient, mais la page
+     * n'apprendrait rien. On relance donc, et chaque lot compte.
+     */
+    function mqttbeSweepLance(bouton, applique) {
+        var result = $('#span_mqttbeSweepResult');
+        var liste  = $('#div_mqttbeSweepList');
+        result.attr('class', 'label label-info').text(applique
+            ? (mqttbeSweepTotal > 0 ? '{{Suppression…}} ' + mqttbeSweepTotal : '{{Suppression…}}')
+            : '{{Recherche…}}');
+        $.ajax({
+            type: 'POST',
+            url: 'plugins/mqttbe/core/ajax/mqttbe.ajax.php',
+            data: { action: 'sweep', apply: applique ? 1 : 0 },
+            dataType: 'json',
+            timeout: 120000,
+            error: function (request, status, error) {
+                result.attr('class', 'label label-danger').text('{{Échec}}');
+                handleAjaxError(request, status, error);
+            },
+            success: function (data) {
+                if (data.state != 'ok') {
+                    result.attr('class', 'label label-danger').text('{{Échec}}');
+                    $('#div_alert').showAlert({ message: data.result, level: 'danger' });
+                    return;
+                }
+                var rapport = data.result || {};
+                var trouves = rapport.matched || 0;
+                if (applique) {
+                    mqttbeSweepTotal += (rapport.removed || 0);
+                    mqttbeSweepRates += (rapport.failed || 0);
+                    if (rapport.remaining) {
+                        /* Il en reste : on enchaîne sans rendre la main, et sans
+                         * redemander une confirmation qui a déjà été donnée. */
+                        mqttbeSweepLance(bouton, true);
+                        return;
+                    }
+                    /* Désarmé d'abord : si l'affichage échoue, le bouton ne doit
+                     * pas rester prêt à supprimer une seconde fois. */
+                    mqttbeSweepArme = false;
+                    bouton.removeClass('btn-danger').addClass('btn-default');
+                    bouton.html('<i class="fas fa-broom"></i> {{Nettoyer les balises non identifiées}}');
+                    liste.addClass('hidden').empty();
+                    result.attr('class', 'label label-success')
+                          .text(mqttbeSweepTotal + ' {{supprimé(s)}}');
+                    $('#div_alert').showAlert({
+                        message: mqttbeSweepTotal + ' {{équipement(s) supprimé(s).}}'
+                               + (mqttbeSweepRates > 0 ? ' ' + mqttbeSweepRates + ' {{échec(s) — voir le journal.}}' : ''),
+                        level: mqttbeSweepRates > 0 ? 'warning' : 'success'
+                    });
+                    return;
+                }
+                if (trouves === 0) {
+                    liste.addClass('hidden').empty();
+                    result.attr('class', 'label label-success').text('{{Rien à nettoyer}}');
+                    $('#div_alert').showAlert({
+                        message: '{{Aucune balise non identifiée : rien à supprimer.}}',
+                        level: 'success'
+                    });
+                    return;
+                }
+                /* La liste, en texte : ce sont des noms annoncés par des
+                 * appareils, ils n'entrent jamais dans le balisage. */
+                var table = $('<table class="table table-condensed table-bordered"></table>');
+                var thead = $('<thead></thead>').append(
+                    $('<tr></tr>')
+                        .append($('<th></th>').text('{{Équipement}}'))
+                        .append($('<th style="width:22%;"></th>').text('{{Identifiant}}'))
+                        .append($('<th style="width:14%;"></th>').text('{{Commandes}}'))
+                        .append($('<th style="width:14%;"></th>').text('{{Relevés}}'))
+                );
+                var tbody = $('<tbody></tbody>');
+                $.each(rapport.devices || [], function (i, appareil) {
+                    tbody.append($('<tr></tr>')
+                        .append($('<td></td>').text(appareil.name || ''))
+                        .append($('<td></td>').text(appareil.uid || ''))
+                        .append($('<td></td>').text(appareil.cmd || 0))
+                        .append($('<td></td>').text(appareil.history || 0)));
+                });
+                liste.empty().append(table.append(thead).append(tbody)).removeClass('hidden');
+                mqttbeSweepArme = true;
+                bouton.removeClass('btn-default').addClass('btn-danger');
+                bouton.html('<i class="fas fa-trash"></i> {{Confirmer la suppression de}} ' + trouves + ' {{équipement(s)}}');
+                result.attr('class', 'label label-warning').text('{{Rien de supprimé pour le moment}}');
+                $('#div_alert').showAlert({
+                    message: trouves + ' {{équipement(s) seraient supprimés, avec}} ' + (rapport.cmd || 0)
+                           + ' {{commande(s) et}} ' + (rapport.history || 0)
+                           + ' {{commande(s) portant des relevés. Relisez la liste, puis confirmez.}}',
+                    level: 'warning'
+                });
+            }
+        });
+    }
+
     $('#bt_mqttbeRescan').on('click', function () {
         var result = $('#span_mqttbeRescanResult');
         result.attr('class', 'label label-info').text('{{Relance en cours…}}');

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.3 — 20 September 2026
+
+This release fixes a flaw that filled Jeedom on its own: on a real installation,
+one hundred and ninety devices created in three days, three an hour, day and
+night, not one of which ever received a single value.
+
+### Bluetooth beacons that were not beacons
+
+- **An advertising format is no longer mistaken for a device.** An
+  OpenMQTTGateway bridge can read standard formats — iBeacon and its like —
+  broadcast by phones, watches and car stereos. It names them while stating that
+  it does not know which device they belong to: the plugin read the name and
+  ignored the admission. The gateway must now have recognised a brand — and a
+  measurement does not make up for a generic brand, because decoding an
+  advertising format yields make-believe values: 10.9 V of voltage for a beacon.
+  Such beacons are offered in the adoption queue rather than created: whoever
+  recognises their own adopts it in one click. The day the gateway truly
+  recognises the device, the device is created on its own, as before.
+- **A rotating Bluetooth address no longer produces one device per rotation.** A
+  phone changes address roughly every twenty minutes: that used to be a brand
+  new device each time, mute from birth since the address had already changed. A
+  random address must now have lasted an hour before it exists for Jeedom. A
+  tracker, whose address does not rotate, is therefore created after an hour —
+  with nothing for you to do; a phone never reaches that threshold.
+- **A button to clean up what was already created**, in the plugin
+  configuration. The first click writes nothing: it lists what would go, with the
+  number of commands and of recorded readings involved. Left untouched: anything
+  that is not a Bluetooth beacon, anything the gateway was able to name, anything
+  that received something in the last twenty-four hours, anything you renamed or
+  added a command to, and anything used in a scenario, a view or a design.
+
+This flaw threatened more than readability: the ceiling on discovered devices
+was about to be reached, and beyond it discovery stops creating anything — a
+Shelly included.
+
 ## 0.2 — 17 September 2026
 
 This release brings discovery of second-generation Shelly devices and later —

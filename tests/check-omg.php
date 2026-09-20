@@ -302,15 +302,15 @@ function mqttbeCanalOmg($_modele, $_cle, $_capacite, $_description) {
 /* Le parc entier rejoué d'un coup : passerelles, puis balises brutes, puis un
  * battement. C'est l'ordre du démarrage du démon.
  *
- * Les trames sont rejouées DEUX FOIS, à une demi-heure d'intervalle, et ce
- * n'est pas une commodité : la balise brute du parc porte une adresse
- * ALÉATOIRE, qui tourne toutes les quinze minutes sur un téléphone ordinaire.
- * L'adapter ne propose une telle balise à l'adoption qu'une fois qu'elle a
- * survécu à la rotation — sans quoi un seul iPhone fabriquerait quatre-vingt-
- * seize candidats par jour et chasserait de la file le traceur repéré la
- * veille. Rejouer le parc à l'instant zéro, c'est donc le regarder avant qu'il
- * ait quoi que ce soit à dire ; la demi-heure est ce que voit un démon qui
- * tourne depuis le matin. */
+ * Les trames sont rejouées DEUX FOIS, à une heure d'intervalle, et ce n'est
+ * pas une commodité : la balise brute du parc porte une adresse ALÉATOIRE, qui
+ * tourne au quart d'heure sur un téléphone ordinaire. L'adapter ne reconnaît
+ * une existence à une telle balise qu'une fois qu'elle a survécu à la rotation
+ * — sans quoi un seul iPhone fabriquerait quatre-vingt-seize identités par
+ * jour, chassant de la file le traceur repéré la veille et, quand la passerelle
+ * les décode, fabriquant autant d'équipements vides. Rejouer le parc à
+ * l'instant zéro, c'est donc le regarder avant qu'il ait quoi que ce soit à
+ * dire ; l'heure est ce que voit un démon qui tourne depuis le matin. */
 function mqttbeParcOmg($_reglages = null) {
     $passerelles = mqttbeLitJsonOmg('passerelles.json');
     $balises     = mqttbeLitJsonOmg('balises.json');
@@ -324,7 +324,7 @@ function mqttbeParcOmg($_reglages = null) {
     }
     mqttbeRejouePasserellesOmg($adapter, $ctx, $passerelles['passerelles']);
     mqttbeRejoueBalisesOmg($adapter, $ctx, $balises['trames']);
-    $ctx->avance(1800);
+    $ctx->avance(MqttbeOpenMqttGateway::STABILITE_ALEATOIRE);
     mqttbeRejouePasserellesOmg($adapter, $ctx, $passerelles['passerelles']);
     mqttbeRejoueBalisesOmg($adapter, $ctx, $balises['trames']);
     $adapter->onTick($ctx);
@@ -633,9 +633,9 @@ function mqttbeControlesOmg() {
     $topicR = $reperes['SAM'] . '/BTtoMQTT/D2D2D2102030';
     $adapterR->onMessage($topicR, '{"id":"D2:D2:D2:10:20:30","mac_type":1,"name":"BALISE-ESSAI 01",'
         . '"manufacturerdata":"a705","rssi":-70,"txpower":0}', false, $ctxR);
-    /* L'adresse est aléatoire : la balise n'est proposée qu'une fois qu'elle a
-     * survécu à la période de rotation. Une demi-heure, et elle est là. */
-    $ctxR->avance(1800);
+    /* L'adresse est aléatoire : la balise n'existe qu'une fois qu'elle a
+     * survécu à la période de rotation. Une heure, et elle est là. */
+    $ctxR->avance(MqttbeOpenMqttGateway::STABILITE_ALEATOIRE);
     $adapterR->onMessage($topicR, '{"id":"D2:D2:D2:10:20:30","mac_type":1,"name":"BALISE-ESSAI 01",'
         . '"manufacturerdata":"a705","rssi":-70,"txpower":0}', false, $ctxR);
     $adapterR->onTick($ctxR);
@@ -686,8 +686,8 @@ function mqttbeControlesOmg() {
     mqttbeRejouePasserellesOmg($adapterD, $ctxD, $parc['passerelles']['passerelles']);
     mqttbeRejoueBalisesOmg($adapterD, $ctxD, $parc['balises']['trames']);
     mqttbeRejoueBalisesOmg($adapterD, $ctxD, $decodees['trames']);
-    /* Une demi-heure plus tard, tout est encore là : voir mqttbeParcOmg(). */
-    $ctxD->avance(1800);
+    /* Une heure plus tard, tout est encore là : voir mqttbeParcOmg(). */
+    $ctxD->avance(MqttbeOpenMqttGateway::STABILITE_ALEATOIRE);
     mqttbeRejouePasserellesOmg($adapterD, $ctxD, $parc['passerelles']['passerelles']);
     mqttbeRejoueBalisesOmg($adapterD, $ctxD, $parc['balises']['trames']);
     mqttbeRejoueBalisesOmg($adapterD, $ctxD, $decodees['trames']);
@@ -1778,7 +1778,7 @@ function mqttbeControlesOmg() {
      * proposée. C'est le cas des traceurs, dont l'adresse ne tourne pas. */
     $adapterT2 = new MqttbeOpenMqttGateway();
     $ctxT2 = new MqttbeContexteEssaiOmg();
-    for ($i = 0; $i < 4; $i++) {
+    for ($i = 0; $i < 8; $i++) {
         $adapterT2->onMessage($reperes['ENTREE'] . '/BTtoMQTT/D2D2D2102030',
             '{"id":"D2:D2:D2:10:20:30","mac_type":1,"name":"BALISE-ESSAI 01",'
             . '"manufacturerdata":"a705","rssi":-65}', false, $ctxT2);
@@ -1792,7 +1792,7 @@ function mqttbeControlesOmg() {
         }
     }
     if (!$propose) {
-        $fautes[] = 'une balise à adresse aléatoire vue pendant une demi-heure n\'est jamais '
+        $fautes[] = 'une balise à adresse aléatoire vue pendant plus d\'une heure n\'est jamais '
                   . 'proposée : le traceur de l\'utilisateur resterait invisible pour toujours.';
     }
     /* Une adresse PUBLIQUE, elle, est proposée tout de suite : elle est gravée
@@ -2042,6 +2042,171 @@ function mqttbeControlesOmg() {
     if (!$nomme) {
         $fautes[] = 'un préfixe écarté ne laisse aucune trace nommant le topic : l\'utilisateur '
                   . 'voit son parc incomplet et le journal du plugin reste muet.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 36 ---
+     * UN FORMAT D'ANNONCE N'EST PAS UN APPAREIL.
+     *
+     * Le cas le plus coûteux de tout l'adapter, et il s'est produit : cent
+     * quatre-vingt-dix équipements en trois jours sur l'installation réelle,
+     * trois par heure, jour et nuit, aucun n'ayant jamais reçu la moindre
+     * valeur. Le plafond de découverte était à quelques heures d'être atteint,
+     * après quoi plus rien n'aurait été créé — pas même un Shelly.
+     *
+     * Deux téléphones en étaient la cause. La passerelle sait lire le format
+     * iBeacon, qui est un STANDARD D'ANNONCE et non un appareil : elle le nomme
+     * (`model: "iBeacon"`) tout en disant qu'elle ne sait pas ce que c'est
+     * (`brand: "GENERIC"`). L'adapter y voyait une reconnaissance ; le téléphone
+     * était dans la maison, donc entendu fort, donc `certain` ; puis son adresse
+     * tournait, et tout recommençait vingt minutes plus tard.
+     *
+     * Les deux gardes sont contrôlées ici, et séparément : chacune suffirait à
+     * elle seule, elles ne rattrapent pas les mêmes cas. */
+    $titre = 'un format d\'annonce générique ne fabrique aucun équipement';
+    $fautes = array();
+
+    /* Vingt-quatre heures d'un téléphone posé sur la table : l'adresse tourne
+     * toutes les vingt minutes, chaque identité est décodée « iBeacon », et
+     * toutes sont entendues à −70 dBm. C'est la capture de production, aux
+     * adresses près. */
+    $adapterG = new MqttbeOpenMqttGateway();
+    $ctxG = new MqttbeContexteEssaiOmg();
+    for ($tour = 0; $tour < 72; $tour++) {
+        $adresse = sprintf('D2D2D220%04X', $tour);
+        $charge = '{"id":"' . $adresse . '","mac_type":1,"adv_type":0,'
+                . '"manufacturerdata":"4c0012022e02","rssi":-70,'
+                . '"brand":"GENERIC","model":"iBeacon","model_id":"IBEACON","type":"BCON",'
+                . '"mfid":"4c00","uuid":"2e0207110616ed6acbe2163a0209","major":1,"minor":2,'
+                . '"txpower":-59}';
+        for ($k = 0; $k < 10; $k++) {
+            $adapterG->onMessage($reperes['SAM'] . '/BTtoMQTT/' . $adresse, $charge, false, $ctxG);
+            $ctxG->avance(120);
+            $adapterG->onTick($ctxG);
+        }
+    }
+    if (!empty($ctxG->modeles)) {
+        $fautes[] = count($ctxG->modeles) . ' modèle(s) pour vingt-quatre heures d\'un seul '
+                  . 'téléphone : c\'est exactement ce qui a rempli l\'installation réelle de cent '
+                  . 'quatre-vingt-dix équipements vides.';
+    }
+    /* Et rien n'est déposé sur le broker à leur sujet : un état retenu par
+     * identité, c'est soixante-douze messages éternels par jour. */
+    if (!empty($ctxG->publications)) {
+        $fautes[] = count($ctxG->publications) . ' publication(s) pour des identités éphémères : '
+                  . 'le broker garderait un message retenu par adresse abandonnée.';
+    }
+
+    /* La première garde, seule : même décodé, même à adresse PUBLIQUE — donc
+     * stable, donc au-dessus de tout soupçon de rotation — un format d'annonce
+     * générique ne se crée pas. Il est proposé, et l'utilisateur tranche : la
+     * balise iBeacon qu'on vient d'acheter existe, et elle ne doit pas
+     * disparaître du plugin sous prétexte qu'on ne sait pas la nommer. */
+    $adapterG2 = new MqttbeOpenMqttGateway();
+    $ctxG2 = new MqttbeContexteEssaiOmg();
+    $topicG2 = $reperes['SAM'] . '/BTtoMQTT/A8B0C100BC01';
+    for ($k = 0; $k < 12; $k++) {
+        $adapterG2->onMessage($topicG2,
+            '{"id":"A8:B0:C1:00:BC:01","mac_type":0,"rssi":-70,"brand":"GENERIC",'
+            . '"model":"iBeacon","model_id":"IBEACON","type":"BCON","mfid":"4c00",'
+            . '"uuid":"2e0207110616ed6acbe2163a0209","major":1,"minor":2,"txpower":-59}',
+            false, $ctxG2);
+        $ctxG2->avance(60);
+        $adapterG2->onTick($ctxG2);
+    }
+    $vuG2 = null;
+    foreach ($ctxG2->modeles as $modele) {
+        if ($modele->uid() === 'ble:a8b0c100bc01') {
+            $vuG2 = $modele;
+        }
+    }
+    if ($vuG2 === null) {
+        $fautes[] = 'une balise iBeacon à adresse publique n\'est même pas proposée : celle que '
+                  . 'l\'utilisateur vient d\'acheter serait invisible pour toujours.';
+    } elseif ($vuG2->confidence() !== 'guess') {
+        $fautes[] = 'une balise iBeacon à adresse publique est créée d\'office (confiance « '
+                  . $vuG2->confidence() . ' ») : « GENERIC » est l\'aveu de la passerelle qu\'elle '
+                  . 'ne sait pas de quel appareil il s\'agit.';
+    }
+
+    /* La seconde garde, seule : la marque est reconnue — donc c'est bien un
+     * appareil — mais l'adresse est aléatoire. Elle attend d'avoir duré, puis
+     * se crée sans que personne ait rien à faire. C'est le cas des traceurs,
+     * dont l'adresse ne tourne pas. */
+    $adapterG3 = new MqttbeOpenMqttGateway();
+    $ctxG3 = new MqttbeContexteEssaiOmg();
+    $topicG3 = $reperes['SAM'] . '/BTtoMQTT/D2D2D2103006';
+    $chargeG3 = '{"id":"D2:D2:D2:10:30:06","mac_type":1,"rssi":-70,"servicedatauuid":"0xfeed",'
+              . '"brand":"Tile","model":"Smart Tracker","model_id":"TILE","type":"TRACK"}';
+    $adapterG3->onMessage($topicG3, $chargeG3, false, $ctxG3);
+    $ctxG3->avance(MqttbeOpenMqttGateway::STABILITE_ALEATOIRE - 120);
+    $adapterG3->onMessage($topicG3, $chargeG3, false, $ctxG3);
+    $adapterG3->onTick($ctxG3);
+    if (!empty($ctxG3->modeles)) {
+        $fautes[] = 'un traceur à adresse aléatoire est créé avant d\'avoir survécu à la période '
+                  . 'de rotation : rien ne le distingue encore d\'un téléphone qui passe.';
+    }
+    $ctxG3->avance(240);
+    $adapterG3->onMessage($topicG3, $chargeG3, false, $ctxG3);
+    $adapterG3->onTick($ctxG3);
+    $vuG3 = null;
+    foreach ($ctxG3->modeles as $modele) {
+        if ($modele->uid() === 'ble:d2d2d2103006') {
+            $vuG3 = $modele;
+        }
+    }
+    if ($vuG3 === null || $vuG3->confidence() !== 'certain') {
+        $fautes[] = 'un traceur reconnu, à adresse aléatoire mais figée, n\'est toujours pas créé '
+                  . 'au bout d\'une heure : l\'intégration automatique ne serait plus '
+                  . 'automatique.';
+    }
+
+    /* UNE MESURE NE RATTRAPE PAS UNE MARQUE GÉNÉRIQUE, et c'est le point qui a
+     * coûté le plus cher à comprendre. Le décodeur générique tire des octets
+     * d'un format d'annonce ce qu'il peut : sur l'installation réelle, une
+     * tension de 10,9 V pour une balise — prise dans des octets qui ne veulent
+     * rien dire. Cette valeur de fantaisie suffisait à faire passer la balise
+     * pour un capteur. La balise est donc PROPOSÉE, jamais créée : celui qui
+     * reconnaît la sienne l'adopte d'un clic, et rien n'est perdu. */
+    $adapterG4 = new MqttbeOpenMqttGateway();
+    $ctxG4 = new MqttbeContexteEssaiOmg();
+    $topicG4 = $reperes['SAM'] . '/BTtoMQTT/A8B0C100BC02';
+    $adapterG4->onMessage($topicG4,
+        '{"id":"A8:B0:C1:00:BC:02","mac_type":0,"rssi":-70,"brand":"GENERIC",'
+        . '"model":"iBeacon","model_id":"IBEACON","volt":10.9}', false, $ctxG4);
+    $adapterG4->onTick($ctxG4);
+    $vuG4 = null;
+    foreach ($ctxG4->modeles as $modele) {
+        if ($modele->uid() === 'ble:a8b0c100bc02') {
+            $vuG4 = $modele;
+        }
+    }
+    if ($vuG4 === null) {
+        $fautes[] = 'une balise générique qui publie une tension n\'est même pas proposée : elle '
+                  . 'disparaîtrait sans que personne ne sache qu\'elle est passée.';
+    } elseif ($vuG4->confidence() !== 'guess') {
+        $fautes[] = 'une tension décodée d\'un format d\'annonce fait créer l\'équipement '
+                  . '(confiance « ' . $vuG4->confidence() . ' ») : c\'est ce qui protégeait cent '
+                  . 'cinq équipements morts du balayage.';
+    }
+    /* En revanche, une marque ABSENTE ne prouve rien contre la balise : un
+     * capteur que la passerelle ne sait pas étiqueter mais dont elle lit la
+     * température reste un capteur, et il se crée. */
+    $adapterG5 = new MqttbeOpenMqttGateway();
+    $ctxG5 = new MqttbeContexteEssaiOmg();
+    $adapterG5->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C100BC03',
+        '{"id":"A8:B0:C1:00:BC:03","mac_type":0,"rssi":-70,"tempc":21.4,"batt":88}', false, $ctxG5);
+    $adapterG5->onTick($ctxG5);
+    $vuG5 = null;
+    foreach ($ctxG5->modeles as $modele) {
+        if ($modele->uid() === 'ble:a8b0c100bc03') {
+            $vuG5 = $modele;
+        }
+    }
+    if ($vuG5 === null || $vuG5->confidence() !== 'certain') {
+        $fautes[] = 'un thermomètre sans marque annoncée n\'est pas créé : une marque qui manque '
+                  . 'n\'est pas un aveu, et le filtre ne doit pas se retourner contre les capteurs '
+                  . 'que la passerelle décode sans savoir les étiqueter.';
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
