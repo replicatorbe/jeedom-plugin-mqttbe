@@ -1,5 +1,12 @@
-# Contrôles de conformité du plugin (syntaxe PHP, structure, info.json).
-# Workflow réutilisable maintenu par Jeedom, utilisé par les plugins officiels.
+# Contrôles de conformité du plugin : syntaxe PHP.
+# Workflows réutilisables maintenus par Jeedom, utilisés par les plugins officiels.
+#
+# On n'appelle pas leur agrégat `plugin.yml` : il impose aussi un passage sous
+# PHP 7.4, que le plugin ne vise pas. Il exige Jeedom 4.4 sur Debian 12, donc
+# PHP 8.2, et les bibliothèques embarquées du démon (php-mqtt/client 2.x,
+# psr/log 3.x) demandent PHP 8.0 au minimum : sous 7.4 elles ne se chargent
+# même pas. Ce passage échouait donc à juste titre, et l'exclure du lint en
+# ignorant `resources/mqttbed/lib` n'aurait fait que masquer l'incompatibilité.
 name: 'Full Workflows Plugin Jeedom'
 
 on:
@@ -9,5 +16,7 @@ on:
     branches: [beta, master]
 
 jobs:
-  plugin:
-    uses: jeedom/workflows/.github/workflows/plugin.yml@main
+  php80:
+    uses: jeedom/workflows/.github/workflows/lint_Php80.yml@main
+  php82:
+    uses: jeedom/workflows/.github/workflows/lint_Php82.yml@main
