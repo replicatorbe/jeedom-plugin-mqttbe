@@ -70,6 +70,9 @@ class mqttbeFactory {
     const CONF_FIRMWARE     = 'mqttbe::firmware';
     const CONF_CONFIG_URL   = 'mqttbe::configUrl';
     const CONF_AVAILABILITY = 'mqttbe::availability';
+    /* Comment faire republier à l'appareil son état complet (voir
+     * MqttbeDeviceModel::$refresh). Lu par la table de routage. */
+    const CONF_REFRESH      = 'mqttbe::refresh';
     /* Nombre de commandes que la fabrique a laissées derrière elle au dernier
      * passage. Sans ce compte, le raccourci d'idempotence ne regarde que
      * l'empreinte : une commande supprimée à la main — par erreur, ou par la
@@ -604,6 +607,15 @@ class mqttbeFactory {
                       ? $_model['availability'] : array();
         if (!empty($availability)) {
             $_eqLogic->setConfiguration(self::CONF_AVAILABILITY, $availability);
+        }
+        /* Posé ET retiré : un appareil qui passe sur pile, ou un adapter qui
+         * cesse d'en demander, ne doit pas continuer d'être interrogé. */
+        $refresh = isset($_model['refresh']) && is_array($_model['refresh'])
+                 ? $_model['refresh'] : array();
+        if (!empty($refresh)) {
+            $_eqLogic->setConfiguration(self::CONF_REFRESH, $refresh);
+        } elseif (!empty($_eqLogic->getConfiguration(self::CONF_REFRESH, array()))) {
+            $_eqLogic->setConfiguration(self::CONF_REFRESH, null);
         }
 
         $desired = self::str($_meta, 'name');

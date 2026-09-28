@@ -121,6 +121,27 @@ class MqttbeDeviceModel {
 
     private $availability = array();
 
+    /*
+     * Comment faire republier à l'appareil son état complet.
+     *
+     * Certains appareils ne publient que ce qui CHANGE : un relais qui n'a pas
+     * bougé depuis une semaine n'a jamais rien dit de son état, et la commande
+     * reste vide. Ce bloc dit au démon quoi publier pour obtenir l'état entier,
+     * à quel rythme, et où la réponse arrive :
+     *
+     *   topic, payload : la question, posée toutes les `interval` secondes ;
+     *   reply          : le topic de la réponse ;
+     *   mirror, strip  : la réponse porte les mêmes champs que les messages de
+     *                    `mirror`, sans le préfixe de chemin `strip`. Jeedom en
+     *                    déduit, pour chaque commande de `mirror`, une seconde
+     *                    lecture sur `reply` — sans commande supplémentaire.
+     *
+     * Vide pour un appareil qui publie déjà tout seul, et pour un appareil sur
+     * pile : on ne réveille pas un capteur qui dort pour lui demander ce qu'il
+     * dira de toute façon à son réveil.
+     */
+    private $refresh = array();
+
     /* Tableau associatif clé de canal => MqttbeChannel, pour que le doublon de
      * clé se voie à l'ajout et non trois étapes plus loin, au moment où la
      * base refuse l'enregistrement de tout l'équipement. */
@@ -183,6 +204,9 @@ class MqttbeDeviceModel {
         if (isset($_values['availability']) && is_array($_values['availability'])) {
             $this->availability = self::normalizeAvailability($_values['availability']);
         }
+        if (isset($_values['refresh']) && is_array($_values['refresh'])) {
+            $this->refresh = self::normalizeRefresh($_values['refresh']);
+        }
         if (isset($_values['channels']) && is_array($_values['channels'])) {
             foreach ($_values['channels'] as $canal) {
                 if ($canal instanceof MqttbeChannel) {
@@ -243,6 +267,9 @@ class MqttbeDeviceModel {
 
     public function availability()    { return $this->availability; }
     public function hasAvailability() { return isset($this->availability['topic']) && $this->availability['topic'] !== ''; }
+
+    public function refresh()    { return $this->refresh; }
+    public function hasRefresh() { return !empty($this->refresh); }
 
     /* @return MqttbeChannel[] */
     public function channels()   { return array_values($this->channels); }
@@ -349,6 +376,9 @@ class MqttbeDeviceModel {
         );
         if (!empty($this->availability)) {
             $sortie['availability'] = $this->availability;
+        }
+        if (!empty($this->refresh)) {
+            $sortie['refresh'] = $this->refresh;
         }
         $canaux = array();
         foreach ($this->channels as $canal) {
@@ -473,6 +503,11 @@ class MqttbeDeviceModel {
                 'battery_powered' => $this->meta['battery_powered'],
             ),
             'availability' => $this->availability,
+            /* Dans l'empreinte : le bloc s'écrit en configuration de
+             * l'équipement, et c'est de là que la table de routage le lit. Vide,
+             * il disparaît de la forme canonique, et l'empreinte des appareils
+             * qui n'en ont pas ne bouge pas. */
+            'refresh'      => $this->refresh,
             'channels'     => $canaux,
         ));
     }
@@ -567,6 +602,34 @@ class MqttbeDeviceModel {
     private static function compareCanonical($_a, $_b) {
         return strcmp(json_encode($_a, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                       json_encode($_b, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    /*
+     * Un bloc de rafraîchissement incomplet est un bloc absent : sans topic où
+     * publier, ni topic où lire la réponse, il n'y a rien à faire de sensé.
+     * L'intervalle est borné — en dessous d'une minute, on inonderait le
+     * broker ; au-delà d'un jour, autant ne rien demander.
+     */
+    const REFRESH_MIN = 60;
+    const REFRESH_MAX = 86400;
+    const REFRESH_DEFAULT = 600;
+
+    private static function normalizeRefresh($_valeurs) {
+        $topic = isset($_valeurs['topic']) ? trim((string) $_valeurs['topic']) : '';
+        $reply = isset($_valeurs['reply']) ? trim((string) $_valeurs['reply']) : '';
+        if ($topic === '' || $reply === '' || strpbrk($topic . $reply, '+#') !== false) {
+            return array();
+        }
+        $intervalle = isset($_valeurs['interval']) && is_numeric($_valeurs['interval'])
+                    ? (int) $_valeurs['interval'] : self::REFRESH_DEFAULT;
+        return array(
+            'topic'    => $topic,
+            'payload'  => isset($_valeurs['payload']) ? (string) $_valeurs['payload'] : '',
+            'interval' => max(self::REFRESH_MIN, min(self::REFRESH_MAX, $intervalle)),
+            'reply'    => $reply,
+            'mirror'   => isset($_valeurs['mirror']) ? trim((string) $_valeurs['mirror']) : '',
+            'strip'    => isset($_valeurs['strip']) ? trim((string) $_valeurs['strip']) : '',
+        );
     }
 
     private static function normalizeAvailability($_valeurs) {

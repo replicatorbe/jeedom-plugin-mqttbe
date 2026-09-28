@@ -544,6 +544,9 @@ function mqttbeControlesShellyGen2() {
         if (!$modele->isBatteryPowered()) {
             $fautes[] = $nom . ' : meta.battery_powered est faux.';
         }
+        if ($modele->hasRefresh()) {
+            $fautes[] = $nom . ' : un rafraîchissement périodique est demandé à un appareil qui dort.';
+        }
         $cles = mqttbeClesGen2($modele);
         if (in_array('online', $cles, true)) {
             $fautes[] = $nom . ' : un canal « online » a été créé malgré tout.';
@@ -557,6 +560,43 @@ function mqttbeControlesShellyGen2() {
         if (!$aBatterie) {
             $fautes[] = $nom . ' : aucune commande de niveau de batterie sur un appareil sur pile.';
         }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ---------------------------------------------------------------------
+     * 6 bis. UN APPAREIL SUR SECTEUR SE FAIT REDEMANDER SON ÉTAT
+     *
+     * `events/rpc` ne porte que des deltas : sans interrogation, un relais qui
+     * ne bouge pas n'a jamais d'état dans Jeedom. En production, trois Shelly 1
+     * Mini Gen3 sont restés huit jours avec leur commande « État » vide. La
+     * réponse à `status_update` a les clés de `params`, d'où le miroir.
+     * ------------------------------------------------------------------- */
+    $titre = 'appareil sur secteur : état complet redemandé périodiquement';
+    $fautes = array();
+    $vus = 0;
+    foreach ($appareils as $nom => $appareil) {
+        if (!empty($appareil['sur_pile']) || !isset($modeles[$nom])) {
+            continue;
+        }
+        $vus++;
+        $prefixe = $appareil['prefixe'];
+        $refresh = $modeles[$nom]->refresh();
+        $attendu = array('topic' => $prefixe . '/command', 'payload' => 'status_update',
+                         'reply' => $prefixe . '/status', 'mirror' => $prefixe . '/events/rpc',
+                         'strip' => 'params.');
+        foreach ($attendu as $cle => $valeur) {
+            if (!isset($refresh[$cle]) || $refresh[$cle] !== $valeur) {
+                $fautes[] = $nom . ' : refresh.' . $cle . ' vaut ' . json_encode(isset($refresh[$cle]) ? $refresh[$cle] : null)
+                    . ', attendu ' . json_encode($valeur) . '.';
+            }
+        }
+        $sortie = $modeles[$nom]->toArray();
+        if (!isset($sortie['refresh']) || MqttbeDeviceModel::fromArray($sortie)->refresh() !== $refresh) {
+            $fautes[] = $nom . ' : le bloc refresh ne survit pas à toArray()/fromArray().';
+        }
+    }
+    if ($vus === 0) {
+        $fautes[] = 'aucun appareil sur secteur dans le jeu d\'essai.';
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 

@@ -51,6 +51,25 @@ class MqttbeLoop {
      * puis expulse ne doit pas nous faire boucler toutes les deux secondes. */
     const CONNECTION_STABLE = 60;
 
+    /* Relève des équipements entendus, envoyée à Jeedom pour tenir à jour leur
+     * « dernière communication ». Une minute : c'est la résolution de la
+     * colonne, et celle des alertes de délai du cœur. */
+    const SEEN_PERIOD = 60;
+
+    /* Première interrogation périodique après une table ou une connexion : le
+     * temps que les abonnements soient posés côté broker, sans quoi la réponse
+     * arriverait avant qu'on l'écoute. Les suivantes sont espacées d'autant,
+     * pour qu'un parc de trente appareils ne réponde pas dans la même seconde. */
+    const POLL_FIRST_DELAY = 10;
+    const POLL_SPREAD      = 1.0;
+
+    /* Journal de mise au point : un topic sans cible n'y paraît qu'une fois par
+     * période. Les passerelles Bluetooth en débitent plusieurs par seconde, et
+     * elles réduisaient le journal à quarante minutes d'historique — Jeedom le
+     * tronque au nombre de lignes. */
+    const QUIET_PERIOD = 300;
+    const QUIET_MAX    = 2048;
+
     private $config;
     private $transport;
     private $link;
@@ -80,7 +99,16 @@ class MqttbeLoop {
      * écoulée, pas des totaux depuis le démarrage — « 4 812 371 messages reçus »
      * répété toutes les cinq minutes ne dit rien de ce qui vient de se passer. */
     private $lastCounts = array('received' => 0, 'excluded' => 0, 'routed' => 0,
-                                'ignored' => 0, 'noTarget' => 0);
+                                'ignored' => 0, 'unchanged' => 0, 'missing' => 0,
+                                'retained' => 0, 'unreadable' => 0, 'noTarget' => 0);
+
+    /* Échéance de chaque interrogation périodique, par clé du routeur. */
+    private $pollNext = array();
+
+    private $lastSeen = 0;
+
+    /* Topics sans cible déjà journalisés : topic => [instant, messages tus]. */
+    private $quiet = array();
 
     /* Abonnements posés pour le compte de la table de routage. Tenus à part de
      * ceux que Jeedom demande à la main (ordre `subscribe`) : une nouvelle
@@ -232,6 +260,8 @@ class MqttbeLoop {
         /* Le battement des adapters : le moteur s'y limite tout seul à une
          * fois par seconde, la boucle n'a pas à tenir ce compte. */
         $this->discovery->tick();
+        $this->runPolls();
+        $this->flushSeen();
         $this->link->tick();
 
         if ($this->link->isDead()) {
@@ -268,6 +298,9 @@ class MqttbeLoop {
             $this->attempts  = 0;
             $this->nextRetry = 0.0;
             MqttbeLog::info('connecté au broker');
+            /* Après une coupure, l'état a pu changer sans qu'on l'entende : on
+             * redemande tout, comme au démarrage. */
+            $this->schedulePolls(true);
             if (!$this->brokerOk || !$this->brokerAnnounced) {
                 $this->brokerOk        = true;
                 $this->brokerAnnounced = true;
@@ -361,7 +394,7 @@ class MqttbeLoop {
         }
         $this->received++;
 
-        $this->router->route($_topic, $_payload, $_qos, $_retained);
+        $cible = $this->router->route($_topic, $_payload, $_qos, $_retained);
 
         /* La découverte APRÈS le routage, et jamais l'inverse : une valeur
          * attendue par une commande existante ne doit pas attendre qu'un
@@ -371,6 +404,13 @@ class MqttbeLoop {
         $this->discovery->onMessage($_topic, $_payload, $_retained);
 
         if (MqttbeLog::isDebug()) {
+            $tus = 0;
+            if (!$cible) {
+                $tus = $this->hush($_topic);
+                if ($tus < 0) {
+                    return;
+                }
+            }
             $payload = (string) $_payload;
             /* Une charge utile peut peser des dizaines de kilo-octets (une
              * photo encodée, un état complet) : le journal n'en a pas besoin. */
@@ -378,8 +418,37 @@ class MqttbeLoop {
                 $payload = substr($payload, 0, 256) . '… (' . strlen((string) $_payload) . ' octets)';
             }
             MqttbeLog::debug('reçu ' . $_topic . ' (QoS ' . $_qos
-                           . ($_retained ? ', retenu' : '') . ') : ' . $payload);
+                           . ($_retained ? ', retenu' : '')
+                           . ($cible ? '' : ', sans cible')
+                           . ($tus > 0 ? ', ' . $tus . ' autre(s) tu(s) depuis ' . self::QUIET_PERIOD . ' s' : '')
+                           . ') : ' . $payload);
         }
+    }
+
+    /*
+     * Faut-il journaliser ce message sans cible ? Rend -1 pour se taire, sinon
+     * le nombre de messages du même topic tus depuis la dernière ligne.
+     *
+     * Mémoire bornée comme le cache du routeur, et pour la même raison : un
+     * topic engendré ne doit pas faire enfler le démon. Vidée d'un bloc quand
+     * elle déborde — au pire, quelques lignes de plus dans le journal.
+     */
+    private function hush($_topic) {
+        $maintenant = time();
+        if (isset($this->quiet[$_topic])) {
+            if ($maintenant - $this->quiet[$_topic][0] < self::QUIET_PERIOD) {
+                $this->quiet[$_topic][1]++;
+                return -1;
+            }
+            $tus = $this->quiet[$_topic][1];
+            $this->quiet[$_topic] = array($maintenant, 0);
+            return $tus;
+        }
+        if (count($this->quiet) >= self::QUIET_MAX) {
+            $this->quiet = array();
+        }
+        $this->quiet[$_topic] = array($maintenant, 0);
+        return 0;
     }
 
     /* ------------------------------------------------------------- ordres */
@@ -550,7 +619,75 @@ class MqttbeLoop {
             return array('state' => 'ok', 'result' => $result);
         }
         $this->syncRoutingSubscriptions();
+        $this->schedulePolls(false);
         return array('state' => 'ok', 'result' => $result);
+    }
+
+    /* ------------------------------------------------- interrogations */
+
+    /*
+     * Met les échéances en accord avec les interrogations de la table.
+     *
+     * Une interrogation nouvelle part peu après ; une interrogation que la
+     * table précédente portait déjà garde son échéance — sans quoi chaque
+     * enregistrement d'un équipement dans Jeedom referait interroger tout le
+     * parc. $_all force la reprise de toutes, après une (re)connexion.
+     */
+    private function schedulePolls($_all) {
+        $polls = $this->router->polls();
+        $suivantes = array();
+        $rang = 0;
+        $maintenant = microtime(true);
+        foreach ($polls as $cle => $poll) {
+            if (!$_all && isset($this->pollNext[$cle])) {
+                $suivantes[$cle] = $this->pollNext[$cle];
+                continue;
+            }
+            $suivantes[$cle] = $maintenant + self::POLL_FIRST_DELAY + $rang * self::POLL_SPREAD;
+            $rang++;
+        }
+        $this->pollNext = $suivantes;
+    }
+
+    private function runPolls() {
+        if (empty($this->pollNext) || !$this->transport->isConnected()) {
+            return;
+        }
+        $maintenant = microtime(true);
+        $polls = null;
+        foreach ($this->pollNext as $cle => $echeance) {
+            if ($echeance > $maintenant) {
+                continue;
+            }
+            if ($polls === null) {
+                $polls = $this->router->polls();
+            }
+            if (!isset($polls[$cle])) {
+                unset($this->pollNext[$cle]);
+                continue;
+            }
+            $poll = $polls[$cle];
+            if ($this->transport->publish($poll['topic'], $poll['payload'], 0, false)) {
+                MqttbeLog::debug('interrogation périodique : « ' . $poll['payload'] . ' » sur ' . $poll['topic']);
+            }
+            /* Échec ou non, l'échéance avance : un broker qui refuse une
+             * publication la refuserait aussi au tour suivant, et la reconnexion
+             * reprogramme de toute façon tout le parc. */
+            $this->pollNext[$cle] = $maintenant + $poll['interval'];
+        }
+    }
+
+    /* Les équipements entendus, remis à Jeedom une fois par minute. */
+    private function flushSeen() {
+        $maintenant = time();
+        if ($maintenant - $this->lastSeen < self::SEEN_PERIOD) {
+            return;
+        }
+        $this->lastSeen = $maintenant;
+        $vus = $this->router->takeSeen();
+        if (!empty($vus)) {
+            $this->link->push(array('cmd' => 'seen', 'eqIds' => $vus, 'ts' => $maintenant));
+        }
     }
 
     /*
@@ -672,6 +809,8 @@ class MqttbeLoop {
         $stats = $this->router->stats();
         $since = array('received' => $this->received, 'excluded' => $this->excluded,
                        'routed'   => $stats['routed'], 'ignored' => $stats['ignored'],
+                       'unchanged' => $stats['unchanged'], 'missing' => $stats['missing'],
+                       'retained' => $stats['retained'], 'unreadable' => $stats['unreadable'],
                        'noTarget' => $stats['noTarget']);
         $delta = array();
         foreach ($since as $key => $value) {
@@ -696,7 +835,8 @@ class MqttbeLoop {
         }
 
         MqttbeLog::info('activité (5 min) : ' . $delta['received'] . ' message(s) reçus, '
-                      . $delta['routed'] . ' valeur(s) routée(s), ' . $delta['ignored'] . ' ignorée(s), '
+                      . $delta['routed'] . ' valeur(s) routée(s), ' . $delta['ignored'] . ' ignorée(s)'
+                      . self::detailIgnored($delta) . ', '
                       . $delta['noTarget'] . ' sans cible, ' . $delta['excluded'] . ' écarté(s), '
                       . 'file ' . $pending . ', latence médiane '
                       . number_format($stats['median'], 3, ',', ' ') . ' ms, '
@@ -709,6 +849,24 @@ class MqttbeLoop {
                           . $decouverte['subscriptions'] . ' abonnement(s), '
                           . $decouverte['memory'] . ' clé(s) en mémoire');
         }
+    }
+
+    /*
+     * Le détail des valeurs ignorées, sans les zéros. « Absente du message »
+     * est la ligne à surveiller : une commande dont le chemin n'est jamais
+     * dans ce que l'appareil publie reste vide sans que rien d'autre le dise.
+     */
+    private static function detailIgnored($_delta) {
+        $parts = array();
+        foreach (array('unchanged'  => 'inchangée(s)',
+                       'missing'    => 'absente(s) du message',
+                       'retained'   => 'événement(s) retenu(s)',
+                       'unreadable' => 'illisible(s)') as $cle => $libelle) {
+            if ($_delta[$cle] > 0) {
+                $parts[] = $_delta[$cle] . ' ' . $libelle;
+            }
+        }
+        return empty($parts) ? '' : ' (' . implode(', ', $parts) . ')';
     }
 
     private function shutdown() {

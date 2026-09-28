@@ -97,6 +97,12 @@ foreach ($messages as $message) {
                 }
                 break;
 
+            case 'seen':
+                if (isset($message['eqIds']) && is_array($message['eqIds'])) {
+                    mqttbeDaemon::onSeen($message['eqIds']);
+                }
+                break;
+
             case 'discovered':
                 if (isset($message['models']) && is_array($message['models'])) {
                     mqttbeDaemon::onDiscovered($message['models']);

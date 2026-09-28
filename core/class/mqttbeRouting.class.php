@@ -82,9 +82,42 @@ class mqttbeRouting {
      * que soit le nombre de commandes qui en dépendent.
      */
     public static function build() {
+        $table = self::collect();
+        return $table['entries'];
+    }
+
+    /**
+     * Les interrogations périodiques que le démon doit poser : pour chaque
+     * équipement qui en déclare une (configuration `mqttbe::refresh`), le topic
+     * où publier, la charge utile et l'intervalle en secondes.
+     *
+     *   [{"topic": "<P>/command", "payload": "status_update", "interval": 600}]
+     *
+     * Elles voyagent avec la table, et pour la même raison : un démon relancé
+     * les a perdues, et c'est la table qu'on lui renvoie.
+     */
+    public static function polls() {
+        $table = self::collect();
+        return $table['polls'];
+    }
+
+    /**
+     * Table et interrogations, calculées d'un seul parcours de la base.
+     */
+    private static function collect() {
         $parTopic = array();
+        $polls    = array();
 
         foreach (eqLogic::byType('mqttbe', true) as $eqLogic) {
+            $refresh = self::refreshOf($eqLogic);
+            if ($refresh !== null) {
+                $polls[$refresh['topic'] . "\n" . $refresh['payload']] = array(
+                    'topic'    => $refresh['topic'],
+                    'payload'  => $refresh['payload'],
+                    'interval' => $refresh['interval'],
+                );
+            }
+
             /* Un équipement mal configuré ne doit pas emporter toute la table :
              * sans ce filet, une seule commande fautive priverait de routage
              * l'ensemble du parc, et le symptôme ne désignerait pas sa cause. */
@@ -119,6 +152,19 @@ class mqttbeRouting {
                     $parTopic[$topic] = array();
                 }
                 $parTopic[$topic][] = $cible;
+
+                /* La seconde lecture de la même commande, sur la réponse à
+                 * l'interrogation périodique. La valeur a les mêmes champs,
+                 * moins le préfixe de chemin : `params.switch:0.output` sur
+                 * `<P>/events/rpc` se lit `switch:0.output` sur `<P>/status`.
+                 * Aucune commande de plus, et le démon ne sait rien de Shelly. */
+                $miroir = self::mirrorOf($refresh, $topic, $cible);
+                if ($miroir !== null) {
+                    if (!isset($parTopic[$refresh['reply']])) {
+                        $parTopic[$refresh['reply']] = array();
+                    }
+                    $parTopic[$refresh['reply']][] = $miroir;
+                }
             }
         }
 
@@ -144,7 +190,61 @@ class mqttbeRouting {
                 'targets' => $cibles,
             );
         }
-        return $entrees;
+        ksort($polls, SORT_STRING);
+        return array('entries' => $entrees, 'polls' => array_values($polls));
+    }
+
+    /**
+     * Le bloc de rafraîchissement d'un équipement, ou null s'il n'en a pas
+     * de valable. Relu ici plutôt que cru : il vient de la base, et un bloc à
+     * moitié écrit ne doit pas faire publier le démon n'importe où.
+     */
+    private static function refreshOf($_eqLogic) {
+        $refresh = $_eqLogic->getConfiguration('mqttbe::refresh', array());
+        if (!is_array($refresh)) {
+            return null;
+        }
+        $topic = isset($refresh['topic']) ? trim((string) $refresh['topic']) : '';
+        $reply = isset($refresh['reply']) ? trim((string) $refresh['reply']) : '';
+        if ($topic === '' || $reply === '' || strpbrk($topic . $reply, '+#') !== false) {
+            return null;
+        }
+        $intervalle = isset($refresh['interval']) && is_numeric($refresh['interval'])
+                    ? (int) $refresh['interval'] : 600;
+        return array(
+            'topic'    => $topic,
+            'payload'  => isset($refresh['payload']) ? (string) $refresh['payload'] : '',
+            'interval' => max(60, min(86400, $intervalle)),
+            'reply'    => $reply,
+            'mirror'   => isset($refresh['mirror']) ? trim((string) $refresh['mirror']) : '',
+            'strip'    => isset($refresh['strip']) ? (string) $refresh['strip'] : '',
+        );
+    }
+
+    /**
+     * La cible miroir d'une commande sur le topic de réponse, ou null si la
+     * commande ne lit pas le topic reflété par cette réponse.
+     */
+    private static function mirrorOf($_refresh, $_topic, $_cible) {
+        if ($_refresh === null || $_refresh['mirror'] === '' || $_topic !== $_refresh['mirror']) {
+            return null;
+        }
+        if (!isset($_cible['selector']['type']) || $_cible['selector']['type'] !== 'json') {
+            return null;
+        }
+        $chemin = (string) $_cible['selector']['path'];
+        $strip  = $_refresh['strip'];
+        if ($strip !== '') {
+            if (strncmp($chemin, $strip, strlen($strip)) !== 0) {
+                return null;
+            }
+            $chemin = substr($chemin, strlen($strip));
+        }
+        if ($chemin === '' || $chemin === false) {
+            return null;
+        }
+        $_cible['selector']['path'] = $chemin;
+        return $_cible;
     }
 
     /**
@@ -175,6 +275,11 @@ class mqttbeRouting {
         return array(
             'topic'     => $topic,
             'cmdId'     => (int) $_cmd->getId(),
+            /* L'équipement, pour que le démon puisse dire « celui-ci a parlé »
+             * même quand aucune de ses valeurs n'a changé : sans cela, un
+             * appareil qui publie chaque minute mais jamais la valeur qu'on lit
+             * passe pour mort dans Jeedom. */
+            'eqId'      => (int) $_cmd->getEqLogic_id(),
             'selector'  => self::selector($_cmd),
             'transform' => self::transform($_cmd),
             'repeat'    => self::repeat($_cmd),
@@ -387,9 +492,11 @@ class mqttbeRouting {
      * que le processus qui l'avait reçue n'existe plus.
      */
     public static function push($_force = false) {
-        $entrees = self::build();
+        $table   = self::collect();
+        $entrees = $table['entries'];
+        $polls   = $table['polls'];
 
-        $json = self::encode($entrees);
+        $json = self::encode(array($entrees, $polls));
         if ($json === null) {
             mqttbe::logger('error', sprintf(
                 __('Routage : table non sérialisable (%s), aucun envoi. Un topic contient sans doute des octets qui ne sont pas de l\'UTF-8.', __FILE__),
@@ -416,7 +523,9 @@ class mqttbeRouting {
         try {
 
         if (!$_force && $empreinte === self::cachedValue(self::CACHE_HASH, '')) {
-            mqttbe::logger('debug', __('Routage : table inchangée, rien n\'est envoyé au démon', __FILE__));
+            /* Muet : c'est le cas de chaque minute, appelé par le cron. La
+             * ligne « table inchangée » en faisait 1 440 par jour dans le
+             * journal, qui noyaient les rares envois réels. */
             return false;
         }
 
@@ -425,6 +534,7 @@ class mqttbeRouting {
             'cmd'     => 'routing',
             'version' => $version,
             'entries' => $entrees,
+            'polls'   => $polls,
         ), false);
 
         if (!$envoye) {
@@ -502,11 +612,13 @@ class mqttbeRouting {
     /**
      * Empreinte de la table courante, pour comparer sans envoyer.
      */
-    public static function fingerprint($_entrees = null) {
+    public static function fingerprint($_entrees = null, $_polls = null) {
         if ($_entrees === null) {
-            $_entrees = self::build();
+            $table    = self::collect();
+            $_entrees = $table['entries'];
+            $_polls   = $table['polls'];
         }
-        $json = self::encode($_entrees);
+        $json = self::encode($_polls === null ? $_entrees : array($_entrees, $_polls));
         return $json === null ? '' : md5($json);
     }
 
