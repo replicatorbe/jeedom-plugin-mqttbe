@@ -169,6 +169,23 @@ function mqttbeControlesRoutage() {
         'un topic éclaté en plusieurs entrées fait décoder la même charge utile autant de '
         . "fois, et le démon s'y abonne plusieurs fois.");
 
+    /* ------------------------------------------------------------------ 1 bis
+     * Chaque cible dit à quel équipement elle appartient : c'est ce qui permet
+     * au démon de signaler un appareil qui a parlé sans qu'aucune valeur ne
+     * change. */
+    $titre = 'chaque cible porte son équipement';
+    $fautes = array();
+    foreach ($table as $entreeTable) {
+        foreach ($entreeTable['targets'] as $cible) {
+            $cmd = cmd::byId($cible['cmdId']);
+            if (!isset($cible['eqId']) || !is_object($cmd) || (int) $cible['eqId'] !== (int) $cmd->getEqLogic_id()) {
+                $fautes[] = 'cible ' . $cible['cmdId'] . ' : eqId ' . json_encode(isset($cible['eqId']) ? $cible['eqId'] : null);
+            }
+        }
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'un Shelly qui publie chaque minute sans que la valeur lue change passe pour mort dans Jeedom.');
+
     /* ------------------------------------------------------------------ 2 ---
      * Déterminisme. La base ne garantit aucun ordre : deux lectures peuvent
      * rendre les équipements dans l'ordre inverse. Si la table en dépend, son
@@ -549,6 +566,45 @@ function mqttbeControlesRoutage() {
     $resultats[] = mqttbeVerdict($titre, $fautes,
         "une action qui publie au mauvais endroit, ou qui perd le curseur, donne un bouton "
         . 'qui ne fait rien — et rien au journal.');
+
+    /* ------------------------------------------------------------------ --
+     * Le rafraîchissement d'un équipement : une interrogation à poser, et une
+     * seconde lecture de chaque commande sur le topic de la réponse, le préfixe
+     * de chemin en moins. Une commande qui ne lit pas le topic reflété n'a pas
+     * de miroir ; un bloc mal formé ne fait rien publier du tout. */
+    $titre = 'rafraîchissement : interrogation et lecture miroir';
+    MqttbeFauxCoeur::reinitialise();
+    $shelly = mqttbeEqLogicEssai('Mini');
+    $shelly->setConfiguration('mqttbe::refresh', array(
+        'topic' => 'mini/command', 'payload' => 'status_update', 'interval' => 600,
+        'reply' => 'mini/status', 'mirror' => 'mini/events/rpc', 'strip' => 'params.'));
+    $shelly->save();
+    $etatMini = mqttbeCmdEssai($shelly, 'État',
+        array('topic' => 'mini/events/rpc', 'path' => 'params.switch:0.output'), 'info', 'binary');
+    mqttbeCmdEssai($shelly, 'Connecté', array('topic' => 'mini/online'), 'info', 'binary');
+    $fautif = mqttbeEqLogicEssai('Fautif');
+    $fautif->setConfiguration('mqttbe::refresh', array('topic' => 'x/+/command', 'reply' => 'x/status'));
+    $fautif->save();
+
+    $fautes = array();
+    $table = mqttbeRouting::build();
+    $miroir = mqttbeEntree($table, 'mini/status');
+    if ($miroir === null || count($miroir['targets']) !== 1) {
+        $fautes[] = 'entrée mini/status : ' . json_encode($miroir);
+    } else {
+        $cible = $miroir['targets'][0];
+        if ((int) $cible['cmdId'] !== (int) $etatMini->getId()
+            || $cible['selector'] !== array('type' => 'json', 'path' => 'switch:0.output')) {
+            $fautes[] = 'cible miroir : ' . json_encode($cible);
+        }
+    }
+    $polls = mqttbeRouting::polls();
+    if ($polls !== array(array('topic' => 'mini/command', 'payload' => 'status_update', 'interval' => 600))) {
+        $fautes[] = 'interrogations : ' . json_encode($polls);
+    }
+    MqttbeFauxCoeur::reinitialise();
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        "sans interrogation ni miroir, un Shelly Gen2+ n'a d'état dans Jeedom qu'au premier changement.");
 
     return $resultats;
 }

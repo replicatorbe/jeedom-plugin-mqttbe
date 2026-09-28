@@ -55,7 +55,7 @@
         "La découverte a atteint le plafond de %s équipements : les suivants attendent votre adoption au lieu d'être créés.": "Discovery has reached the limit of %s devices: the next ones await your adoption instead of being created.",
         "La découverte du démon ne correspond plus aux réglages : renvoi.": "The daemon's discovery no longer matches the settings: sending them again.",
         "Lancement du démon": "Starting the daemon",
-        "Latence de bout en bout : médiane %1$s ms, maximum %2$s ms sur %3$s mesures": "End-to-end latency: median %1$s ms, maximum %2$s ms over %3$s samples",
+        "Latence de bout en bout : médiane %1$s ms, 90 %% sous %2$s ms, maximum %3$s ms sur %4$s mesures (délai de groupement %5$s ms compris)": "End-to-end latency: median %1$s ms, 90 %% under %2$s ms, maximum %3$s ms over %4$s samples (%5$s ms batching delay included)",
         "Le démon a refusé la commande « %1$s » : %2$s": "The daemon rejected command “%1$s”: %2$s",
         "Le démon applique la table %1$s alors que Jeedom en est à la %2$s : renvoi.": "The daemon is applying table %1$s while Jeedom is at %2$s: sending it again.",
         "Le démon est introuvable dans resources/mqttbed/": "The daemon is missing from resources/mqttbed/",
@@ -110,7 +110,6 @@
         "Routage : la table de correspondance de %s doit être un objet JSON du genre {\"on\":\"1\",\"off\":\"0\"}. Elle est ignorée, la commande reste routée sans elle.": "Routing: the value map of %s must be a JSON object such as {\"on\":\"1\",\"off\":\"0\"}. It is ignored.",
         "Routage : le démon n'a pas reçu la table, elle sera renvoyée au prochain appel": "Routing: the daemon did not receive the table, it will be sent again next time",
         "Routage : mode de répétition « %1$s » inconnu sur %2$s, « onchange » est appliqué": "Routing: unknown repeat mode “%1$s” on %2$s, “onchange” is applied",
-        "Routage : table inchangée, rien n'est envoyé au démon": "Routing: table unchanged, nothing sent to the daemon",
         "Routage : table non sérialisable (%s), aucun envoi. Un topic contient sans doute des octets qui ne sont pas de l'UTF-8.": "Routing: table cannot be serialized (%s), nothing sent. A topic probably contains bytes that are not valid UTF-8.",
         "Routage : table version %1$s envoyée au démon (%2$s topic(s), %3$s commande(s))": "Routing: table version %1$s sent to the daemon (%2$s topic(s), %3$s command(s))",
         "Échelle nulle sur la commande %s : toutes ses valeurs seront ramenées à zéro": "Zero scale on command %s: all its values will be reduced to zero"

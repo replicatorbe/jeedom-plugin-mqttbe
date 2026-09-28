@@ -454,6 +454,77 @@ function mqttbeControlesTable() {
 }
 
 /* =============================================================================
+ * 4 bis. Ce que le routeur dit en plus des valeurs
+ *
+ * Trois choses que la production a montrées en panne sans qu'aucune valeur ne
+ * soit fausse : un équipement qui publie chaque minute sans qu'une valeur en
+ * sorte passait pour mort ; des valeurs « ignorées » qui mêlaient l'inchangé,
+ * normal, et le chemin absent, qui ne l'est pas ; et un Shelly Gen2+ qui ne
+ * disait son état qu'au premier changement, faute d'être interrogé.
+ * ========================================================================== */
+function mqttbeControlesReleve() {
+    $resultats = array();
+
+    $titre = 'un équipement entendu est relevé, même sans valeur';
+    $routeur = mqttbeRouteurNeuf();
+    $cible = mqttbeCible(1, array('type' => 'json', 'path' => 'params.switch:0.output'));
+    $cible['eqId'] = 7;
+    $routeur->apply(mqttbeTable(1, 'p/events/rpc', array($cible)));
+    $routeur->route('p/events/rpc', '{"params":{"sys":{"time":"10:58"}}}');
+    $vus = $routeur->takeSeen();
+    $resultats[] = ($vus === array(7) && $routeur->takeSeen() === array()) ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'relevé : ' . json_encode($vus) . ' — un appareil qui publie sans '
+                    . 'que sa valeur change passerait pour mort dans Jeedom.');
+
+    $titre = 'un message retenu ne vaut pas signe de vie';
+    $routeur->route('p/events/rpc', '{"params":{}}', 0, true);
+    $vus = $routeur->takeSeen();
+    $resultats[] = ($vus === array()) ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'relevé : ' . json_encode($vus) . ' — le broker rejoue les retenus à '
+                    . 'chaque abonnement : un appareil éteint passerait pour vivant.');
+
+    $titre = 'les valeurs ignorées sont ventilées par motif';
+    $routeur = mqttbeRouteurNeuf();
+    $routeur->apply(mqttbeTable(1, 'a/b', array(
+        mqttbeCible(1, array('type' => 'json', 'path' => 'x'), null, array('mode' => 'onchange')))));
+    $routeur->route('a/b', '{"x":1}');
+    $routeur->route('a/b', '{"x":1}');
+    $routeur->route('a/b', '{"y":1}');
+    $routeur->route('a/b', 'pas du json');
+    $stats = $routeur->stats();
+    $obtenu = array($stats['ignored'], $stats['unchanged'], $stats['missing'], $stats['unreadable']);
+    $resultats[] = ($obtenu === array(3, 1, 1, 1)) ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'obtenu [ignorées, inchangées, absentes, illisibles] = '
+                    . json_encode($obtenu) . ', attendu [3,1,1,1].');
+
+    $titre = 'route() dit si le topic a une cible';
+    $resultats[] = ($routeur->route('a/b', '{"x":2}') === true && $routeur->route('z/z', '1') === false)
+        ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'la boucle ne peut plus distinguer le trafic que personne n\'écoute.');
+
+    $titre = 'interrogations : jokers refusés, intervalle borné';
+    $routeur = mqttbeRouteurNeuf();
+    $table = mqttbeTable(1, 'a/b', array(mqttbeCible(1)));
+    $table['polls'] = array(
+        array('topic' => 'p/command', 'payload' => 'status_update', 'interval' => 600),
+        array('topic' => 'q/command', 'payload' => 'status_update', 'interval' => 5),
+        array('topic' => 'r/+/command', 'payload' => 'status_update', 'interval' => 600),
+        'pas un tableau',
+    );
+    $routeur->apply($table);
+    $polls = array_values($routeur->polls());
+    $obtenu = array();
+    foreach ($polls as $poll) {
+        $obtenu[] = $poll['topic'] . '@' . $poll['interval'];
+    }
+    $resultats[] = ($obtenu === array('p/command@600', 'q/command@60')) ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'obtenu ' . json_encode($obtenu) . ' — un joker dans un topic publié '
+                    . 'fait fermer la session par le broker.');
+
+    return $resultats;
+}
+
+/* =============================================================================
  * 5. Le rejeu : 10 000 messages sur un parc réaliste
  *
  * Cinquante équipements, trois cents commandes, topics plats et JSON, un
@@ -690,6 +761,7 @@ $sections = array(
     'Sélecteurs et transformations'    => mqttbeControlesValeurs(),
     'Politique de répétition'          => mqttbeControlesRepetition(),
     'Table de routage et abonnements'  => mqttbeControlesTable(),
+    'Relève et interrogations'         => mqttbeControlesReleve(),
     'Rejeu de ' . number_format(BENCH_MESSAGES, 0, ',', ' ') . ' messages' => mqttbeRejeu($chiffres),
 );
 

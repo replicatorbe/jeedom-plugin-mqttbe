@@ -721,7 +721,43 @@ class mqttbeDaemon {
         }
     }
 
+    /**
+     * Les équipements dont le démon a reçu un message dans la dernière minute.
+     *
+     * Le cœur ne tient la « dernière communication » d'un équipement qu'au fil
+     * des cmd::event(). Or le démon ne remet une valeur que si elle a changé
+     * (ou toutes les 300 s), et jamais un message dont le chemin lu est absent.
+     * Un Shelly Gen3 qui publiait chaque minute un compteur qu'aucune commande
+     * ne lit est ainsi resté huit jours « muet depuis le démarrage du démon » —
+     * et une alerte de délai l'aurait déclaré en panne.
+     *
+     * Rien n'est écrit pour un équipement déjà à jour : la date d'un événement
+     * récent vaut mieux que celle de la relève, qui arrive jusqu'à une minute
+     * plus tard.
+     */
+    public static function onSeen($_eqIds) {
+        $seuil = date('Y-m-d H:i:s', time() - 60);
+        $maintenant = date('Y-m-d H:i:s');
+        foreach ($_eqIds as $id) {
+            $eqLogic = eqLogic::byId((int) $id);
+            if (!is_object($eqLogic) || $eqLogic->getEqType_name() != 'mqttbe' || $eqLogic->getIsEnable() != 1) {
+                continue;
+            }
+            if ((string) $eqLogic->getStatus('lastCommunication', '') >= $seuil) {
+                continue;
+            }
+            $eqLogic->setStatus(array('lastCommunication' => $maintenant, 'timeout' => 0));
+        }
+    }
+
     const LATENCY_INTERVAL = 2;
+
+    /* Une ligne de latence par quart d'heure, et non par minute : 1 440 lignes
+     * par jour pour dire le plus souvent « 3 ms », c'était l'essentiel du
+     * journal du plugin. Le réservoir couvre la période entière — une mesure
+     * toutes les deux secondes au plus, 450 en quinze minutes. */
+    const LATENCY_PERIOD  = 900;
+    const LATENCY_SAMPLES = 450;
 
     /** Ajoute une mesure au réservoir, au plus une toutes les deux secondes. */
     private static function sampleLatency($_seconds) {
@@ -734,10 +770,13 @@ class mqttbeDaemon {
             if ($maintenant - $reserve['t'] < self::LATENCY_INTERVAL) {
                 return;
             }
+            if (!isset($reserve['d']) || (float) $reserve['d'] <= 0) {
+                $reserve['d'] = $maintenant;
+            }
             $reserve['t'] = $maintenant;
             $reserve['v'][] = round($_seconds * 1000, 1);
-            if (count($reserve['v']) > 200) {
-                $reserve['v'] = array_slice($reserve['v'], -200);
+            if (count($reserve['v']) > self::LATENCY_SAMPLES) {
+                $reserve['v'] = array_slice($reserve['v'], -self::LATENCY_SAMPLES);
             }
             cache::set('mqttbe::latency', $reserve);
         } catch (Throwable $e) {
@@ -747,11 +786,19 @@ class mqttbeDaemon {
     }
 
     /**
-     * Inscrit la latence médiane au journal, puis vide le réservoir.
+     * Inscrit la latence au journal, une fois par quart d'heure, puis vide le
+     * réservoir. Appelée chaque minute par le cron : elle ne parle que lorsque
+     * la période est écoulée.
      *
      * La médiane et non la moyenne : une seule pointe à deux secondes, due à
      * une sauvegarde de Jeedom, rendrait une moyenne ininterprétable alors que
      * la question posée est « est-ce fluide d'ordinaire ? ».
+     *
+     * Le délai de groupement est rappelé dans la ligne, parce qu'il explique le
+     * maximum : une valeur arrivée juste après un envoi attend le lot suivant,
+     * soit jusqu'à 200 ms par défaut. En production, le maximum tombait entre
+     * 200 et 250 ms presque chaque minute — la rafale des Shelly Gen1, qui
+     * publient tous à la même seconde — et se lisait comme un ralentissement.
      */
     public static function logLatency() {
         try {
@@ -761,6 +808,10 @@ class mqttbeDaemon {
         }
         $mesures = (is_array($reserve) && isset($reserve['v']) && is_array($reserve['v']))
                  ? $reserve['v'] : array();
+        $debut = isset($reserve['d']) ? (float) $reserve['d'] : 0.0;
+        if ($debut > 0 && (microtime(true) - $debut) < self::LATENCY_PERIOD) {
+            return;
+        }
         if (count($mesures) < 5) {
             return;
         }
@@ -768,9 +819,11 @@ class mqttbeDaemon {
         $n = count($mesures);
         $mediane = ($n % 2) ? $mesures[intdiv($n, 2)]
                             : ($mesures[$n / 2 - 1] + $mesures[$n / 2]) / 2;
+        $p90 = $mesures[min($n - 1, (int) ceil($n * 0.9) - 1)];
+        $groupement = (int) round(1000 * (float) config::byKey('daemon::batchDelay', 'mqttbe', 0.2));
         mqttbe::logger('info', sprintf(
-            __('Latence de bout en bout : médiane %1$s ms, maximum %2$s ms sur %3$s mesures', __FILE__),
-            round($mediane, 1), end($mesures), $n
+            __('Latence de bout en bout : médiane %1$s ms, 90 %% sous %2$s ms, maximum %3$s ms sur %4$s mesures (délai de groupement %5$s ms compris)', __FILE__),
+            round($mediane, 1), $p90, end($mesures), $n, $groupement
         ));
         cache::set('mqttbe::latency', array('t' => 0, 'v' => array()));
     }

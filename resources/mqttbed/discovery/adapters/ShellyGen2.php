@@ -107,12 +107,12 @@ if (!interface_exists('MqttbeAdapter')) {
  *
  * DEUX LIMITES, DITES FRANCHEMENT.
  *
- * `events/rpc` n'est pas retenu. Au redémarrage
- * du démon, les commandes gardent la dernière valeur que Jeedom a enregistrée,
- * et la première notification venue les rafraîchit. Un appareil qui ne change
- * pas d'état de la semaine n'émet rien, et ses commandes affichent une valeur
- * datée. Aucun topic d'usine ne permet de faire mieux : `NotifyFullStatus`
- * n'est poussé sur MQTT que par les appareils sur pile.
+ * `events/rpc` n'est pas retenu, et ne porte que des deltas. Un appareil qui ne
+ * change pas d'état de la semaine n'y émet rien, et `NotifyFullStatus` n'est
+ * poussé sur MQTT que par les appareils sur pile. Pour ceux sur secteur, le
+ * modèle porte donc un bloc `refresh` : le démon demande `status_update` au
+ * démarrage puis toutes les dix minutes (voir rafraichissement()). Un appareil
+ * sur pile garde la limite — on ne le réveille pas.
  *
  * Et un `NotifyEvent` peut porter PLUSIEURS événements à la fois — la
  * documentation dit « tous les événements survenus », et l'exemple officiel en
@@ -908,11 +908,17 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             return;
         }
 
+        /* Un appareil déjà décrit qui répond : c'est le rafraîchissement
+         * périodique demandé par le démon (voir rafraichissement()), une fois
+         * toutes les dix minutes et par appareil. Il n'apprend rien à la
+         * découverte, et ne mérite pas une ligne d'information à chaque fois. */
+        $dejaDecrit = ($etape === 'fini' && !empty($dossier['complet']));
+
         $dossier['etape']   = 'fini';
         $dossier['complet'] = true;
         $dossier['attente'] = array();
         $this->range($_ctx, $dossier);
-        $_ctx->log('info', 'Shelly Gen2+ : ' . $prefixe . ' a répondu à status_update — '
+        $_ctx->log($dejaDecrit ? 'debug' : 'info', 'Shelly Gen2+ : ' . $prefixe . ' a répondu à status_update — '
             . count($dossier['composants']) . ' composants, sans passer par le RPC.');
         $this->emet($_ctx, $dossier);
     }
@@ -1613,6 +1619,11 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
                 'probe'        => array(),
             ),
             'availability' => $disponibilite,
+            /* Seulement pour un appareil entièrement décrit : tant qu'on ne
+             * connaît pas son inventaire, on ne sait pas s'il est sur pile. Un
+             * Plus Smoke jamais décrit passait pour un appareil sur secteur, et
+             * se faisait interroger toutes les dix minutes pendant son sommeil. */
+            'refresh'      => ($surPile || !$complet) ? array() : $this->rafraichissement($prefixe),
         ));
 
         /* La disponibilité en commande visible, en plus du bloc `availability` :
@@ -1639,6 +1650,40 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             return null;
         }
         return $modele;
+    }
+
+    /*
+     * LA RÉPONSE À LA PREMIÈRE DES DEUX LIMITES DITES EN TÊTE DE FICHIER.
+     *
+     * Un Shelly sur secteur ne publie sur `events/rpc` que des DELTAS : en
+     * production, trois Shelly 1 Mini Gen3 n'y ont envoyé en quarante minutes
+     * que leur compteur `switch:0.counts` et l'heure système. L'état du relais,
+     * la température, le signal Wi-Fi, l'entrée n'arrivaient qu'au premier
+     * changement — et pour un relais qui ne bouge pas, jamais : ses commandes
+     * sont restées vides huit jours.
+     *
+     * `status_update` sur `<P>/command` fait publier l'état complet sur
+     * `<P>/status`, sans RPC ni `src` à corréler, et sans rien régler sur
+     * l'appareil (`enable_control` vaut `true` d'usine). La réponse a les clés
+     * de `params` : `switch:0.output` y est ce que `params.switch:0.output` est
+     * dans une notification. D'où `mirror` et `strip`, qui laissent Jeedom lire
+     * chaque commande une seconde fois sur `<P>/status` sans en créer d'autre.
+     *
+     * Dix minutes : la valeur arrive au démarrage du démon, puis se tient à
+     * jour, pour un message par appareil — sur un parc de trente Shelly, trois
+     * messages par minute.
+     */
+    const RAFRAICHISSEMENT = 600;
+
+    private function rafraichissement($_prefixe) {
+        return array(
+            'topic'    => $_prefixe . '/command',
+            'payload'  => 'status_update',
+            'interval' => self::RAFRAICHISSEMENT,
+            'reply'    => $_prefixe . '/status',
+            'mirror'   => $_prefixe . '/events/rpc',
+            'strip'    => 'params.',
+        );
     }
 
     /* --------------------------------------------------------------------- */

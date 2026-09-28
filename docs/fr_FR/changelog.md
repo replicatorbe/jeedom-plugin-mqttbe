@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.8 — 28 septembre 2026
+
+### Ce que les journaux de production ont montré
+
+Huit jours de fonctionnement sur un parc réel, relus à froid : aucune erreur,
+un démon stable, et pourtant deux pannes que rien ne signalait.
+
+- **Les Shelly Gen2, Gen3 et Gen4 sur secteur n'avaient presque jamais d'état.**
+  Ils ne publient que ce qui change : un relais qui ne bouge pas ne dit jamais
+  s'il est ouvert ou fermé. Sur trois Shelly 1 Mini Gen3, l'état du relais, la
+  température, le signal Wi-Fi et l'entrée sont restés vides huit jours. Le
+  plugin leur demande désormais leur état complet au démarrage du démon, après
+  chaque reconnexion au broker, puis toutes les dix minutes — par le « contrôle
+  MQTT » actif d'usine, sans rien régler sur l'appareil. Les appareils sur pile
+  ne sont pas concernés : on ne réveille pas un capteur qui dort. L'équipement
+  doit être redécouvert une fois (redémarrage du démon) pour en profiter.
+- **Un appareil bien vivant passait pour muet.** La « dernière communication »
+  d'un équipement n'avançait que lorsqu'une valeur changeait. Un Shelly qui
+  publiait chaque minute un compteur qu'aucune commande ne lit affichait la date
+  du démarrage du démon — et une alerte de délai l'aurait déclaré en panne. Le
+  démon signale maintenant chaque minute les équipements qu'il a entendus. Un
+  message conservé par le broker ne compte pas : il est rejoué à chaque
+  démarrage, même pour un appareil débranché.
+
+### Des journaux qu'on peut lire
+
+- Le journal de mise au point du démon n'écrit plus chaque trame d'un topic que
+  personne n'écoute : une ligne par topic et par tranche de cinq minutes, avec
+  le nombre de trames tues. Les passerelles Bluetooth en débitent plusieurs par
+  seconde, et Jeedom tronquait le journal à quarante minutes d'historique.
+- Le journal du plugin ne dit plus « table inchangée » chaque minute, et la
+  latence y paraît toutes les quinze minutes au lieu de chaque minute, avec le
+  90e centile.
+- La ligne de latence rappelle le délai de groupement des valeurs (200 ms par
+  défaut). C'est lui qui fait le maximum : une valeur arrivée juste après un
+  envoi attend le lot suivant. Ce n'est pas un ralentissement.
+- Le résumé d'activité détaille les valeurs ignorées : inchangées (le cas
+  normal), absentes du message, événements retenus, illisibles. « Absentes du
+  message » est la ligne à surveiller : elle désigne une commande qui lit un
+  champ que l'appareil ne publie pas.
+
 ## 0.7 — 20 septembre 2026
 
 ### Les Shelly Gen2, Gen3 et Gen4 relus contre leur documentation

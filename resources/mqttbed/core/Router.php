@@ -111,6 +111,25 @@ class MqttbeRouter {
     private $routed     = 0;
     private $ignored    = 0;
     private $noTarget   = 0;
+
+    /* Le détail de $ignored, qui mêlait quatre choses sans rapport : une valeur
+     * inchangée est le cas normal, un chemin absent du message peut désigner
+     * une commande mal branchée. Additionnés, ils rendaient invisible une
+     * commande qui ne recevait jamais rien. */
+    private $unchanged  = 0;   // valeur identique, ou limite de débit
+    private $missing    = 0;   // chemin absent, valeur nulle ou sous-objet
+    private $retained   = 0;   // événement rejoué par le broker
+    private $unreadable = 0;   // charge utile qui n'est pas du JSON
+
+    /* Équipements dont un message vient d'arriver, qu'une valeur en soit sortie
+     * ou non : eqId => true. Vidé à chaque relève par takeSeen(), donc borné
+     * par le nombre d'équipements de la table. */
+    private $seen = array();
+
+    /* Interrogations périodiques portées par la table : clé => {topic,
+     * payload, interval}. Le routeur ne fait que les tenir ; c'est la boucle,
+     * qui a le transport, qui les pose. */
+    private $polls = array();
     private $badPayload = 0;
     private $parsed     = 0;   // décodages JSON réellement effectués
     private $errors     = 0;
@@ -257,6 +276,7 @@ class MqttbeRouter {
         }
 
         $this->version = $version;
+        $this->polls   = self::compilePolls(isset($_order['polls']) ? $_order['polls'] : array());
         $this->targets = $targets;
         $this->exact   = $exact;
         $this->filters = $filters;
@@ -274,12 +294,43 @@ class MqttbeRouter {
         MqttbeLog::info('table de routage ' . $version . ' appliquée : ' . count($targets)
                       . ' cible(s) sur ' . (count($exact) + count($filters)) . ' topic(s), '
                       . count($subs) . ' abonnement(s)'
+                      . (empty($this->polls) ? '' : ', ' . count($this->polls) . ' interrogation(s) périodique(s)')
                       . ($excluded > 0 ? ', ' . $excluded . ' exclu(s)' : '')
                       . ($rejected > 0 ? ', ' . $rejected . ' entrée(s) rejetée(s)' : ''));
 
         return array('applied' => true, 'version' => $version, 'targets' => count($targets),
                      'topics' => count($exact) + count($filters), 'subscriptions' => count($subs),
                      'rejected' => $rejected, 'excluded' => $excluded);
+    }
+
+    /*
+     * Les interrogations périodiques, relues comme tout ce qui vient de la
+     * table : un topic de publication ne peut pas porter de joker (MQTT 3.1.1
+     * §3.3.2 — le broker fermerait la session), et l'intervalle est borné pour
+     * qu'une faute de saisie ne fasse pas publier le démon en boucle.
+     */
+    private static function compilePolls($_raw) {
+        $polls = array();
+        if (!is_array($_raw)) {
+            return $polls;
+        }
+        foreach ($_raw as $poll) {
+            if (!is_array($poll)) {
+                continue;
+            }
+            $topic = isset($poll['topic']) ? trim((string) $poll['topic']) : '';
+            if ($topic === '' || strpbrk($topic, '+#') !== false || strlen($topic) > 65535) {
+                continue;
+            }
+            $payload  = isset($poll['payload']) ? (string) $poll['payload'] : '';
+            $interval = isset($poll['interval']) && is_numeric($poll['interval']) ? (int) $poll['interval'] : 600;
+            $polls[$topic . "\n" . $payload] = array(
+                'topic'    => $topic,
+                'payload'  => $payload,
+                'interval' => max(60, min(86400, $interval)),
+            );
+        }
+        return $polls;
     }
 
     /*
@@ -373,6 +424,7 @@ class MqttbeRouter {
 
         return array(
             'cmdId'       => $cmdId,
+            'eqId'        => isset($_raw['eqId']) ? max(0, (int) $_raw['eqId']) : 0,
             'path'        => $path,
             'map'         => $map,
             'scale'       => $scale,
@@ -437,6 +489,10 @@ class MqttbeRouter {
      * dit un geste passé — un appui sur un bouton, vieux de trois semaines — et
      * le router déclencherait, au démarrage du démon, un scénario que personne
      * n'a demandé. Les cibles qui le savent portent `ignore_retained`.
+     *
+     * Rend true si le topic a au moins une cible, false sinon : la boucle s'en
+     * sert pour ne pas journaliser, message après message, le trafic que
+     * personne n'écoute.
      */
     public function route($_topic, $_payload, $_qos = 0, $_retained = false) {
         $this->received++;
@@ -444,7 +500,7 @@ class MqttbeRouter {
         $indices = isset($this->cache[$_topic]) ? $this->cache[$_topic] : $this->resolve($_topic);
         if (empty($indices)) {
             $this->noTarget++;
-            return;
+            return false;
         }
 
         $start = microtime(true);
@@ -462,9 +518,18 @@ class MqttbeRouter {
             foreach ($indices as $index) {
                 $target = $this->targets[$index];
 
+                /* L'appareil a parlé, que ce message donne une valeur ou non.
+                 * Pas un message retenu : le broker le rejoue à chaque
+                 * abonnement, et un appareil éteint depuis une semaine
+                 * passerait pour vivant à chaque redémarrage du démon. */
+                if (!$_retained && $target['eqId'] > 0) {
+                    $this->seen[$target['eqId']] = true;
+                }
+
                 /* Un événement rejoué par le broker n'a pas lieu maintenant. */
                 if ($_retained && $target['skipRetained']) {
                     $this->ignored++;
+                    $this->retained++;
                     continue;
                 }
 
@@ -487,6 +552,7 @@ class MqttbeRouter {
                     }
                     if (!$jsonOk) {
                         $this->ignored++;
+                        $this->unreadable++;
                         continue;
                     }
                     $value = self::pick($json, $target['path']);
@@ -497,6 +563,7 @@ class MqttbeRouter {
                  * écraserait dans Jeedom une mesure valable par du néant. */
                 if ($value === null || is_array($value)) {
                     $this->ignored++;
+                    $this->missing++;
                     continue;
                 }
                 if (is_bool($value)) {
@@ -546,12 +613,14 @@ class MqttbeRouter {
                 if ($target['minInterval'] > 0 && $inchangee
                  && ($start - $sent) < $target['minInterval']) {
                     $this->ignored++;
+                    $this->unchanged++;
                     continue;
                 }
                 if (!$target['always']
                  && isset($this->lastValue[$cmdId]) && $this->lastValue[$cmdId] === $value
                  && ($target['keepalive'] <= 0 || ($start - $sent) < $target['keepalive'])) {
                     $this->ignored++;
+                    $this->unchanged++;
                     continue;
                 }
 
@@ -579,6 +648,7 @@ class MqttbeRouter {
          * tirerait la médiane vers le bas et masquerait exactement ce qu'on
          * cherche à surveiller. */
         $this->sample(microtime(true) - $start);
+        return true;
     }
 
     /*
@@ -706,12 +776,30 @@ class MqttbeRouter {
         return $this->version;
     }
 
+    /* Les interrogations périodiques de la table courante, clé => {topic,
+     * payload, interval}. La clé est stable d'une table à l'autre, ce qui
+     * permet à la boucle de garder l'échéance d'une interrogation inchangée. */
+    public function polls() {
+        return $this->polls;
+    }
+
+    /* Les équipements entendus depuis la dernière relève, et remise à zéro. */
+    public function takeSeen() {
+        $seen = array_keys($this->seen);
+        $this->seen = array();
+        return $seen;
+    }
+
     public function stats() {
         return array(
             'version'    => $this->version,
             'received'   => $this->received,
             'routed'     => $this->routed,
             'ignored'    => $this->ignored,
+            'unchanged'  => $this->unchanged,
+            'missing'    => $this->missing,
+            'retained'   => $this->retained,
+            'unreadable' => $this->unreadable,
             'noTarget'   => $this->noTarget,
             'badPayload' => $this->badPayload,
             'parsed'     => $this->parsed,

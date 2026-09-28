@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.8 — 28 September 2026
+
+### What the production logs showed
+
+Eight days on a real installation, read back with a cold eye: no error, a
+stable daemon, and still two faults nothing reported.
+
+- **Mains-powered Shelly Gen2, Gen3 and Gen4 devices almost never had a
+  state.** They only publish what changes: a relay that does not move never says
+  whether it is on or off. On three Shelly 1 Mini Gen3, relay state,
+  temperature, Wi-Fi signal and input stayed empty for eight days. The plugin
+  now asks them for their full status when the daemon starts, after every broker
+  reconnection, then every ten minutes — through the factory-enabled "MQTT
+  control", with nothing to set on the device. Battery devices are left alone.
+  The device must be rediscovered once (daemon restart) to benefit.
+- **A device alive and well looked silent.** A device's "last communication"
+  only moved when a value changed. A Shelly publishing a counter no command reads
+  every minute showed the daemon start date — and a timeout alert would have
+  reported it dead. The daemon now reports every minute the devices it heard. A
+  retained message does not count: the broker replays it at every start, even
+  for an unplugged device.
+
+### Logs you can read
+
+- The daemon debug log no longer writes every frame of a topic nobody listens
+  to: one line per topic per five minutes, with the number of frames left out.
+  Bluetooth gateways send several per second, and Jeedom truncated the log to
+  forty minutes of history.
+- The plugin log no longer says "table unchanged" every minute, and latency is
+  logged every fifteen minutes instead of every minute, with the 90th
+  percentile.
+- The latency line states the value batching delay (200 ms by default). It is
+  what makes the maximum: a value arriving just after a send waits for the next
+  batch. It is not a slowdown.
+- The activity summary breaks ignored values down: unchanged (the normal case),
+  missing from the message, retained events, unreadable. "Missing from the
+  message" is the one to watch: it points at a command reading a field the
+  device does not publish.
+
 ## 0.7 — 20 September 2026
 
 ### Shelly Gen2, Gen3 and Gen4 read again against their documentation
