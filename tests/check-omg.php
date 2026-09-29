@@ -2069,11 +2069,12 @@ function mqttbeControlesOmg() {
     /* Vingt-quatre heures d'un téléphone posé sur la table : l'adresse tourne
      * toutes les vingt minutes, chaque identité est décodée « iBeacon », et
      * toutes sont entendues à −70 dBm. C'est la capture de production, aux
-     * adresses près. */
+     * adresses près — des adresses PRIVÉES (premier octet 0x40 à 0x7F), les
+     * seules qui tournent. */
     $adapterG = new MqttbeOpenMqttGateway();
     $ctxG = new MqttbeContexteEssaiOmg();
     for ($tour = 0; $tour < 72; $tour++) {
-        $adresse = sprintf('D2D2D220%04X', $tour);
+        $adresse = sprintf('52D2D220%04X', $tour);
         $charge = '{"id":"' . $adresse . '","mac_type":1,"adv_type":0,'
                 . '"manufacturerdata":"4c0012022e02","rssi":-70,'
                 . '"brand":"GENERIC","model":"iBeacon","model_id":"IBEACON","type":"BCON",'
@@ -2130,13 +2131,13 @@ function mqttbeControlesOmg() {
     }
 
     /* La seconde garde, seule : la marque est reconnue — donc c'est bien un
-     * appareil — mais l'adresse est aléatoire. Elle attend d'avoir duré, puis
-     * se crée sans que personne ait rien à faire. C'est le cas des traceurs,
-     * dont l'adresse ne tourne pas. */
+     * appareil — mais l'adresse est aléatoire PRIVÉE, de celles qui tournent.
+     * Elle attend d'avoir duré, puis se crée sans que personne ait rien à
+     * faire. */
     $adapterG3 = new MqttbeOpenMqttGateway();
     $ctxG3 = new MqttbeContexteEssaiOmg();
-    $topicG3 = $reperes['SAM'] . '/BTtoMQTT/D2D2D2103006';
-    $chargeG3 = '{"id":"D2:D2:D2:10:30:06","mac_type":1,"rssi":-70,"servicedatauuid":"0xfeed",'
+    $topicG3 = $reperes['SAM'] . '/BTtoMQTT/52D2D2103006';
+    $chargeG3 = '{"id":"52:D2:D2:10:30:06","mac_type":1,"rssi":-70,"servicedatauuid":"0xfeed",'
               . '"brand":"Tile","model":"Smart Tracker","model_id":"TILE","type":"TRACK"}';
     $adapterG3->onMessage($topicG3, $chargeG3, false, $ctxG3);
     $ctxG3->avance(MqttbeOpenMqttGateway::STABILITE_ALEATOIRE - 120);
@@ -2151,7 +2152,7 @@ function mqttbeControlesOmg() {
     $adapterG3->onTick($ctxG3);
     $vuG3 = null;
     foreach ($ctxG3->modeles as $modele) {
-        if ($modele->uid() === 'ble:d2d2d2103006') {
+        if ($modele->uid() === 'ble:52d2d2103006') {
             $vuG3 = $modele;
         }
     }
@@ -2159,6 +2160,28 @@ function mqttbeControlesOmg() {
         $fautes[] = 'un traceur reconnu, à adresse aléatoire mais figée, n\'est toujours pas créé '
                   . 'au bout d\'une heure : l\'intégration automatique ne serait plus '
                   . 'automatique.';
+    }
+
+    /* Et un traceur à adresse aléatoire STATIQUE — deux bits de poids fort à
+     * 11, comme les Tile — n'attend rien : la norme dit qu'elle ne tourne pas.
+     * Sans cela, chaque redémarrage du démon le laissait une heure en
+     * « guess », son modèle réduit à la première passerelle entendue. */
+    $adapterG3s = new MqttbeOpenMqttGateway();
+    $ctxG3s = new MqttbeContexteEssaiOmg();
+    $topicG3s = $reperes['SAM'] . '/BTtoMQTT/D2D2D2103007';
+    $adapterG3s->onMessage($topicG3s, '{"id":"D2:D2:D2:10:30:07","mac_type":1,"rssi":-70,'
+        . '"servicedatauuid":"0xfeed","brand":"Tile","model":"Smart Tracker","model_id":"TILE",'
+        . '"type":"TRACK"}', false, $ctxG3s);
+    $adapterG3s->onTick($ctxG3s);
+    $vuG3s = null;
+    foreach ($ctxG3s->modeles as $modele) {
+        if ($modele->uid() === 'ble:d2d2d2103007') {
+            $vuG3s = $modele;
+        }
+    }
+    if ($vuG3s === null || $vuG3s->confidence() !== 'certain') {
+        $fautes[] = 'un traceur à adresse aléatoire statique (D2:…) attend encore la période de '
+                  . 'rotation : il repasse une heure en « guess » à chaque redémarrage du démon.';
     }
 
     /* UNE MESURE NE RATTRAPE PAS UNE MARQUE GÉNÉRIQUE, et c'est le point qui a

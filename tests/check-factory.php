@@ -648,9 +648,9 @@ function mqttbeControlesFabrique() {
     MqttbeFauxCoeur::reinitialise();
     $balise = mqttbeModele('essai:balise', 'Balise', array(
         mqttbeCanalInfo('state.presence', 'generic.value', 'essai/presence'),
-        mqttbeCanalInfo('rssi.a', 'generic.value', 'essai/a'),
-        mqttbeCanalInfo('rssi.b', 'generic.value', 'essai/b'),
-        mqttbeCanalInfo('rssi.c', 'generic.value', 'essai/c'),
+        mqttbeCanalInfo('canal.a', 'generic.value', 'essai/a'),
+        mqttbeCanalInfo('canal.b', 'generic.value', 'essai/b'),
+        mqttbeCanalInfo('canal.c', 'generic.value', 'essai/c'),
     ), 'e-1');
     mqttbeApplique($balise);
     $avant = mqttbeCommandesDe('essai:balise');
@@ -664,7 +664,7 @@ function mqttbeControlesFabrique() {
     $rapport = mqttbeApplique($ampute);
     $cmds = mqttbeCommandesDe('essai:balise');
     $fautes = array();
-    foreach (array('rssi.a', 'rssi.b', 'rssi.c') as $cle) {
+    foreach (array('canal.a', 'canal.b', 'canal.c') as $cle) {
         if (!isset($cmds[$cle])) {
             $fautes[] = $cle . ' a été supprimée';
         } else {
@@ -689,6 +689,51 @@ function mqttbeControlesFabrique() {
     $resultats[] = mqttbeVerdict($titre, $fautes,
         'une balise BLE perdait à chaque redémarrage du démon les signaux des passerelles '
         . "qui ne l'avaient pas encore entendue, recréés ensuite sous d'autres identifiants.");
+
+    /* ---------------------------------------------------------------- 13c ---
+     * Le signal d'une balise vu par une passerelle (« rssi.<passerelle> ») n'est
+     * pas un canal perdu quand il manque au modèle : la passerelle ne l'a
+     * simplement pas encore entendue depuis le démarrage du démon. */
+    $titre = 'signal par passerelle absent du modèle : laissé en place';
+    MqttbeFauxCoeur::reinitialise();
+    $signaux = mqttbeModele('essai:signaux', 'Balise', array(
+        mqttbeCanalInfo('state.presence', 'generic.value', 'essai/presence'),
+        mqttbeCanalInfo('rssi.salon', 'generic.value', 'essai/salon'),
+        mqttbeCanalInfo('rssi.etage', 'generic.value', 'essai/etage'),
+        mqttbeCanalInfo('rssi.cuisine', 'generic.value', 'essai/cuisine'),
+        mqttbeCanalInfo('batterie', 'generic.value', 'essai/batterie'),
+        mqttbeCanalInfo('temperature', 'generic.value', 'essai/temperature'),
+    ), 'e-1');
+    mqttbeApplique($signaux);
+    $avant = mqttbeCommandesDe('essai:signaux');
+    $moins = $signaux;
+    $moins['fingerprint'] = 'e-2';
+    $moins['channels'] = array_values(array_filter($moins['channels'], function ($_canal) {
+        return $_canal['key'] !== 'rssi.etage';
+    }));
+    $rapport = mqttbeApplique($moins);
+    $cmds = mqttbeCommandesDe('essai:signaux');
+    $fautes = array();
+    if (!isset($cmds['rssi.etage'])) {
+        $fautes[] = 'le signal de la passerelle a été supprimé';
+    } else {
+        if ($cmds['rssi.etage']->getId() != $avant['rssi.etage']->getId()) {
+            $fautes[] = 'le signal a été recréé : son identifiant a changé';
+        }
+        if ((int) $cmds['rssi.etage']->getIsVisible() !== (int) $avant['rssi.etage']->getIsVisible()) {
+            $fautes[] = 'le signal a changé de visibilité';
+        }
+        if ((string) $cmds['rssi.etage']->getConfiguration('mqttbe::orphan', '') !== '') {
+            $fautes[] = 'le signal a été marqué comme disparu';
+        }
+    }
+    if ($rapport['cmd']['removed'] !== 0 || $rapport['cmd']['orphaned'] !== 0) {
+        $fautes[] = 'compte rendu : removed = ' . $rapport['cmd']['removed']
+                  . ', orphaned = ' . $rapport['cmd']['orphaned'];
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'au démarrage du démon, une balise n\'est entendue que par une partie des passerelles : '
+        . "les signaux des autres étaient supprimés puis recréés sous d'autres identifiants.");
 
     /* ----------------------------------------------------------------- 14 ---
      * Le lien action → information (cmd.value). Sur un appareil à deux relais,
