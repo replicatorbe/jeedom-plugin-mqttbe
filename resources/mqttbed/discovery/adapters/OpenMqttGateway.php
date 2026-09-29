@@ -1822,7 +1822,8 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
          * JSON par commande. Le routage ne décode la charge utile qu'une fois
          * pour les six. */
         $sante = array(
-            array('temperature', 'sensor.temperature', 'Température interne', '°C',  'tempc',   1),
+            /* La puce de la passerelle, pas la pièce : pas de type TEMPERATURE. */
+            array('temperature', 'sensor.temperature_internal', 'Température interne', '°C',  'tempc',   1),
             array('memory',      'device.memory',      'Mémoire libre',       'o',   'freemem', null),
             array('rssi',        'connectivity.rssi',  'Signal Wi-Fi',        'dBm', 'rssi',    null),
             array('uptime',      'device.uptime',      'Durée de fonctionnement', 's', 'uptime', null),

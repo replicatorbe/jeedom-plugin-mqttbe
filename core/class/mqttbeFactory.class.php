@@ -87,6 +87,37 @@ class mqttbeFactory {
     const CONF_ORPHAN     = 'mqttbe::orphan';
     const CONF_SELECTOR   = 'mqttbe::selector';
 
+    /*
+     * Usage du relais, réglé par l'utilisateur sur l'équipement.
+     *
+     * Le vocabulaire ne sait pas à quoi sert un relais : un Shelly 1 allume une
+     * lampe, verrouille une porte ou alimente une pompe, et rien de ce qu'il
+     * publie ne le dit. Les capacités switch.* donnent donc des types de prise
+     * (ENERGY_*), et l'utilisateur dit ce qu'il en est. Le type générique
+     * compte bien au-delà de l'affichage : résumés de pièce, « éteins tout »
+     * d'un assistant vocal, plugins qui rangent les lampes avant les prises.
+     *
+     * Vide : le type du vocabulaire (prise). Un verrou reçoit LOCK_CLOSE sur
+     * « On » : relais collé = porte verrouillée, la convention de LOCK_STATE
+     * (1 = verrouillé). « Verrou inversé » sert la gâche qui déverrouille relais
+     * collé : les actions s'échangent et l'état est marqué « Inverser ». Le
+     * « Basculer » d'un verrou ne reçoit aucun type : un basculement aveugle
+     * n'a rien à faire dans un « tout éteindre ».
+     *
+     * Seuls les champs que la fabrique possède encore suivent l'usage : un
+     * type générique posé à la main reste celui de l'utilisateur.
+     */
+    const CONF_RELAY_USAGE = 'mqttbe::relayUsage';
+    const RELAY_USAGES = array(
+        'light' => array('switch.state' => 'LIGHT_STATE', 'switch.on' => 'LIGHT_ON',
+                         'switch.off' => 'LIGHT_OFF', 'switch.toggle' => 'LIGHT_TOGGLE'),
+        'lock' => array('switch.state' => 'LOCK_STATE', 'switch.on' => 'LOCK_CLOSE',
+                        'switch.off' => 'LOCK_OPEN', 'switch.toggle' => ''),
+        'lock_inverted' => array('switch.state' => 'LOCK_STATE', 'switch.on' => 'LOCK_OPEN',
+                                 'switch.off' => 'LOCK_CLOSE', 'switch.toggle' => ''),
+        'none' => array('switch.state' => '', 'switch.on' => '', 'switch.off' => '', 'switch.toggle' => ''),
+    );
+
     /* Capacité de dernier recours : un canal dont la capacité est inconnue du
      * vocabulaire devient une information texte plutôt que rien du tout. */
     const CAPABILITY_FALLBACK = 'generic.value';
@@ -127,9 +158,12 @@ class mqttbeFactory {
         'name', 'type', 'subType', 'generic_type', 'unite',
         'isVisible', 'isHistorized', 'order',
         'template::dashboard', 'template::mobile',
+        /* « Inverser » de l'état d'un relais, posé par l'usage « Verrou inversé ». */
+        'display::invertBinary',
     );
 
     private static $_capabilities = null;
+    private static $_building = false;
     private static $_index = null;
     private static $_discoveryLoaded = false;
     /* Réponse de pluginsMayReference() pour la requête en cours. */
@@ -170,6 +204,7 @@ class mqttbeFactory {
             'touched'    => 0,
             'messages'   => array(),
         );
+        self::$_building = true;
         try {
             self::loadDiscovery();
             $model = self::toArray($_model);
@@ -178,6 +213,8 @@ class mqttbeFactory {
             $report['status'] = 'error';
             $report['messages'][] = $e->getMessage();
             mqttbe::logger('error', __('Fabrique :', __FILE__) . ' ' . $e->getMessage());
+        } finally {
+            self::$_building = false;
         }
         return $report;
     }
@@ -844,6 +881,7 @@ class mqttbeFactory {
                 $desired['template::' . $version] = $template;
             }
         }
+        self::relayPresentation($_eqLogic, $cmd, $capability['capability'], $desired);
         self::applyPresentation($cmd, $desired, $isNew, $_taken);
 
         if ($capability['type'] === 'action') {
@@ -1168,6 +1206,8 @@ class mqttbeFactory {
             case 'order':        return (string) ((int) $_cmd->getOrder());
             case 'template::dashboard': return (string) $_cmd->getTemplate('dashboard', '');
             case 'template::mobile':    return (string) $_cmd->getTemplate('mobile', '');
+            /* « 0 » et l'absence disent la même chose : pas d'inversion. */
+            case 'display::invertBinary': return ((string) $_cmd->getDisplay('invertBinary', '') === '1') ? '1' : '';
         }
         return '';
     }
@@ -1184,7 +1224,179 @@ class mqttbeFactory {
             case 'order':        $_cmd->setOrder((int) $_value); break;
             case 'template::dashboard': $_cmd->setTemplate('dashboard', $_value); break;
             case 'template::mobile':    $_cmd->setTemplate('mobile', $_value); break;
+            case 'display::invertBinary':
+                /* Écrit seulement s'il change : une clé ajoutée à vide
+                 * réécrirait la commande pour rien. */
+                if (self::presentationValue($_cmd, $_field) !== (string) $_value) {
+                    $_cmd->setDisplay('invertBinary', $_value === '1' ? 1 : 0);
+                }
+                break;
         }
+    }
+
+    /* ------------------------------------------------------- usage du relais */
+
+    /** Usage réglé sur l'équipement, ou vide (prise : le type du vocabulaire). */
+    public static function relayUsage($_eqLogic) {
+        $usage = trim((string) $_eqLogic->getConfiguration(self::CONF_RELAY_USAGE, ''));
+        return isset(self::RELAY_USAGES[$usage]) ? $usage : '';
+    }
+
+    /**
+     * Ce que l'usage du relais change à la présentation voulue d'une commande.
+     *
+     * N'agit que sur les capacités switch.* ; tout le reste garde le type du
+     * vocabulaire. L'état reçoit toujours une consigne d'inversion — vide hors
+     * « Verrou inversé » — pour qu'un retour à un autre usage la retire.
+     */
+    private static function relayPresentation($_eqLogic, $_cmd, $_capability, &$_desired) {
+        if (!isset(self::RELAY_USAGES['light'][$_capability])) {
+            return;
+        }
+        $usage = self::relayUsage($_eqLogic);
+        if ($_capability === 'switch.state') {
+            $_desired['display::invertBinary'] = ($usage === 'lock_inverted') ? '1' : '';
+        }
+        if ($usage === '') {
+            return;
+        }
+        $_desired['generic_type'] = self::RELAY_USAGES[$usage][$_capability];
+        self::reclaimGenericType($_cmd, $_desired['generic_type']);
+    }
+
+    /**
+     * Un type générique posé à la main qui est justement celui de l'usage
+     * choisi : la fabrique le reprend en charge.
+     *
+     * Rien n'est écrit sur la commande, seule la trace change. C'est ce qui
+     * permet de retoucher un parc à la main aujourd'hui, de régler l'usage
+     * demain, et de voir un changement d'usage ultérieur suivi — au lieu de
+     * commandes gelées sur une retouche devenue identique au réglage. Un type
+     * manuel différent de l'usage, lui, reste à l'utilisateur.
+     */
+    private static function reclaimGenericType($_cmd, $_wanted) {
+        if ($_cmd->getId() == '') {
+            return;
+        }
+        $generated = $_cmd->getConfiguration(self::CONF_GENERATED, array());
+        if (!is_array($generated) || !array_key_exists('generic_type', $generated)) {
+            return;
+        }
+        $current = (string) $_cmd->getGeneric_type();
+        if ($current !== (string) $_wanted || (string) $generated['generic_type'] === $current) {
+            return;
+        }
+        $generated['generic_type'] = $current;
+        if (isset($generated[self::GENERATED_USER]['generic_type'])) {
+            unset($generated[self::GENERATED_USER]['generic_type']);
+            if (empty($generated[self::GENERATED_USER])) {
+                unset($generated[self::GENERATED_USER]);
+            }
+        }
+        $_cmd->setConfiguration(self::CONF_GENERATED, $generated);
+    }
+
+    /**
+     * Applique l'usage du relais aux commandes existantes de l'équipement.
+     *
+     * Appelée à l'enregistrement de l'équipement : un changement d'usage doit
+     * se voir tout de suite, sans attendre qu'une découverte repasse — ce
+     * qu'elle ne fait pas tant que l'appareil ne change pas (empreinte). La
+     * règle est celle de la découverte : un champ repris à la main n'est pas
+     * touché.
+     *
+     * @return int le nombre de commandes réécrites.
+     */
+    public static function applyRelayUsage($_eqLogic) {
+        if (!is_object($_eqLogic) || $_eqLogic->getId() == '') {
+            return 0;
+        }
+        $cmds = cmd::byEqLogicId($_eqLogic->getId());
+        if (!is_array($cmds)) {
+            return 0;
+        }
+        $taken = array();
+        $written = 0;
+        foreach ($cmds as $cmd) {
+            $name = (string) $cmd->getConfiguration(self::CONF_CAPABILITY, '');
+            if (!isset(self::RELAY_USAGES['light'][$name])) {
+                continue;
+            }
+            $capability = self::capability($name);
+            if ($capability === null) {
+                continue;
+            }
+            $desired = array('generic_type' => (string) $capability['generic_type']);
+            self::relayPresentation($_eqLogic, $cmd, $name, $desired);
+            self::applyPresentation($cmd, $desired, false, $taken);
+            if (!$cmd->getChanged()) {
+                continue;
+            }
+            try {
+                $cmd->save();
+                $written++;
+            } catch (Throwable $e) {
+                mqttbe::logger('error', __('Usage du relais non appliqué :', __FILE__) . ' '
+                    . $cmd->getHumanName() . ' — ' . $e->getMessage());
+            }
+        }
+        if ($written > 0) {
+            mqttbe::logger('info', sprintf(__('Usage du relais « %1$s » appliqué à %2$s : %3$d commande(s)', __FILE__),
+                self::relayUsage($_eqLogic) === '' ? 'plug' : self::relayUsage($_eqLogic), $_eqLogic->getName(), $written));
+        }
+        return $written;
+    }
+
+    /**
+     * L'usage que disent déjà les types génériques des relais, retouchés à la
+     * main avant que le réglage existe : Lumière si les « On » portent
+     * LIGHT_ON, Verrou s'ils portent LOCK_CLOSE, Verrou inversé pour LOCK_OPEN.
+     * Vide si les relais ne s'accordent pas ou gardent leur type de prise.
+     */
+    public static function inferRelayUsage($_eqLogic) {
+        $cmds = cmd::byEqLogicId($_eqLogic->getId());
+        $found = null;
+        foreach (is_array($cmds) ? $cmds : array() as $cmd) {
+            if ((string) $cmd->getConfiguration(self::CONF_CAPABILITY, '') !== 'switch.on') {
+                continue;
+            }
+            $types = array('LIGHT_ON' => 'light', 'LOCK_CLOSE' => 'lock', 'LOCK_OPEN' => 'lock_inverted');
+            $generic = (string) $cmd->getGeneric_type();
+            if (!isset($types[$generic]) || ($found !== null && $found !== $types[$generic])) {
+                return '';
+            }
+            $found = $types[$generic];
+        }
+        return $found === null ? '' : $found;
+    }
+
+    /**
+     * Migration : les équipements sans usage réglé reçoivent celui que leurs
+     * retouches manuelles disent déjà. Aucune commande n'est réécrite — les
+     * types sont déjà ceux de l'usage, seule la trace est reprise.
+     *
+     * @return int le nombre d'équipements réglés.
+     */
+    public static function migrateRelayUsages() {
+        $count = 0;
+        foreach (eqLogic::byType('mqttbe') as $eqLogic) {
+            if (trim((string) $eqLogic->getConfiguration(self::CONF_RELAY_USAGE, '')) !== '') {
+                continue;
+            }
+            $usage = self::inferRelayUsage($eqLogic);
+            if ($usage === '') {
+                continue;
+            }
+            $eqLogic->setConfiguration(self::CONF_RELAY_USAGE, $usage);
+            $eqLogic->save();
+            $count++;
+        }
+        return $count;
+    }
+
+    /** Vrai pendant qu'un modèle est appliqué : l'usage y est traité canal par canal. */
+    public static function isBuilding() {
+        return self::$_building;
     }
 
     /* ------------------------------------------------------- canaux disparus */

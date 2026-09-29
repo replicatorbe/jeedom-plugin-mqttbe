@@ -155,6 +155,16 @@ class mqttbe extends eqLogic {
     }
 
     public function postSave() {
+        /* L'usage du relais vient peut-être de changer : les types génériques
+         * des relais le suivent tout de suite. Pendant une découverte, la
+         * fabrique le traite elle-même, canal par canal. */
+        if (!mqttbeFactory::isBuilding()) {
+            try {
+                mqttbeFactory::applyRelayUsage($this);
+            } catch (Throwable $e) {
+                log::add('mqttbe', 'error', __('Usage du relais :', __FILE__) . ' ' . $e->getMessage());
+            }
+        }
         self::scheduleRoutingPush();
     }
 

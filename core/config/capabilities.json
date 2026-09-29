@@ -626,6 +626,16 @@
             "isHistorized": 1,
             "order": 40
         },
+        "sensor.temperature_internal": {
+            "name": "Température interne",
+            "type": "info",
+            "subType": "numeric",
+            "generic_type": "GENERIC_INFO",
+            "unit": "°C",
+            "isVisible": 1,
+            "isHistorized": 1,
+            "order": 47
+        },
         "sensor.uv": {
             "name": "Indice UV",
             "type": "info",

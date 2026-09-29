@@ -1013,6 +1013,187 @@ function mqttbeControlesFabrique() {
         'les équipements nés de la dispute la rejouent indéfiniment, avec des commandes '
       . 'éteintes que rien ne rallume.');
 
+    $resultats = array_merge($resultats, mqttbeControlesUsageRelais());
+    return $resultats;
+}
+
+/* Un Shelly 1 : état, on, off, basculer, les actions liées à l'état. */
+function mqttbeModeleRelais($_uid, $_empreinte) {
+    return mqttbeModele($_uid, 'Relais', array(
+        mqttbeCanalInfo('relay.0.state', 'switch.state', 'essai/relay/0'),
+        mqttbeCanalAction('relay.0.on', 'switch.on', 'essai/relay/0/command', 'on', array('links' => 'relay.0.state')),
+        mqttbeCanalAction('relay.0.off', 'switch.off', 'essai/relay/0/command', 'off', array('links' => 'relay.0.state')),
+        mqttbeCanalAction('relay.0.toggle', 'switch.toggle', 'essai/relay/0/command', 'toggle', array('links' => 'relay.0.state')),
+        mqttbeCanalInfo('temperature', 'sensor.temperature_internal', 'essai/temperature'),
+    ), $_empreinte);
+}
+
+/* Types génériques des quatre commandes du relais, dans l'ordre état, on, off, basculer. */
+function mqttbeTypesRelais($_uid) {
+    $cmds = mqttbeCommandesDe($_uid);
+    $types = array();
+    foreach (array('relay.0.state', 'relay.0.on', 'relay.0.off', 'relay.0.toggle') as $cle) {
+        $types[] = isset($cmds[$cle]) ? (string) $cmds[$cle]->getGeneric_type() : '(absente)';
+    }
+    return implode(' / ', $types);
+}
+
+function mqttbeRegleUsage($_uid, $_usage) {
+    mqttbeFactory::resetCache();
+    $eq = MqttbeFauxCoeur::equipement($_uid);
+    $eq->setConfiguration('mqttbe::relayUsage', $_usage);
+    $eq->save();
+}
+
+function mqttbeRetouche($_uid, $_cle, $_type) {
+    $cmds = mqttbeCommandesDe($_uid);
+    $cmds[$_cle]->setGeneric_type($_type);
+    $cmds[$_cle]->save();
+}
+
+function mqttbeControlesUsageRelais() {
+    $resultats = array();
+
+    /* ------------------------------------------------------------------ U1 --
+     * L'usage suit tout de suite, à l'enregistrement de l'équipement : la
+     * découverte ne repasse pas tant que l'appareil ne change pas. */
+    $titre = 'usage du relais : lumière et verrou appliqués à l\'enregistrement';
+    MqttbeFauxCoeur::reinitialise();
+    mqttbeApplique(mqttbeModeleRelais('essai:relais', 'r-1'));
+    $fautes = array();
+    $avant = mqttbeTypesRelais('essai:relais');
+    if ($avant !== 'ENERGY_STATE / ENERGY_ON / ENERGY_OFF / TOGGLE') {
+        $fautes[] = 'sans usage, attendu les types de prise ; obtenu ' . $avant;
+    }
+    mqttbeRegleUsage('essai:relais', 'light');
+    $obtenu = mqttbeTypesRelais('essai:relais');
+    if ($obtenu !== 'LIGHT_STATE / LIGHT_ON / LIGHT_OFF / LIGHT_TOGGLE') {
+        $fautes[] = 'usage Lumière : ' . $obtenu;
+    }
+    mqttbeRegleUsage('essai:relais', 'lock');
+    $obtenu = mqttbeTypesRelais('essai:relais');
+    if ($obtenu !== 'LOCK_STATE / LOCK_CLOSE / LOCK_OPEN / ') {
+        $fautes[] = 'usage Verrou (On = verrouiller, basculer sans type) : ' . $obtenu;
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'un relais de lampe reste une « prise » pour les résumés et Google Home, et un verrou '
+      . 'en prise est coupé — donc déverrouillé — par « éteins tout ».');
+
+    /* ------------------------------------------------------------------ U2 --
+     * Le type posé à la main n'est jamais écrasé : ni par un changement
+     * d'usage, ni par une redécouverte. */
+    $titre = 'usage du relais : retouche manuelle conservée, redécouverte comprise';
+    MqttbeFauxCoeur::reinitialise();
+    mqttbeApplique(mqttbeModeleRelais('essai:retouche', 'r-1'));
+    mqttbeRetouche('essai:retouche', 'relay.0.on', 'GENERIC_ACTION');
+    mqttbeRegleUsage('essai:retouche', 'lock');
+    $fautes = array();
+    $obtenu = mqttbeTypesRelais('essai:retouche');
+    if ($obtenu !== 'LOCK_STATE / GENERIC_ACTION / LOCK_OPEN / ') {
+        $fautes[] = 'après réglage Verrou : ' . $obtenu;
+    }
+    mqttbeApplique(mqttbeModeleRelais('essai:retouche', 'r-2'));
+    $obtenu = mqttbeTypesRelais('essai:retouche');
+    if ($obtenu !== 'LOCK_STATE / GENERIC_ACTION / LOCK_OPEN / ') {
+        $fautes[] = 'après redécouverte (empreinte nouvelle) : ' . $obtenu;
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'un type choisi par l\'utilisateur serait réécrit par le réglage ou par la découverte suivante.');
+
+    /* ------------------------------------------------------------------ U3 --
+     * Verrou inversé : actions échangées et état marqué « Inverser » ; revenir
+     * à la prise retire l'inversion. */
+    $titre = 'usage du relais : verrou inversé, puis retour à la prise';
+    MqttbeFauxCoeur::reinitialise();
+    mqttbeApplique(mqttbeModeleRelais('essai:gache', 'r-1'));
+    mqttbeRegleUsage('essai:gache', 'lock_inverted');
+    $fautes = array();
+    $obtenu = mqttbeTypesRelais('essai:gache');
+    if ($obtenu !== 'LOCK_STATE / LOCK_OPEN / LOCK_CLOSE / ') {
+        $fautes[] = 'verrou inversé : ' . $obtenu;
+    }
+    $cmds = mqttbeCommandesDe('essai:gache');
+    if ((string) $cmds['relay.0.state']->getDisplay('invertBinary', '') !== '1') {
+        $fautes[] = 'l\'état du verrou inversé n\'est pas marqué « Inverser ».';
+    }
+    mqttbeRegleUsage('essai:gache', '');
+    $obtenu = mqttbeTypesRelais('essai:gache');
+    if ($obtenu !== 'ENERGY_STATE / ENERGY_ON / ENERGY_OFF / TOGGLE') {
+        $fautes[] = 'retour à la prise : ' . $obtenu;
+    }
+    $cmds = mqttbeCommandesDe('essai:gache');
+    if ((string) $cmds['relay.0.state']->getDisplay('invertBinary', '') === '1') {
+        $fautes[] = 'l\'inversion est restée après le retour à la prise.';
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'une gâche qui déverrouille relais collé serait vue verrouillée quand elle est ouverte.');
+
+    /* ------------------------------------------------------------------ U4 --
+     * Retouches faites à la main avant le réglage : la migration en déduit
+     * l'usage, rien n'est réécrit, et la fabrique reprend ces types — un
+     * changement d'usage ultérieur les suit. */
+    $titre = 'usage du relais : migration depuis des retouches manuelles';
+    MqttbeFauxCoeur::reinitialise();
+    mqttbeApplique(mqttbeModeleRelais('essai:lampe', 'r-1'));
+    mqttbeApplique(mqttbeModele('essai:prise', 'Prise', array(
+        mqttbeCanalInfo('relay.0.state', 'switch.state', 'prise/relay/0'),
+        mqttbeCanalAction('relay.0.on', 'switch.on', 'prise/relay/0/command', 'on', array('links' => 'relay.0.state')),
+    ), 'p-1'));
+    foreach (array('relay.0.state' => 'LIGHT_STATE', 'relay.0.on' => 'LIGHT_ON',
+                   'relay.0.off' => 'LIGHT_OFF', 'relay.0.toggle' => 'LIGHT_TOGGLE') as $cle => $type) {
+        mqttbeRetouche('essai:lampe', $cle, $type);
+    }
+    $fautes = array();
+    mqttbeFactory::resetCache();
+    $regles = mqttbeFactory::migrateRelayUsages();
+    if ($regles !== 1) {
+        $fautes[] = $regles . ' équipement(s) réglé(s) au lieu d\'un : la prise restée en ENERGY_* ne doit pas en recevoir.';
+    }
+    $lampe = MqttbeFauxCoeur::equipement('essai:lampe');
+    if ((string) $lampe->getConfiguration('mqttbe::relayUsage', '') !== 'light') {
+        $fautes[] = 'usage déduit : « ' . $lampe->getConfiguration('mqttbe::relayUsage', '') . ' » au lieu de light.';
+    }
+    if ((string) MqttbeFauxCoeur::equipement('essai:prise')->getConfiguration('mqttbe::relayUsage', '') !== '') {
+        $fautes[] = 'la prise a reçu un usage.';
+    }
+    $obtenu = mqttbeTypesRelais('essai:lampe');
+    if ($obtenu !== 'LIGHT_STATE / LIGHT_ON / LIGHT_OFF / LIGHT_TOGGLE') {
+        $fautes[] = 'la migration a réécrit les types : ' . $obtenu;
+    }
+    mqttbeRegleUsage('essai:lampe', 'none');
+    $obtenu = mqttbeTypesRelais('essai:lampe');
+    if ($obtenu !== ' /  /  / ') {
+        $fautes[] = 'les types repris par la fabrique ne suivent pas un nouvel usage : ' . $obtenu;
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'les relais retouchés à la main resteraient gelés, ou seraient réécrits par la migration.');
+
+    /* ------------------------------------------------------------------ U5 --
+     * La température interne d'un module n'est pas une sonde de pièce. */
+    $titre = 'température interne : pas de type TEMPERATURE';
+    MqttbeFauxCoeur::reinitialise();
+    $fautes = array();
+    $ancien = mqttbeModele('essai:puce', 'Module', array(
+        mqttbeCanalInfo('temperature', 'sensor.temperature', 'essai/temperature'),
+        mqttbeCanalInfo('temperature2', 'sensor.temperature', 'essai/temperature2'),
+    ), 't-1');
+    mqttbeApplique($ancien);
+    mqttbeRetouche('essai:puce', 'temperature2', 'THERMOSTAT_TEMPERATURE');
+    $nouveau = $ancien;
+    $nouveau['fingerprint'] = 't-2';
+    $nouveau['channels'][0]['capability'] = 'sensor.temperature_internal';
+    $nouveau['channels'][1]['capability'] = 'sensor.temperature_internal';
+    mqttbeApplique($nouveau);
+    $cmds = mqttbeCommandesDe('essai:puce');
+    if ((string) $cmds['temperature']->getGeneric_type() !== 'GENERIC_INFO') {
+        $fautes[] = 'commande possédée par la fabrique : « ' . $cmds['temperature']->getGeneric_type() . ' » au lieu de GENERIC_INFO.';
+    }
+    if ((string) $cmds['temperature2']->getGeneric_type() !== 'THERMOSTAT_TEMPERATURE') {
+        $fautes[] = 'retouche manuelle écrasée : « ' . $cmds['temperature2']->getGeneric_type() . ' ».';
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'la puce d\'un relais passe pour la sonde de la pièce auprès des thermostats et de Google Home.');
+
     return $resultats;
 }
 

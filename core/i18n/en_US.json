@@ -34,7 +34,8 @@
         "Le topic « %s » contient un joker : impossible de publier dessus.": "Topic “%s” contains a wildcard: it cannot be published to.",
         "Non renseigné": "Not set",
         "Renseignez l'adresse du broker dans la configuration du plugin": "Enter the broker address in the plugin configuration",
-        "Établie": "Established"
+        "Établie": "Established",
+        "Usage du relais :": "Relay usage:"
     },
     "plugins/mqttbe/core/class/mqttbeDaemon.class.php": {
         "%1$s équipement(s) découvert(s) sur le broker, %2$s au total.": "%1$s device(s) discovered on the broker, %2$s in total.",
@@ -100,7 +101,9 @@
         ", d'autres restent à traiter": ", more are left to handle",
         "Réparation d'identité :": "Identity repair:",
         "Identité réparée : %1$s — %2$d alias d'une autre famille retiré(s)": "Identity repaired: %1$s — %2$d alias(es) from another family removed",
-        "Commande non rallumée :": "Command not switched back on:"
+        "Commande non rallumée :": "Command not switched back on:",
+        "Usage du relais non appliqué :": "Relay usage not applied:",
+        "Usage du relais « %1$s » appliqué à %2$s : %3$d commande(s)": "Relay usage “%1$s” applied to %2$s: %3$d command(s)"
     },
     "plugins/mqttbe/core/class/mqttbeRouting.class.php": {
         "Routage : commande %1$s ignorée (%2$s)": "Routing: command %1$s ignored (%2$s)",
@@ -326,7 +329,14 @@
         "Examiner la liste": "Review the list",
         "appareil(s) écarté(s) — revenir sur un refus": "device(s) ignored — go back on a refusal",
         "La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\\'instant les Shelly Gen1 et les passerelles OpenMQTTGateway.": "Creating a device by hand remains the way to handle what discovery cannot recognize yet: for now it knows Shelly Gen1 devices and OpenMQTTGateway gateways.",
-        "La découverte est arrêtée : la liste ne s\\'allongera plus, mais ces appareils-là peuvent encore être créés ou écartés.": "Discovery is stopped: the list will not grow any further, but these devices can still be created or ignored."
+        "La découverte est arrêtée : la liste ne s\\'allongera plus, mais ces appareils-là peuvent encore être créés ou écartés.": "Discovery is stopped: the list will not grow any further, but these devices can still be created or ignored.",
+        "Usage du relais": "Relay usage",
+        "Prise (par défaut)": "Plug (default)",
+        "Lumière": "Light",
+        "Verrou (1 = verrouillé)": "Lock (1 = locked)",
+        "Verrou inversé (1 = déverrouillé)": "Inverted lock (1 = unlocked)",
+        "Aucun (pas de type générique)": "None (no generic type)",
+        "Ce que commandent les relais de cet équipement. Il fixe leurs types génériques (prise, lumière, verrou), qui décident de ce que voient les résumés de pièce, les assistants vocaux et Google Home. Un type générique modifié à la main sur une commande est conservé. Sans effet sur un équipement sans relais.": "What the relays of this device switch. It sets their generic types (plug, light, lock), which decide what room summaries, voice assistants and Google Home see. A generic type changed by hand on a command is kept. No effect on a device without relays."
     },
     "plugins/mqttbe/plugin_info/configuration.php": {
         "1883 en clair, 8883 en TLS. Ce sont les ports d'usage, pas une obligation.": "1883 in the clear, 8883 over TLS. These are the customary ports, not a requirement.",
@@ -405,6 +415,8 @@
         "Rechiffrement du mot de passe :": "Re-encrypting the password:",
         "Retrait des messages :": "Removing messages:",
         "Identités réparées : %1$d équipement(s), %2$d alias retiré(s), %3$d commande(s) rallumée(s)": "Identities repaired: %1$d device(s), %2$d alias(es) removed, %3$d command(s) switched back on",
-        "Réparation des identités :": "Identity repair:"
+        "Réparation des identités :": "Identity repair:",
+        "Usage du relais déduit des types génériques : %d équipement(s)": "Relay usage inferred from generic types: %d device(s)",
+        "Usage du relais :": "Relay usage:"
     }
 }

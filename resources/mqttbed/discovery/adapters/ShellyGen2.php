@@ -2350,12 +2350,13 @@ class MqttbeShellyGen2 implements MqttbeAdapter {
             )));
         }
         /* La température interne du boîtier : elle dit qu'un relais chauffe,
-         * et c'est l'information qui précède une panne. */
+         * et c'est l'information qui précède une panne. Pas celle de la pièce :
+         * sa capacité ne porte pas le type TEMPERATURE. */
         if (isset($_statut['temperature']) && is_array($_statut['temperature'])
             && array_key_exists('tC', $_statut['temperature'])) {
             $_modele->addChannel(new MqttbeChannel(array(
                 'key'        => $racine . '.temperature',
-                'capability' => 'sensor.temperature',
+                'capability' => 'sensor.temperature_internal',
                 'name'       => 'Température interne' . $_etiquette,
                 'unit'       => '°C',
                 'source'     => $this->venantDe($_prefixe, $_cle, 'temperature.tC'),

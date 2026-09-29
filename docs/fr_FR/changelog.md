@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9 — 29 septembre 2026
+
+- **Usage du relais**, dans la page de l'équipement : Prise, Lumière, Verrou
+  (1 = verrouillé), Verrou inversé ou Aucun. Il fixe les types génériques des
+  relais (`ENERGY_*`, `LIGHT_*`, `LOCK_*` ou rien), dès l'enregistrement. Un
+  type générique retouché à la main reste celui de l'utilisateur ; s'il est
+  celui de l'usage choisi, le plugin le reprend en charge. À la mise à jour,
+  les équipements déjà retouchés en `LIGHT_*` ou `LOCK_*` reçoivent l'usage
+  correspondant, sans réécriture.
+- La **température interne** des Shelly et des passerelles OpenMQTTGateway ne
+  porte plus le type « Température », que les thermostats, les résumés de
+  pièce et Google Home prenaient pour une sonde de la pièce : « Info
+  générique ». Les commandes existantes suivent à la prochaine découverte,
+  sauf si leur type avait été modifié à la main.
+
 ## 0.8 — 28 septembre 2026
 
 ### Ce que les journaux de production ont montré

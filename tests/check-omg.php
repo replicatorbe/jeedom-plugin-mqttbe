@@ -463,7 +463,7 @@ function mqttbeControlesOmg() {
         $fautes = array();
         $attendus = array(
             array('online',       'connectivity.online', $base . '/LWT'),
-            array('temperature',  'sensor.temperature',  $base . '/SYStoMQTT [tempc]'),
+            array('temperature',  'sensor.temperature_internal', $base . '/SYStoMQTT [tempc]'),
             array('memory',       'device.memory',       $base . '/SYStoMQTT [freemem]'),
             array('rssi',         'connectivity.rssi',   $base . '/SYStoMQTT [rssi]'),
             array('uptime',       'device.uptime',       $base . '/SYStoMQTT [uptime]'),
