@@ -336,8 +336,9 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * la trame suivante, l'adresse avait déjà changé.
      *
      * Ce qu'elle ne retarde pas : une adresse PUBLIQUE, gravée dans le
-     * matériel, n'attend rien. Et un traceur à adresse aléatoire figée — les
-     * Tile en sont — franchit le seuil en une heure, puis se crée tout seul.
+     * matériel, n'attend rien, pas plus qu'une adresse aléatoire STATIQUE —
+     * les Tile en sont —, reconnaissable à ses deux bits de poids fort (voir
+     * adresseStable()). Seules les adresses privées, qui tournent, attendent.
      */
     const STABILITE_ALEATOIRE = 3600;
 
@@ -1470,8 +1471,17 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      *
      * Publique, elle est gravée dans le matériel : oui, tout de suite. Aléatoire,
      * elle peut être figée — un traceur — ou tourner au quart d'heure — un
-     * téléphone —, et rien dans la trame ne dit lequel. Seule la durée le dit :
-     * ce qui a survécu à la rotation ne tournait pas.
+     * téléphone. La norme le dit dans l'adresse elle-même (Bluetooth Core,
+     * vol. 6, partie B, §1.3.2) : les deux bits de poids fort valent 11 pour
+     * une adresse STATIQUE, qui ne change qu'à la remise à zéro de l'appareil,
+     * 01 ou 00 pour une adresse PRIVÉE, qui tourne. Une adresse statique est
+     * donc stable tout de suite — c'est le cas des Tile. Faute de quoi, à chaque
+     * redémarrage du démon, un traceur attendait une heure avant de redevenir
+     * `certain` : son modèle, émis une fois sur la première passerelle
+     * entendue, ne repartait plus, et ses signaux par passerelle manquaient.
+     *
+     * Pour une adresse privée, seule la durée le dit : ce qui a survécu à la
+     * rotation ne tournait pas.
      *
      * Inconnue (la passerelle n'a pas publié `mac_type`), elle est traitée comme
      * publique : c'est le comportement d'avant ce garde-fou, et refuser sur un
@@ -1480,6 +1490,9 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      */
     private function adresseStable($_dossier) {
         if ($this->texte($_dossier, 'macType') !== 'random') {
+            return true;
+        }
+        if (self::adresseStatique($this->texte($_dossier, 'mac'))) {
             return true;
         }
         $duree = $this->nombre($_dossier, 'vu', 0) - $this->nombre($_dossier, 'depuis', 0);
@@ -2530,6 +2543,14 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     /* Une MAC, quelle que soit son écriture : « E7:E7:E7:72:C7:95 » et
      * « E7E7E772C795 » sont le même appareil, et deux orthographes ne doivent
      * pas donner deux équipements. */
+    /* Adresse aléatoire STATIQUE : les deux bits de poids fort du premier
+     * octet valent 11, c'est-à-dire un premier chiffre hexadécimal de c à f.
+     * Voir adresseStable(). */
+    public static function adresseStatique($_mac) {
+        $mac = self::normaliseMac($_mac);
+        return $mac !== '' && strpos('cdef', $mac[0]) !== false;
+    }
+
     public static function normaliseMac($_valeur) {
         $mac = strtolower(preg_replace('/[^0-9A-Fa-f]/', '', (string) $_valeur));
         return preg_match('/^[0-9a-f]{12}$/', $mac) ? $mac : '';

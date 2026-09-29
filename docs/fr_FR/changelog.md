@@ -2,6 +2,16 @@
 
 ## 0.9 — 29 septembre 2026
 
+- **Traceurs Bluetooth à adresse aléatoire statique (Tile…)** : reconnus
+  stables tout de suite. La norme Bluetooth distingue l'adresse aléatoire
+  statique (deux bits de poids fort à 11, elle ne change pas) de l'adresse
+  privée qui tourne ; seule cette dernière attend désormais une heure. Avant,
+  chaque redémarrage du démon laissait un Tile une heure sans mise à jour de son
+  modèle, réduit à la première passerelle entendue, et « Relancer la
+  découverte » n'y changeait rien.
+- **Signaux par passerelle** (« Signal <passerelle> ») : jamais supprimés ni
+  masqués parce qu'une passerelle n'a pas encore entendu la balise depuis le
+  démarrage du démon.
 - **Canaux disparus en masse** : quand au moins la moitié des commandes d'un
   équipement manquent d'un coup au modèle, rien n'est plus supprimé ni masqué.
   C'est le cas d'une balise BLE au démarrage du démon, entendue par une seule

@@ -1505,6 +1505,14 @@ class mqttbeFactory {
             if ($key === '' || isset($_wanted[$key])) {
                 continue;
             }
+            /* Le signal d'une balise vu par UNE passerelle (« rssi.<passerelle> ») :
+             * son absence du modèle veut dire « pas encore entendue par cette
+             * passerelle depuis le démarrage du démon », pas « canal disparu ».
+             * La supprimer, c'était la recréer sous un autre identifiant dès que
+             * la passerelle reparlait — à chaque redémarrage. */
+            if (strpos($key, 'rssi.') === 0) {
+                continue;
+            }
             /* Déjà endormie à un passage précédent : elle ne compte plus comme
              * une disparition, sinon chaque passage la recompterait. */
             if ((string) $cmd->getConfiguration(self::CONF_ORPHAN, '') !== '') {
