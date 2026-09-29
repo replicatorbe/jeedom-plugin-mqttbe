@@ -93,6 +93,25 @@ function mqttbe_update() {
     } catch (Throwable $e) {
         log::add('mqttbe', 'error', __("Réparation des identités :", __FILE__) . ' ' . $e->getMessage());
     }
+
+    /*
+     * Usage du relais, déduit des retouches déjà faites.
+     *
+     * Avant ce réglage, la seule façon de dire qu'un relais commande une lampe
+     * ou un verrou était de retoucher ses types génériques à la main. Ces
+     * équipements reçoivent l'usage que leurs types disent déjà : rien n'est
+     * réécrit, et un relais resté en prise reste en prise.
+     */
+    try {
+        if (class_exists('mqttbeFactory')) {
+            $regles = mqttbeFactory::migrateRelayUsages();
+            if ($regles > 0) {
+                log::add('mqttbe', 'info', sprintf(__('Usage du relais déduit des types génériques : %d équipement(s)', __FILE__), $regles));
+            }
+        }
+    } catch (Throwable $e) {
+        log::add('mqttbe', 'error', __('Usage du relais :', __FILE__) . ' ' . $e->getMessage());
+    }
 }
 
 /*

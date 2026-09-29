@@ -1299,7 +1299,10 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
     }
 
     /* Température interne du boîtier — présente sur les appareils qui chauffent
-     * (relais à wattmètre, prises), absente ailleurs. */
+     * (relais à wattmètre, prises), absente ailleurs. Elle dit qu'un relais
+     * chauffe, pas quelle température il fait dans la pièce : sa capacité ne
+     * porte pas le type TEMPERATURE, qu'un thermostat, un résumé de pièce ou
+     * un assistant vocal prendraient pour une sonde. */
     private function ajouteTemperature($_modele, $_base, $_info) {
         $aTemperature = array_key_exists('temperature', $_info)
             || (isset($_info['tmp']) && is_array($_info['tmp']) && array_key_exists('tC', $_info['tmp']));
@@ -1308,7 +1311,7 @@ class MqttbeShellyGen1 implements MqttbeAdapter {
         }
         $_modele->addChannel(new MqttbeChannel(array(
             'key'        => 'temperature',
-            'capability' => 'sensor.temperature',
+            'capability' => 'sensor.temperature_internal',
             'name'       => 'Température interne',
             'unit'       => '°C',
             'source'     => array('topic' => $_base . '/temperature'),

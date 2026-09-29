@@ -173,6 +173,38 @@ Pour le voir : ouvrez l'équipement, choisissez un **objet parent** dans la list
 et sauvegardez. À faire une fois par équipement ; la découverte ne touchera plus
 jamais à ce choix.
 
+### Dites ce que commande chaque relais
+
+Un Shelly 1 allume une lampe, verrouille une porte ou alimente une pompe, et
+rien de ce qu'il publie ne le dit. Ses relais naissent donc **prises**
+(`ENERGY_*`). Le type générique compte au-delà de l'affichage : résumés de
+pièce, assistants vocaux, Google Home (plugin matterhubbe), plugins qui rangent
+les lampes avant les prises. Et un verrou vu comme une prise est coupé — donc
+déverrouillé — par un « éteins tout ».
+
+Dans la page de l'équipement, **Usage du relais** :
+
+| Usage | État | On | Off | Basculer |
+|---|---|---|---|---|
+| Prise (par défaut) | `ENERGY_STATE` | `ENERGY_ON` | `ENERGY_OFF` | `TOGGLE` |
+| Lumière | `LIGHT_STATE` | `LIGHT_ON` | `LIGHT_OFF` | `LIGHT_TOGGLE` |
+| Verrou (1 = verrouillé) | `LOCK_STATE` | `LOCK_CLOSE` | `LOCK_OPEN` | aucun |
+| Verrou inversé (1 = déverrouillé) | `LOCK_STATE`, « Inverser » coché | `LOCK_OPEN` | `LOCK_CLOSE` | aucun |
+| Aucun | aucun | aucun | aucun | aucun |
+
+Le changement s'applique à l'enregistrement, à tous les relais de
+l'équipement. **Un type générique modifié à la main sur une commande est
+conservé**, par ce réglage comme par les découvertes suivantes. S'il est
+justement celui de l'usage choisi, le plugin le reprend en charge : un
+changement d'usage ultérieur le suivra. À la mise à jour du plugin, un
+équipement dont les relais avaient été retouchés à la main en `LIGHT_*` ou
+`LOCK_*` reçoit l'usage correspondant, sans qu'aucune commande soit réécrite.
+
+La **température interne** d'un Shelly ou d'une passerelle (celle de sa puce ou
+de son boîtier) porte le type « Info générique », et non « Température » : ce
+n'est pas la température de la pièce. Les sondes externes (DS18B20, DHT)
+gardent le type « Température ».
+
 ## La page du plugin
 
 En haut, quatre vignettes : l'ajout d'un équipement, l'état du démon, l'état du

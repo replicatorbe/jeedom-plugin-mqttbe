@@ -376,6 +376,22 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
                             </div>
 
                             <div class="form-group">
+                                <label class="col-sm-3 control-label">{{Usage du relais}}</label>
+                                <div class="col-sm-5">
+                                    <select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="mqttbe::relayUsage">
+                                        <option value="">{{Prise (par défaut)}}</option>
+                                        <option value="light">{{Lumière}}</option>
+                                        <option value="lock">{{Verrou (1 = verrouillé)}}</option>
+                                        <option value="lock_inverted">{{Verrou inversé (1 = déverrouillé)}}</option>
+                                        <option value="none">{{Aucun (pas de type générique)}}</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4">
+                                    <span class="help-block" style="margin:0;">{{Ce que commandent les relais de cet équipement. Il fixe leurs types génériques (prise, lumière, verrou), qui décident de ce que voient les résumés de pièce, les assistants vocaux et Google Home. Un type générique modifié à la main sur une commande est conservé. Sans effet sur un équipement sans relais.}}</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
                                 <label class="col-sm-3 control-label">{{Dernière communication}}</label>
                                 <div class="col-sm-5">
                                     <span class="eqLogicAttr label label-default" data-l1key="status" data-l2key="lastCommunication"></span>
