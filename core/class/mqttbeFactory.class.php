@@ -134,8 +134,8 @@ class mqttbeFactory {
 
     /* Au-delà de cette proportion de commandes orphelines en un seul passage,
      * l'hypothèse « l'appareil a perdu ces canaux » devient moins vraisemblable
-     * que « le modèle est incomplet » : le passage est journalisé en warning
-     * pour que l'exploitation le voie sans avoir à relire la base. */
+     * que « le modèle est incomplet » : aucune commande n'est alors touchée, et
+     * le passage est journalisé en warning pour que l'exploitation le voie. */
     const ORPHAN_ALERT_RATIO = 0.5;
 
     /* Champ de présentation trouvé sur une commande existante alors que la
@@ -1436,9 +1436,13 @@ class mqttbeFactory {
 
         /* Perdre d'un coup la moitié de ses canaux ressemble moins à un appareil
          * amputé qu'à un modèle incomplet — un adapter qui n'a pas tout vu, un
-         * firmware qui répond mal. Le sort des orphelins reste appliqué (le
-         * modèle se dit certain), mais la trace en warning donne à
-         * l'exploitation le moyen de reconnaître le cas sans relire la base. */
+         * firmware qui répond mal. Le cas se reproduit à chaque démarrage du
+         * démon pour une balise BLE : son modèle « certain » ne porte que les
+         * passerelles qui l'ont déjà entendue, et les signaux des autres étaient
+         * supprimés puis recréés sous de nouveaux identifiants. Rien n'est donc
+         * touché : les commandes restent en place, et le warning dit pourquoi.
+         * Une vraie perte se traitera au passage suivant, s'il est moins
+         * massif, ou à la main depuis la page de l'équipement. */
         $owned = 0;
         foreach ($cmds as $cmd) {
             if ((string) $cmd->getConfiguration(self::CONF_KEY, '') !== '') {
@@ -1448,8 +1452,9 @@ class mqttbeFactory {
         if ($owned > 0 && count($candidates) >= 2
             && count($candidates) >= $owned * self::ORPHAN_ALERT_RATIO) {
             mqttbe::logger('warning', sprintf(
-                __('Équipement %1$s : %2$d commande(s) sur %3$d n\'apparaissent plus dans le modèle — modèle incomplet ?', __FILE__),
+                __('Équipement %1$s : %2$d commande(s) sur %3$d n\'apparaissent plus dans le modèle — modèle incomplet ? Commandes laissées en place.', __FILE__),
                 $_eqLogic->getName(), count($candidates), $owned));
+            return $report;
         }
 
         foreach ($candidates as $cmd) {
