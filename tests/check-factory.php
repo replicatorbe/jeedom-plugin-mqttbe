@@ -638,6 +638,58 @@ function mqttbeControlesFabrique() {
         "le tri se fait sur les références et l'historique : trop prudent, la page se remplit "
         . 'de commandes mortes ; trop pressé, un scénario casse.');
 
+    /* ---------------------------------------------------------------- 13b ---
+     * Perdre d'un coup la moitié de ses canaux, c'est un modèle incomplet et
+     * non un appareil amputé : une balise BLE, au démarrage du démon, n'a été
+     * entendue que par une passerelle sur quatre. Rien ne doit être supprimé
+     * ni masqué, sans quoi les signaux des autres passerelles reviennent sous
+     * de nouveaux identifiants à chaque redémarrage. */
+    $titre = 'modèle amputé de moitié : commandes laissées en place';
+    MqttbeFauxCoeur::reinitialise();
+    $balise = mqttbeModele('essai:balise', 'Balise', array(
+        mqttbeCanalInfo('state.presence', 'generic.value', 'essai/presence'),
+        mqttbeCanalInfo('rssi.a', 'generic.value', 'essai/a'),
+        mqttbeCanalInfo('rssi.b', 'generic.value', 'essai/b'),
+        mqttbeCanalInfo('rssi.c', 'generic.value', 'essai/c'),
+    ), 'e-1');
+    mqttbeApplique($balise);
+    $avant = mqttbeCommandesDe('essai:balise');
+    $visibles = array();
+    foreach ($avant as $cle => $cmd) {
+        $visibles[$cle] = (int) $cmd->getIsVisible();
+    }
+    $ampute = $balise;
+    $ampute['fingerprint'] = 'e-2';
+    $ampute['channels'] = array_slice($ampute['channels'], 0, 1);
+    $rapport = mqttbeApplique($ampute);
+    $cmds = mqttbeCommandesDe('essai:balise');
+    $fautes = array();
+    foreach (array('rssi.a', 'rssi.b', 'rssi.c') as $cle) {
+        if (!isset($cmds[$cle])) {
+            $fautes[] = $cle . ' a été supprimée';
+        } else {
+            if ($cmds[$cle]->getId() != $avant[$cle]->getId()) {
+                $fautes[] = $cle . ' a été recréée : son identifiant a changé';
+            }
+            if ((int) $cmds[$cle]->getIsVisible() !== (int) $visibles[$cle]) {
+                $fautes[] = $cle . ' a changé de visibilité sur le tableau de bord';
+            }
+            if ((string) $cmds[$cle]->getConfiguration('mqttbe::orphan', '') !== '') {
+                $fautes[] = $cle . ' a été marquée comme disparue';
+            }
+        }
+    }
+    if ($rapport['cmd']['removed'] !== 0 || $rapport['cmd']['orphaned'] !== 0) {
+        $fautes[] = 'compte rendu : removed = ' . $rapport['cmd']['removed']
+                  . ', orphaned = ' . $rapport['cmd']['orphaned'];
+    }
+    if (!MqttbeFauxCoeur::journalContient('laissées en place')) {
+        $fautes[] = 'le journal ne dit pas que les commandes ont été laissées en place';
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'une balise BLE perdait à chaque redémarrage du démon les signaux des passerelles '
+        . "qui ne l'avaient pas encore entendue, recréés ensuite sous d'autres identifiants.");
+
     /* ----------------------------------------------------------------- 14 ---
      * Le lien action → information (cmd.value). Sur un appareil à deux relais,
      * « switch:1.on » doit piloter l'état du relais 1 et non celui du voisin :

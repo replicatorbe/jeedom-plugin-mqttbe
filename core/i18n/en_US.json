@@ -94,7 +94,7 @@
         "Vocabulaire des capacités illisible :": "Capability vocabulary unreadable:",
         "Vocabulaire des capacités introuvable :": "Capability vocabulary not found:",
         "Équipement %1$s (%2$s) : %3$s, %4$d commande(s) touchée(s)": "Device %1$s (%2$s): %3$s, %4$d command(s) touched",
-        "Équipement %1$s : %2$d commande(s) sur %3$d n'apparaissent plus dans le modèle — modèle incomplet ?": "Device %1$s: %2$d command(s) out of %3$d no longer appear in the model — incomplete model?",
+        "Équipement %1$s : %2$d commande(s) sur %3$d n'apparaissent plus dans le modèle — modèle incomplet ? Commandes laissées en place.": "Device %1$s: %2$d command(s) out of %3$d no longer appear in the model — incomplete model? Commands left in place.",
         "Équipement %1$s : %2$d écriture(s) refusée(s), empreinte non posée — le modèle sera repassé en revue au prochain message": "Device %1$s: %2$d write(s) rejected, fingerprint not stored — the model will be reviewed again on the next message",
         "Équipement %1$s repris par l'adapter %2$s (précédemment %3$s)": "Device %1$s taken over by adapter %2$s (previously %3$s)",
         "Balayage des balises non identifiées : %1$d supprimé(s), %2$d échec(s)%3$s.": "Sweep of unidentified beacons: %1$d removed, %2$d failure(s)%3$s.",

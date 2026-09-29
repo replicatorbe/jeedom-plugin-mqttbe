@@ -2,6 +2,12 @@
 
 ## 0.9 — 29 septembre 2026
 
+- **Canaux disparus en masse** : quand au moins la moitié des commandes d'un
+  équipement manquent d'un coup au modèle, rien n'est plus supprimé ni masqué.
+  C'est le cas d'une balise BLE au démarrage du démon, entendue par une seule
+  passerelle : ses signaux par passerelle étaient effacés puis recréés sous
+  d'autres identifiants à chaque redémarrage. Le warning « modèle incomplet ? »
+  précise désormais que les commandes sont laissées en place.
 - **Usage du relais**, dans la page de l'équipement : Prise, Lumière, Verrou
   (1 = verrouillé), Verrou inversé ou Aucun. Il fixe les types génériques des
   relais (`ENERGY_*`, `LIGHT_*`, `LOCK_*` ou rien), dès l'enregistrement. Un
