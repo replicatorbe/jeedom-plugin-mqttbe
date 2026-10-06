@@ -96,6 +96,8 @@ $mqttbeAdapters = array(
     'zigbee2mqtt'   => 'Zigbee2MQTT',
     'homeassistant' => 'Home Assistant Discovery',
     'omg'           => 'OpenMQTTGateway',
+    'espeasy'       => 'ESPEasy',
+    'cameraontv'    => 'CameraOnTv',
 );
 sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
 ?>
@@ -208,7 +210,7 @@ sendVarToJS('mqttbeAdapters', $mqttbeAdapters);
             echo '<li>{{Indiquez son topic de base, par exemple shellies/shelly1pm-A8B0C1000105 : il servira à préremplir le topic des commandes.}}</li>';
             echo '<li>{{Dans l\'onglet « Commandes », ajoutez une information pour lire une valeur, une action pour publier un message, puis enregistrez.}}</li>';
             echo '</ol>';
-            echo '<span class="help-block" style="margin:8px 0 0 0;">{{La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\'instant les Shelly Gen1 et les passerelles OpenMQTTGateway.}}</span>';
+            echo '<span class="help-block" style="margin:8px 0 0 0;">{{La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\'instant les Shelly, les passerelles OpenMQTTGateway, les ESPEasy et l\'application CameraOnTv.}}</span>';
             echo '</div>';
         }
         echo '<div class="input-group" style="margin:5px;">';

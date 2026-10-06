@@ -328,7 +328,7 @@
         "la découverte ne sait pas ce qu\\'ils sont et attend votre décision : une balise de la maison mérite un équipement, le téléphone d\\'un visiteur non.": "discovery does not know what they are and is waiting for your decision: a beacon of the house deserves a device, a visitor's phone does not.",
         "Examiner la liste": "Review the list",
         "appareil(s) écarté(s) — revenir sur un refus": "device(s) ignored — go back on a refusal",
-        "La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\\'instant les Shelly Gen1 et les passerelles OpenMQTTGateway.": "Creating a device by hand remains the way to handle what discovery cannot recognize yet: for now it knows Shelly Gen1 devices and OpenMQTTGateway gateways.",
+        "La création à la main reste le moyen de traiter ce que la découverte ne sait pas encore reconnaître : elle connaît pour l\\'instant les Shelly, les passerelles OpenMQTTGateway, les ESPEasy et l\\'application CameraOnTv.": "Creating a device by hand remains the way to handle what discovery cannot recognize yet: for now it knows Shelly devices, OpenMQTTGateway gateways, ESPEasy devices and the CameraOnTv app.",
         "La découverte est arrêtée : la liste ne s\\'allongera plus, mais ces appareils-là peuvent encore être créés ou écartés.": "Discovery is stopped: the list will not grow any further, but these devices can still be created or ignored.",
         "Usage du relais": "Relay usage",
         "Prise (par défaut)": "Plug (default)",

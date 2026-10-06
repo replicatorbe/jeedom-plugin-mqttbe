@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10 — 6 octobre 2026
+
+- **CameraOnTv** (affichage des caméras sur une TV Android) : découverte
+  automatique. L'application est reconnue à la forme de son `state` retenu
+  (`<racine>/state`, avec `screen` et la liste `cameras`), quelle que soit sa
+  racine. L'équipement « Caméras TV » arrive avec : Connecté, Affiché, Écran,
+  Canal affiché, Caméra affichée, Mode PTZ ; Grille, Quitter, « Afficher
+  caméra » (message : nom ou canal, pour les scénarios) ; un bouton « Afficher
+  <caméra> » par caméra et un réglage « Preset <caméra> » (1 à 10) par caméra
+  PTZ. Les commandes de caméra suivent le canal : une caméra renommée garde sa
+  commande. Changer d'écran ne réécrit pas l'équipement.
+- **ESPEasy** : découverte par le testament MQTT (`<sysname>/status/LWT`).
+
 ## 0.9 — 29 septembre 2026
 
 - **Traceurs Bluetooth à adresse aléatoire statique (Tile…)** : reconnus

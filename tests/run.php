@@ -29,6 +29,7 @@ require_once __DIR__ . '/check-nameprobe.php';
 require_once __DIR__ . '/check-shelly-gen1.php';
 require_once __DIR__ . '/check-shelly-gen2.php';
 require_once __DIR__ . '/check-omg.php';
+require_once __DIR__ . '/check-cameraontv.php';
 /* Ces deux-là ne lisent pas les sources : ils font tourner les classes qui
  * écrivent en base, sur le cœur de papier de tests/faux-coeur.php. */
 require_once __DIR__ . '/check-factory.php';
@@ -75,6 +76,7 @@ $sections = array(
     'Découverte Shelly Gen1'                    => mqttbeControlesShellyGen1(),
     'Découverte Shelly Gen2+'                   => mqttbeControlesShellyGen2(),
     'Découverte OpenMQTTGateway'                => mqttbeControlesOmg(),
+    'Découverte CameraOnTv'                     => mqttbeControlesCameraOnTv(),
     'Fabrique : écriture en base'               => mqttbeControlesFabrique(),
     'Table de routage'                          => mqttbeControlesRoutage(),
 );
