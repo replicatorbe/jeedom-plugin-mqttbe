@@ -20,6 +20,12 @@
   un Shelly BLU H&T « SBHT-203C » n'avait que ses signaux par passerelle. Les
   trames chiffrées ne sont pas lues, et si la passerelle décode elle-même un
   champ, c'est le sien qui est pris.
+- **Shelly passerelle Bluetooth** : le script proposé dans la documentation
+  relaie désormais toutes les balises entendues, et plus seulement les Tile, au
+  format d'OpenMQTTGateway (type d'adresse compris). Les trames Tile sont
+  inchangées. Une même balise part au plus toutes les dix secondes, une
+  nouvelle mesure BTHome tout de suite. Un nouveau capteur Shelly BLU ne
+  demande plus de toucher au script.
 
 ## 0.9 — 29 septembre 2026
 

@@ -27,12 +27,25 @@ commande : adresse IP, version, durée de fonctionnement, mémoire libre, signal
 Wi-Fi, température interne.
 
 **Les trames**, sur `<préfixe>/BTtoMQTT/<adresse de la balise>`, une par balise
-entendue. Le plugin y lit ce qui s'y trouve ; il ne décode rien lui-même.
+entendue, au format d'OpenMQTTGateway. Un traceur Tile :
 
 ```json
 {"id":"d3:46:4c:e6:95:4b","rssi":-62,"brand":"Tile",
  "model":"Smart Tracker","model_id":"TILE","type":"TRACK"}
 ```
+
+Toute autre balise, ici un Shelly BLU H&T :
+
+```json
+{"id":"C0:2C:ED:42:9C:14","mac_type":0,"name":"SBHT-203C",
+ "manufacturerdata":"a90b0101000b11000a149c42ed2cc0","rssi":-60,
+ "servicedata":"40000a01642e3b45d300","servicedatauuid":"0xfcd2"}
+```
+
+`mac_type` n'est pas un détail : 0 pour une adresse publique, 1 pour une adresse
+aléatoire. Sans lui, le plugin prend toute adresse pour fixe, et un téléphone,
+dont l'adresse tourne tous les quarts d'heure, serait proposé à l'adoption sous
+une nouvelle identité à chaque rotation.
 
 ## L'annonce doit être répétée, et ce n'est pas un détail
 
@@ -71,7 +84,8 @@ d'exécution.
 ```js
 // ============================================================
 //  Shelly -> passerelle Bluetooth (émulation OpenMQTTGateway)
-//  Publie les balises Tile vues par la radio BLE de l'appareil.
+//  Publie les balises Tile vues par la radio BLE de l'appareil,
+//  et relaie toutes les autres trames au format OpenMQTTGateway.
 //
 //  À ADAPTER SUR CHAQUE APPAREIL : MQTT_BASE, et lui seul.
 // ============================================================
@@ -87,6 +101,23 @@ let GATEWAY_INTERVAL_MS = 120000;
 // true pour voir chaque trame dans la console. À laisser à false en service :
 // le scan est continu et la console devient illisible.
 let DEBUG = false;
+
+// Les balises autres que Tile. true : toutes, comme une vraie passerelle
+// OpenMQTTGateway. false : seulement les capteurs BTHome (Shelly BLU…).
+let RELAY_ALL = true;
+
+// Une même balise n'est relayée qu'une fois par intervalle : le scan voit
+// chaque appareil toutes les trois secondes, et le plugin n'a besoin que d'un
+// signal frais à la minute. Une NOUVELLE mesure BTHome part tout de suite.
+let RELAY_INTERVAL_MS = 10000;
+
+// En dessous de ce signal, la balise n'est pas relayée (voisinage lointain).
+// -100 : tout passe.
+let RELAY_MIN_RSSI = -100;
+
+// Nombre de balises dont on retient la dernière publication. Au-delà, la plus
+// ancienne est oubliée : elle sera simplement relayée un peu plus tôt.
+let TRACK_SIZE = 40;
 
 let DEVICE = Shelly.getDeviceInfo();
 
@@ -213,24 +244,190 @@ function publishTile(result, tileData) {
     }
 }
 
+// ------------------------------------------------------------
+//  Toutes les autres balises
+// ------------------------------------------------------------
+
+let trackMac = [];
+let trackTime = [];
+let trackSig = [];
+let trackNext = 0;
+
+// Hexadécimal en minuscules, d'une partie d'une chaîne binaire : c'est
+// l'écriture d'OpenMQTTGateway pour manufacturerdata et servicedata.
+function hexRange(data, start, end) {
+    let result = "";
+
+    for (let i = start; i < end; i++) {
+        let h = data.charCodeAt(i).toString(16);
+
+        if (h.length === 1) {
+            h = "0" + h;
+        }
+
+        result = result + h;
+    }
+
+    return result;
+}
+
+// Lit les structures d'une annonce (longueur, type, données) et garde ce
+// qu'OpenMQTTGateway publie : données constructeur et données de service.
+// Les données constructeur gardent leur identifiant en tête, en petit-
+// boutiste (« a90b… » pour Shelly), exactement comme OpenMQTTGateway.
+function parseAdv(data, out) {
+    if (data === undefined || data === null) {
+        return;
+    }
+
+    let i = 0;
+
+    while (i < data.length) {
+        let len = data.charCodeAt(i);
+
+        if (len === 0 || i + 1 + len > data.length) {
+            return;
+        }
+
+        let type = data.charCodeAt(i + 1);
+        let start = i + 2;
+        let end = i + 1 + len;
+
+        if (type === 0xFF && out.mfd === "" && end > start) {
+            out.mfd = hexRange(data, start, end);
+        }
+
+        // Données de service, UUID 16 bits. BTHome (fcd2) l'emporte sur
+        // toute autre : c'est la seule que le plugin sache lire.
+        if (type === 0x16 && end - start >= 2) {
+            let uuid = hexRange(data, start + 1, start + 2) + hexRange(data, start, start + 1);
+
+            if (out.svcUuid === "" || uuid === "fcd2") {
+                out.svcUuid = uuid;
+                out.svc = hexRange(data, start + 2, end);
+            }
+        }
+
+        i = end;
+    }
+}
+
+// Retient la dernière publication d'une balise. Rend true si elle doit
+// partir maintenant.
+function mustRelay(mac, sig, now) {
+    for (let i = 0; i < trackMac.length; i++) {
+        if (trackMac[i] === mac) {
+            let fresh = sig !== "" && sig !== trackSig[i];
+
+            if (!fresh && now - trackTime[i] < RELAY_INTERVAL_MS) {
+                return false;
+            }
+
+            trackTime[i] = now;
+            trackSig[i] = sig;
+            return true;
+        }
+    }
+
+    trackMac[trackNext] = mac;
+    trackTime[trackNext] = now;
+    trackSig[trackNext] = sig;
+    trackNext = (trackNext + 1) % TRACK_SIZE;
+    return true;
+}
+
+function publishOther(result) {
+
+    if (result.rssi < RELAY_MIN_RSSI) {
+        return;
+    }
+
+    let bthome = undefined;
+
+    if (result.service_data !== undefined && result.service_data !== null) {
+        bthome = result.service_data["fcd2"];
+    }
+
+    if (!RELAY_ALL && bthome === undefined) {
+        return;
+    }
+
+    // Une nouvelle mesure BTHome part sans attendre ; la même mesure, répétée
+    // par le capteur, attend l'intervalle comme le reste.
+    let sig = (bthome === undefined) ? "" : toHex(bthome);
+
+    if (!mustRelay(result.addr, sig, Shelly.getUptimeMs())) {
+        return;
+    }
+
+    let adv = { mfd: "", svcUuid: "", svc: "" };
+
+    parseAdv(result.advData, adv);
+    parseAdv(result.scanRsp, adv);
+
+    // Même ordre de champs qu'une passerelle OpenMQTTGateway.
+    let msg = { id: result.addr.toUpperCase() };
+
+    // 0 = adresse publique, 1 = aléatoire. Le plugin s'en sert pour ne pas
+    // créer un équipement par adresse tournante de téléphone.
+    if (result.addr_type === 1) {
+        msg.mac_type = 0;
+    } else if (result.addr_type === 2 || result.addr_type === 3 || result.addr_type === 4) {
+        msg.mac_type = 1;
+    }
+
+    if (result.local_name !== undefined && result.local_name !== null && result.local_name !== "") {
+        msg.name = result.local_name;
+    }
+
+    if (adv.mfd !== "") {
+        msg.manufacturerdata = adv.mfd;
+    }
+
+    msg.rssi = result.rssi;
+
+    if (result.tx_power_level !== undefined && result.tx_power_level !== null) {
+        msg.txpower = result.tx_power_level;
+    }
+
+    if (adv.svcUuid !== "") {
+        msg.servicedata = adv.svc;
+        msg.servicedatauuid = "0x" + adv.svcUuid;
+    }
+
+    let json = JSON.stringify(msg);
+
+    if (DEBUG) {
+        print("BLE: " + json);
+    }
+
+    if (MQTT.isConnected()) {
+        MQTT.publish(
+            MQTT_BASE + "/BTtoMQTT/" + cleanMac(result.addr),
+            json
+        );
+    }
+}
+
 function onScan(event, result) {
 
     if (event !== BLE.Scanner.SCAN_RESULT) {
         return;
     }
 
-    if (result.service_data === undefined ||
-        result.service_data === null) {
-        return;
+    // Les Tile d'abord, et exactement comme avant.
+    if (result.service_data !== undefined &&
+        result.service_data !== null) {
+
+        let tileData = result.service_data["feed"];
+
+        if (tileData !== undefined) {
+            publishTile(result, tileData);
+            return;
+        }
     }
 
-    let tileData = result.service_data["feed"];
-
-    if (tileData === undefined) {
-        return;
-    }
-
-    publishTile(result, tileData);
+    publishOther(result);
 }
 
 print("================================");
@@ -257,7 +454,7 @@ BLE.Scanner.Start(
     onScan
 );
 
-print("Tile scanner started");
+print("BLE scanner started");
 ```
 
 Vous saurez que le bon script tourne à la première ligne `GATEWAY:` de la
@@ -266,13 +463,31 @@ console : **une seule ligne**, contenant l'adresse IP, `freemem`, `rssi` et
 
 ## Ce que ce script fait, et ce qu'il ne fait pas
 
-**Il ne rapporte que les traceurs Tile.** C'est ce que fait `onScan` : il ne
-regarde qu'une seule donnée de service et ignore tout le reste. Une vraie
-passerelle OpenMQTTGateway embarque Theengs et reconnaît des centaines de
-capteurs — thermomètres, hygromètres, capteurs de plante, pèse-personnes. Pour
-en rapporter d'autres ici, il faudrait écrire leur décodage soi-même, dans le
-script. **Ce montage complète une passerelle OpenMQTTGateway, il ne la remplace
-pas.**
+**Il relaie toutes les balises qu'il entend.** Les traceurs Tile sont publiés
+comme avant, reconnus comme tels. Les autres partent telles quelles, comme le
+ferait une passerelle OpenMQTTGateway : données constructeur, données de
+service, signal et type d'adresse. Le script ne décode rien.
+
+**Le plugin lit lui-même les capteurs BTHome v2**, le format ouvert de toute la
+gamme Shelly BLU (H&T, Door/Window, Motion…) : température, humidité, pile,
+luminosité, ouverture, mouvement. Ajouter un tel capteur ne demande aucune
+modification du script : il devient un équipement dès qu'une passerelle
+l'entend. Deux limites : un capteur dont le chiffrement est activé dans
+l'application Shelly reste illisible, faute de clé, et les appuis sur bouton ne
+remontent pas.
+
+Les autres capteurs (Xiaomi, Govee…) arrivent en balises brutes : leurs mesures
+ne viennent que d'une vraie passerelle OpenMQTTGateway, qui embarque Theengs et
+en reconnaît des centaines. **Ce montage complète une passerelle
+OpenMQTTGateway, il ne la remplace pas.**
+
+**Une même balise est relayée au plus toutes les dix secondes**
+(`RELAY_INTERVAL_MS`) : le scan voit chaque appareil toutes les trois secondes,
+et le plugin n'a besoin que d'un signal frais à la minute. Une nouvelle mesure
+BTHome part tout de suite. Sur l'installation d'essai, cela fait entre soixante
+et cent messages par minute et par Shelly. Pour réduire encore,
+`RELAY_ALL = false` ne relaie que les capteurs BTHome, et `RELAY_MIN_RSSI`
+écarte les balises trop lointaines.
 
 **Trois commandes resteront vides**, et c'est normal :
 
