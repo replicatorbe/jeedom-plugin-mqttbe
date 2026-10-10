@@ -20,6 +20,10 @@
   un Shelly BLU H&T « SBHT-203C » n'avait que ses signaux par passerelle. Les
   trames chiffrées ne sont pas lues, et si la passerelle décode elle-même un
   champ, c'est le sien qui est pris.
+- **Curseurs bornés à la main** : la découverte ne réécrit plus les bornes
+  d'un curseur que vous avez changées. Celui qui pousse le curseur de preset
+  d'une caméra de 10 à 20 le retrouve à 20, et non plus à 10 à la découverte
+  suivante. Une borne jamais touchée suit toujours le modèle.
 - **Shelly passerelle Bluetooth** : le script proposé dans la documentation
   relaie désormais toutes les balises entendues, et plus seulement les Tile, au
   format d'OpenMQTTGateway (type d'adresse compris). Les trames Tile sont

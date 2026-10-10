@@ -93,8 +93,8 @@ class MqttbeCameraOnTv implements MqttbeAdapter {
 
     /* Les presets d'une caméra PTZ : l'application ne dit pas combien
      * l'enregistreur en connaît. 1 à 10 couvre l'usage courant ; les bornes
-     * se retouchent sur la commande, et un modèle qui se tait n'y touche plus
-     * (voir mqttbeFactory::applyPlumbing). */
+     * se retouchent sur la commande, et la découverte ne les réécrit plus
+     * ensuite (voir mqttbeFactory::applyPlumbing). */
     const PRESET_MIN = 1;
     const PRESET_MAX = 10;
 

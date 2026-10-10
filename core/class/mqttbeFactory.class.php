@@ -86,6 +86,10 @@ class mqttbeFactory {
     const CONF_GENERATED  = 'mqttbe::generated';
     const CONF_ORPHAN     = 'mqttbe::orphan';
     const CONF_SELECTOR   = 'mqttbe::selector';
+    /* Les bornes de curseur telles que la fabrique les a écrites la dernière
+     * fois. Voir applyPlumbing() : une borne qui n'y est plus égale a été
+     * retouchée à la main, et n'est plus réécrite. */
+    const CONF_SLIDER     = 'mqttbe::slider';
 
     /*
      * Usage du relais, réglé par l'utilisateur sur l'équipement.
@@ -978,16 +982,47 @@ class mqttbeFactory {
              * seul sait ce que l'appareil accepte. Ils ne sont écrits que s'il
              * en parle : une commande déjà bornée à la main n'est pas touchée
              * par un modèle qui se tait.
+             *
+             * Et les deux bornes ne sont pas réécrites non plus quand le modèle
+             * en parle, si l'utilisateur les a changées : un enregistreur qui
+             * connaît vingt presets doit pouvoir pousser le curseur à 20 sans
+             * le voir revenir à 10 à la découverte suivante. La fabrique garde
+             * ce qu'elle a écrit ; une borne qui n'y est plus égale a été
+             * retouchée, et c'est l'utilisateur qui en a la charge. Sans trace
+             * (commande antérieure à ce suivi), la borne est reprise une fois,
+             * comme avant.
              */
             $curseur = array();
             if (isset($_channel['value']['slider']) && is_array($_channel['value']['slider'])) {
                 $curseur = $_channel['value']['slider'];
             }
+            $bornes = array(
+                'minValue' => self::pick(array($curseur), 'min'),
+                'maxValue' => self::pick(array($curseur), 'max'),
+            );
+            $trace = $_cmd->getConfiguration(self::CONF_SLIDER, array());
+            if (!is_array($trace)) {
+                $trace = array();
+            }
+            foreach ($bornes as $borne => $voulue) {
+                if ($voulue === null || $voulue === '') {
+                    continue;
+                }
+                if (!$_isNew && array_key_exists($borne, $trace)
+                    && (string) $trace[$borne] !== (string) $_cmd->getConfiguration($borne, '')) {
+                    $bornes[$borne] = null;
+                    continue;
+                }
+                $trace[$borne] = $voulue;
+            }
+            if (!empty($trace)) {
+                $_cmd->setConfiguration(self::CONF_SLIDER, $trace);
+            }
             self::applyTuning($_cmd, array(
                 'qos'    => isset($sink['qos']) ? (int) $sink['qos'] : null,
                 'retain' => isset($sink['retain']) ? (int) ((bool) $sink['retain']) : null,
-                'minValue'     => self::pick(array($curseur), 'min'),
-                'maxValue'     => self::pick(array($curseur), 'max'),
+                'minValue'     => $bornes['minValue'],
+                'maxValue'     => $bornes['maxValue'],
                 'slider_scale' => self::pick(array($curseur), 'scale'),
                 'slider_round' => self::pick(array($curseur), 'round'),
             ), array('qos' => 0, 'retain' => 0), $_isNew);

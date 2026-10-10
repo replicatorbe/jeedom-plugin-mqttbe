@@ -1291,6 +1291,56 @@ function mqttbeControlesUsageRelais() {
     $resultats[] = mqttbeVerdict($titre, $fautes,
         'la puce d\'un relais passe pour la sonde de la pièce auprès des thermostats et de Google Home.');
 
+    /* ------------------------------------------------------------------------
+     * Les bornes d'un curseur retouchées à la main survivent à la découverte.
+     *
+     * Le curseur de preset d'une caméra PTZ va de 1 à 10 : l'application ne dit
+     * pas combien l'enregistreur en connaît. Celui qui en a vingt pousse la
+     * borne à 20 — et la découverte suivante la ramenait à 10, sans un mot.
+     * -------------------------------------------------------------------- */
+    $titre = 'bornes de curseur retouchées : conservées à la redécouverte';
+    MqttbeFauxCoeur::reinitialise();
+    $fautes = array();
+    $curseur = function ($_max, $_empreinte) {
+        $canal = mqttbeCanalAction('preset', 'generic.slider', 'essai/ptz', '{"value":#slider#}');
+        $canal['value'] = array('slider' => array('min' => 1, 'max' => $_max));
+        return mqttbeModele('essai:curseur', 'Caméras', array($canal), $_empreinte);
+    };
+    mqttbeApplique($curseur(10, 'c-1'));
+    $cmds = mqttbeCommandesDe('essai:curseur');
+    if ((string) $cmds['preset']->getConfiguration('maxValue') !== '10') {
+        $fautes[] = 'borne posée à la création : « ' . $cmds['preset']->getConfiguration('maxValue') . ' » au lieu de 10.';
+    }
+    /* Sans retouche, la borne suit le modèle. */
+    mqttbeApplique($curseur(12, 'c-2'));
+    $cmds = mqttbeCommandesDe('essai:curseur');
+    if ((string) $cmds['preset']->getConfiguration('maxValue') !== '12') {
+        $fautes[] = 'sans retouche, la borne aurait dû suivre le modèle : « ' . $cmds['preset']->getConfiguration('maxValue') . ' ».';
+    }
+    /* L'utilisateur la pousse à 20 ; le modèle repasse, puis change encore. */
+    $cmds['preset']->setConfiguration('maxValue', 20);
+    $cmds['preset']->save();
+    mqttbeApplique($curseur(12, 'c-3'));
+    mqttbeApplique($curseur(15, 'c-4'));
+    $cmds = mqttbeCommandesDe('essai:curseur');
+    if ((string) $cmds['preset']->getConfiguration('maxValue') !== '20') {
+        $fautes[] = 'retouche écrasée par la découverte : « ' . $cmds['preset']->getConfiguration('maxValue') . ' » au lieu de 20.';
+    }
+    if ((string) $cmds['preset']->getConfiguration('minValue') !== '1') {
+        $fautes[] = 'la borne basse, jamais retouchée, a été perdue : « ' . $cmds['preset']->getConfiguration('minValue') . ' ».';
+    }
+    /* Une commande créée avant ce suivi n'a pas de trace : elle est reprise une
+     * fois, comme avant, puis suivie. */
+    $cmds['preset']->setConfiguration(mqttbeFactory::CONF_SLIDER, null);
+    $cmds['preset']->save();
+    mqttbeApplique($curseur(15, 'c-5'));
+    $cmds = mqttbeCommandesDe('essai:curseur');
+    if ((string) $cmds['preset']->getConfiguration('maxValue') !== '15') {
+        $fautes[] = 'commande sans trace : borne non reprise, « ' . $cmds['preset']->getConfiguration('maxValue') . ' ».';
+    }
+    $resultats[] = mqttbeVerdict($titre, $fautes,
+        'un curseur borné à la main revient à sa valeur d\'usine à chaque découverte.');
+
     return $resultats;
 }
 
