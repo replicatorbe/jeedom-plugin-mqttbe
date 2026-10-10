@@ -242,6 +242,9 @@ qu'elle voit, et deux actions — la redémarrer, couper sa radio Bluetooth.
 mesures qu'ils publient réellement : température, humidité, pression, niveau de
 pile. Là encore, rien n'est recopié d'un catalogue — ce qui arrive est ce qui
 est créé.
+Les capteurs au format ouvert **BTHome v2** (Shelly BLU H&T, Door/Window,
+Motion…) sont lus par le plugin lui-même quand la passerelle les relaie sans
+les décoder ; seules les trames chiffrées restent illisibles.
 
 Le cas du **traceur** mérite un mot, parce que c'est le plus utile et le moins
 évident. Un traceur ne mesure rien : il se contente d'exister. Ce que le plugin

@@ -1303,10 +1303,19 @@ function mqttbeControlesOmg() {
      *
      * Décoder est le métier de la passerelle — c'est là qu'est Theengs, avec ses
      * centaines de modèles, mis à jour à chaque version du micrologiciel. Un
-     * catalogue recopié ici serait périmé le jour de son écriture. */
+     * catalogue recopié ici serait périmé le jour de son écriture.
+     *
+     * Une seule fonction échappe à la règle des octets : decodeBthome(), qui
+     * lit un FORMAT standard et ouvert, et non la trame d'un constructeur — voir
+     * l'en-tête de l'adapter. L'exception est bornée à son corps : un pack() ou
+     * un hexdec() n'importe où ailleurs reste une faute. */
     $titre = 'aucun catalogue de balises, aucun décodage de manufacturerdata';
     $fautes = array();
-    $identifiants = mqttbeIdentifiants($source);
+    $horsBthome = preg_replace('/public static function decodeBthome\(.*?\n    \}\n/s', '', $source, 1, $retire);
+    if ($retire !== 1) {
+        $fautes[] = 'decodeBthome() introuvable : l\'exception au décodage ne sait plus où elle s\'arrête.';
+    }
+    $identifiants = mqttbeIdentifiants($horsBthome);
     foreach ($identifiants as $identifiant) {
         if (preg_match('/^(hexdec|bindec|unpack|pack|base_convert|bin2hex|hex2bin)$/i', $identifiant)) {
             $fautes[] = 'l\'adapter appelle ' . $identifiant . '() : décoder une trame est le métier '
@@ -2397,6 +2406,109 @@ function mqttbeControlesOmg() {
     if (mqttbeCompteModelesOmg($ctxW, 'ble:a8b0c100ca02') !== $apresW) {
         $fautes[] = 'un capteur adopté réémet des preuves de vie : il a un équipement, la '
                   . 'question ne se pose pas pour lui, et c\'est autant de messages pour rien.';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
+    /* ----------------------------------------------------------------- 39 ---
+     * BTHOME : CE QUE LA PASSERELLE LAISSE BRUT, L'ADAPTER LE LIT.
+     *
+     * Sur l'installation réelle, un Shelly BLU H&T (« SBHT-203C ») arrivait en
+     * trame brute : la passerelle ne le connaissait pas, et son équipement
+     * n'avait que des RSSI — alors que ses données de service, au format
+     * BTHome v2, portaient température, humidité et pile en clair. La charge
+     * utile ci-dessous est celle de la capture, sous une adresse fabriquée.
+     *
+     * Ce qu'on vérifie : les mesures sortent du bon octet et à la bonne échelle,
+     * une trame chiffrée n'en donne aucune, la balise devient un capteur, ses
+     * commandes lisent le topic d'état, une mesure qui change part sans
+     * attendre la minute — et le jour où la passerelle décode elle-même, son
+     * champ l'emporte. */
+    $titre = 'une trame BTHome brute devient température, humidité et pile';
+    $fautes = array();
+    $attendu = array('batt' => 100, 'hum' => 59, 'tempc' => 21.1);
+    $decode = MqttbeOpenMqttGateway::decodeBthome('40000a01642e3b45d300');
+    if ($decode != $attendu) {
+        $fautes[] = 'décodage : ' . json_encode($decode) . ', attendu ' . json_encode($attendu) . '.';
+    }
+    /* Deux températures et une négative : sint16 en petit-boutiste, et la
+     * seconde occurrence numérotée plutôt qu'écrasée. */
+    $decode = MqttbeOpenMqttGateway::decodeBthome('4002ceff450a00');
+    if ($decode != array('tempc' => -0.5, 'tempc_2' => 1.0)) {
+        $fautes[] = 'températures multiples ou négatives mal lues : ' . json_encode($decode) . '.';
+    }
+    if (MqttbeOpenMqttGateway::decodeBthome('41000a01642e3b45d300') !== null) {
+        $fautes[] = 'une trame CHIFFRÉE est décodée : sans la clé, ce sont des mesures de fantaisie.';
+    }
+    /* Un objet inconnu arrête la lecture : ce qui précède est gardé, ce qui
+     * suit ne peut plus être cru. */
+    $decode = MqttbeOpenMqttGateway::decodeBthome('400164ee012e3b');
+    if ($decode != array('batt' => 100)) {
+        $fautes[] = 'objet inconnu : ' . json_encode($decode) . ', attendu la seule pile.';
+    }
+
+    $adapterB = new MqttbeOpenMqttGateway();
+    $ctxB = new MqttbeContexteEssaiOmg();
+    $macB = 'a8b0c100bb01';
+    $etatB = 'mqttbe/omg/ble/' . $macB . '/state';
+    $trameB = function ($_service, $_rssi) {
+        return '{"id":"A8:B0:C1:00:BB:01","mac_type":0,"adv_type":0,"name":"SBHT-203C",'
+             . '"manufacturerdata":"a90b0101000b11000a01bb00c1b0a8","rssi":' . $_rssi . ','
+             . '"servicedata":"' . $_service . '","servicedatauuid":"0xfcd2"}';
+    };
+    $adapterB->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C100BB01', $trameB('40000a01642e3b45d300', -70), false, $ctxB);
+    $adapterB->onMessage($reperes['ETAGE'] . '/BTtoMQTT/A8B0C100BB01', $trameB('40000a01642e3b45d300', -80), false, $ctxB);
+    $ctxB->avance(1);
+    $adapterB->onTick($ctxB);
+    $modelesB = mqttbeModelesParUidOmg($ctxB);
+    $modeleB = isset($modelesB['ble:' . $macB]) ? $modelesB['ble:' . $macB] : null;
+    if ($modeleB === null) {
+        $fautes[] = 'aucun modèle pour la balise BTHome.';
+    } else {
+        if ($modeleB->confidence() !== 'certain') {
+            $fautes[] = 'confiance « ' . $modeleB->confidence() . ' » : une balise dont on lit les '
+                      . 'mesures est un capteur, pas une candidate.';
+        }
+        foreach (array('tempc' => 'sensor.temperature', 'hum' => 'sensor.humidity',
+                       'batt' => 'battery.level') as $cle => $capacite) {
+            $faute = mqttbeCanalOmg($modeleB, $cle, $capacite, $etatB . ' [' . $cle . ']');
+            if ($faute !== '') {
+                $fautes[] = $faute;
+            }
+        }
+    }
+    $etat = $ctxB->derniereEtat($macB);
+    if (!is_array($etat) || !isset($etat['tempc']) || $etat['tempc'] != 21.1
+        || !isset($etat['hum']) || $etat['hum'] != 59 || !isset($etat['batt']) || $etat['batt'] != 100) {
+        $fautes[] = 'état publié : ' . json_encode($etat) . ' — les mesures décodées n\'y sont pas.';
+    }
+    /* La température monte de deux dixièmes : l'état repart au battement
+     * suivant, pas à la minute. */
+    $avantB = $ctxB->etats($macB);
+    $adapterB->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C100BB01', $trameB('40000b01642e3b45d500', -70), false, $ctxB);
+    $ctxB->avance(1);
+    $adapterB->onTick($ctxB);
+    $etat = $ctxB->derniereEtat($macB);
+    if ($ctxB->etats($macB) !== $avantB + 1 || !isset($etat['tempc']) || $etat['tempc'] != 21.3) {
+        $fautes[] = 'une mesure qui change attend la minute : ' . json_encode($etat) . '.';
+    }
+    /* La même trame relayée par une autre passerelle ne republie rien. */
+    $avantB = $ctxB->etats($macB);
+    $adapterB->onMessage($reperes['ETAGE'] . '/BTtoMQTT/A8B0C100BB01', $trameB('40000b01642e3b45d500', -80), false, $ctxB);
+    $ctxB->avance(1);
+    $adapterB->onTick($ctxB);
+    if ($ctxB->etats($macB) !== $avantB) {
+        $fautes[] = 'une trame identique relayée par une seconde passerelle republie l\'état.';
+    }
+    /* La passerelle se met à décoder : `tempc` repasse sur son topic. */
+    $adapterB->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C100BB01',
+        '{"id":"A8:B0:C1:00:BB:01","mac_type":0,"rssi":-70,"tempc":21.3,"hum":59,"batt":100}', false, $ctxB);
+    $ctxB->avance(1);
+    $adapterB->onTick($ctxB);
+    $modelesB = mqttbeModelesParUidOmg($ctxB);
+    $canal = isset($modelesB['ble:' . $macB]) ? $modelesB['ble:' . $macB]->channel('tempc') : null;
+    if ($canal === null || $canal->sourceTopic() === $etatB) {
+        $fautes[] = 'la passerelle décode désormais la température, mais la commande lit encore '
+                  . 'le décodage local : ' . mqttbeDecritCanalOmg($canal) . '.';
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 

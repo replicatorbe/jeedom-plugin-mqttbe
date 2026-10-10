@@ -12,6 +12,14 @@
   PTZ. Les commandes de caméra suivent le canal : une caméra renommée garde sa
   commande. Changer d'écran ne réécrit pas l'équipement.
 - **ESPEasy** : découverte par le testament MQTT (`<sysname>/status/LWT`).
+- **Capteurs Bluetooth BTHome** (Shelly BLU H&T, Door/Window, Motion…) :
+  leurs mesures sont lues même quand la passerelle OpenMQTTGateway ne les
+  décode pas. BTHome v2 est un format ouvert (UUID `0xFCD2`) : le plugin lit
+  les données de service en clair et publie température, humidité, pile,
+  luminosité, ouverture, mouvement… sur le topic d'état de la balise. Avant,
+  un Shelly BLU H&T « SBHT-203C » n'avait que ses signaux par passerelle. Les
+  trames chiffrées ne sont pas lues, et si la passerelle décode elle-même un
+  champ, c'est le sien qui est pris.
 
 ## 0.9 — 29 septembre 2026
 

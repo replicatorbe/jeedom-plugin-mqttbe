@@ -196,6 +196,9 @@ actions — restart it, switch its Bluetooth radio off.
 **The sensors it decodes** each become a device, carrying the readings they
 actually publish: temperature, humidity, pressure, battery level. Here too
 nothing is copied from a catalog — what arrives is what gets created.
+Sensors using the open **BTHome v2** format (Shelly BLU H&T, Door/Window,
+Motion…) are read by the plugin itself when the gateway relays them undecoded;
+only encrypted frames stay unreadable.
 
 The **tracker** deserves a word, being the most useful case and the least
 obvious. A tracker measures nothing: it merely exists. What the plugin makes of

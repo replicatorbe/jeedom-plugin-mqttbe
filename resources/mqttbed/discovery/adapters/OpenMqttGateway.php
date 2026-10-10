@@ -52,6 +52,22 @@ if (!interface_exists('MqttbeAdapter')) {
  * plugin — et un champ que personne n'a prévu devient une valeur générique
  * plutôt que d'être jeté.
  *
+ * UNE SEULE EXCEPTION, ET ELLE N'EST PAS UN CATALOGUE : BTHome v2.
+ *
+ * BTHome est un FORMAT standard et ouvert (bthome.io), porté par les données de
+ * service de l'UUID 0xFCD2, et non la trame d'un constructeur. Chaque mesure y
+ * est précédée d'un identifiant d'objet qui dit ce qu'elle est, sa taille et son
+ * échelle : le décoder ne demande de connaître aucun appareil. Or la passerelle
+ * ne le décode que pour les modèles que Theengs a nommés un à un — sur
+ * l'installation réelle, un Shelly BLU H&T « SBHT-203C » arrivait brut, et son
+ * équipement n'avait que des RSSI alors que la trame portait température,
+ * humidité et pile en clair. Voir decodeBthome().
+ *
+ * Ce que l'adapter en tire passe par le topic d'état qu'il publie déjà (voir
+ * RACINE_ETAT), sous les noms de champs que Theengs emploie : la table ci-dessous
+ * les traduit comme si la passerelle les avait décodés. Et le jour où elle le
+ * fait pour de bon, son champ l'emporte et le décodage local s'efface.
+ *
  * AUCUNE DÉPENDANCE À UN AUTRE SYSTÈME DOMOTIQUE. La passerelle publie aussi,
  * sur une branche à part, des messages de découverte destinés à un autre
  * logiciel : ils ne sont ni écoutés, ni lus, ni même nommés ici. Les en lire
@@ -420,6 +436,14 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             'motion'   => array('presence.detected',  '',    'Mouvement',        null, null),
             'open'     => array('contact.open',       '',    'Ouverture',        null, null),
             'contact'  => array('contact.open',       '',    'Contact',          null, null),
+            /* Les capteurs binaires de BTHome qui ont une capacité à eux. Voir
+             * decodeBthome() : ces noms sont ceux qu'il donne. */
+            'door'      => array('contact.open',      '',    'Porte',            null, null),
+            'window'    => array('contact.open',      '',    'Fenêtre',          null, null),
+            'smoke'     => array('alarm.smoke',       '',    'Fumée',            null, null),
+            'leak'      => array('alarm.water_leak',  '',    'Fuite d\'eau',     null, null),
+            'gas_alarm' => array('alarm.gas',         '',    'Gaz',              null, null),
+            'tamper'    => array('alarm.sabotage',    '',    'Sabotage',         null, null),
         );
     }
 
@@ -487,7 +511,206 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
     /* Une unité pour quelques champs qui n'ont pas de capacité à eux : la
      * valeur reste générique, mais elle s'affiche avec ce qu'elle mesure. */
     private static function unitesGeneriques() {
-        return array('distance' => 'm', 'txpower' => 'dBm', 'mfid' => '');
+        return array(
+            'distance' => 'm', 'txpower' => 'dBm', 'mfid' => '',
+            /* Ce que decodeBthome() peut rendre sans capacité dédiée. */
+            'power' => 'W', 'energy' => 'kWh', 'current' => 'A', 'dewpoint' => '°C',
+            'pm25' => 'µg/m³', 'pm10' => 'µg/m³', 'tvoc' => 'µg/m³',
+            'mass_kg' => 'kg', 'mass_lb' => 'lb', 'distance_mm' => 'mm',
+            'duration' => 's', 'speed' => 'm/s', 'rotation' => '°', 'direction' => '°',
+            'volume' => 'L', 'volume_ml' => 'mL', 'volume_storage' => 'L', 'water' => 'L',
+            'flow' => 'm³/h', 'gas' => 'm³', 'precipitation' => 'mm',
+            'conductivity' => 'µS/cm', 'rpm' => 'tr/min',
+            'accel' => 'm/s²', 'gyro' => '°/s',
+        );
+    }
+
+    /*
+     * BTHome v2 : identifiant d'objet => array(champ, octets, signé, facteur).
+     *
+     * Recopié de la spécification (bthome.io/format), et non d'un appareil : la
+     * table ne nomme aucun modèle. La TAILLE est ce qui compte le plus — les
+     * objets se suivent sans séparateur, et une seule longueur fausse décalerait
+     * toute la suite de la trame. Un objet inconnu arrête donc la lecture : on
+     * garde ce qui précède, et rien de ce qui suit ne peut plus être cru.
+     *
+     * Un champ `null` est lu, pour avancer, mais pas retenu :
+     *   0x00        le numéro de paquet, qui change à chaque trame ;
+     *   0x3A, 0x3C  les événements de bouton et de variateur. Le topic d'état
+     *               est RETENU : un appui y serait rejoué à chaque redémarrage
+     *               du démon, et déclencherait un scénario des semaines après le
+     *               geste ;
+     *   0x50, 0x65, 0xF0-0xF2  horodatage, révision de réglages, type et
+     *               version d'appareil : ils décrivent la trame, pas la mesure.
+     *
+     * Les noms rejoignent ceux de Theengs quand il en a un (`tempc`, `hum`,
+     * `batt`, `volt`…), pour que la table ci-dessus les traduise de la même
+     * façon. `presence` est écarté : c'est un nom que l'adapter réserve (voir
+     * champsPresence), d'où `present`.
+     */
+    private static function objetsBthome() {
+        return array(
+            0x00 => array(null, 1, false, 1),
+            0x01 => array('batt', 1, false, 1),
+            0x02 => array('tempc', 2, true, 0.01),
+            0x03 => array('hum', 2, false, 0.01),
+            0x04 => array('pres', 3, false, 0.01),
+            0x05 => array('lux', 3, false, 0.01),
+            0x06 => array('mass_kg', 2, false, 0.01),
+            0x07 => array('mass_lb', 2, false, 0.01),
+            0x08 => array('dewpoint', 2, true, 0.01),
+            0x09 => array('count', 1, false, 1),
+            0x0A => array('energy', 3, false, 0.001),
+            0x0B => array('power', 3, false, 0.01),
+            0x0C => array('volt', 2, false, 0.001),
+            0x0D => array('pm25', 2, false, 1),
+            0x0E => array('pm10', 2, false, 1),
+            0x0F => array('binary', 1, false, 1),
+            0x10 => array('power_on', 1, false, 1),
+            0x11 => array('open', 1, false, 1),
+            0x12 => array('co2', 2, false, 1),
+            0x13 => array('tvoc', 2, false, 1),
+            0x14 => array('moi', 2, false, 0.01),
+            0x15 => array('batt_low', 1, false, 1),
+            0x16 => array('charging', 1, false, 1),
+            0x17 => array('co', 1, false, 1),
+            0x18 => array('cold', 1, false, 1),
+            0x19 => array('connectivity', 1, false, 1),
+            0x1A => array('door', 1, false, 1),
+            0x1B => array('garage_door', 1, false, 1),
+            0x1C => array('gas_alarm', 1, false, 1),
+            0x1D => array('heat', 1, false, 1),
+            0x1E => array('light', 1, false, 1),
+            0x1F => array('lock', 1, false, 1),
+            0x20 => array('leak', 1, false, 1),
+            0x21 => array('motion', 1, false, 1),
+            0x22 => array('moving', 1, false, 1),
+            0x23 => array('occupancy', 1, false, 1),
+            0x24 => array('plug', 1, false, 1),
+            0x25 => array('present', 1, false, 1),
+            0x26 => array('problem', 1, false, 1),
+            0x27 => array('running', 1, false, 1),
+            0x28 => array('safety', 1, false, 1),
+            0x29 => array('smoke', 1, false, 1),
+            0x2A => array('sound', 1, false, 1),
+            0x2B => array('tamper', 1, false, 1),
+            0x2C => array('vibration', 1, false, 1),
+            0x2D => array('window', 1, false, 1),
+            0x2E => array('hum', 1, false, 1),
+            0x2F => array('moi', 1, false, 1),
+            0x3A => array(null, 1, false, 1),
+            0x3C => array(null, 2, false, 1),
+            0x3D => array('count', 2, false, 1),
+            0x3E => array('count', 4, false, 1),
+            0x3F => array('rotation', 2, true, 0.1),
+            0x40 => array('distance_mm', 2, false, 1),
+            0x41 => array('distance', 2, false, 0.1),
+            0x42 => array('duration', 3, false, 0.001),
+            0x43 => array('current', 2, false, 0.001),
+            0x44 => array('speed', 2, false, 0.01),
+            0x45 => array('tempc', 2, true, 0.1),
+            0x46 => array('uv', 1, false, 0.1),
+            0x47 => array('volume', 2, false, 0.1),
+            0x48 => array('volume_ml', 2, false, 1),
+            0x49 => array('flow', 2, false, 0.001),
+            0x4A => array('volt', 2, false, 0.1),
+            0x4B => array('gas', 3, false, 0.001),
+            0x4C => array('gas', 4, false, 0.001),
+            0x4D => array('energy', 4, false, 0.001),
+            0x4E => array('volume', 4, false, 0.001),
+            0x4F => array('water', 4, false, 0.001),
+            0x50 => array(null, 4, false, 1),
+            0x51 => array('accel', 2, false, 0.001),
+            0x52 => array('gyro', 2, false, 0.001),
+            /* 0x53 (texte) et 0x54 (brut) : longueur variable, annoncée par
+             * l'octet qui suit l'identifiant. Voir decodeBthome(). */
+            0x53 => array(null, -1, false, 1),
+            0x54 => array(null, -1, false, 1),
+            0x55 => array('volume_storage', 4, false, 0.001),
+            0x56 => array('conductivity', 2, false, 1),
+            0x57 => array('tempc', 1, true, 1),
+            0x58 => array('tempc', 1, true, 0.35),
+            0x59 => array('count', 1, true, 1),
+            0x5A => array('count', 2, true, 1),
+            0x5B => array('count', 4, true, 1),
+            0x5C => array('power', 4, true, 0.01),
+            0x5D => array('current', 2, true, 0.001),
+            0x5E => array('direction', 2, false, 0.01),
+            0x5F => array('precipitation', 2, false, 0.1),
+            0x60 => array('channel', 1, false, 1),
+            0x61 => array('rpm', 2, false, 1),
+            0x62 => array('speed', 4, true, 0.000001),
+            0x63 => array('accel', 4, true, 0.000001),
+            0x64 => array('light_level', 1, false, 1),
+            0x65 => array(null, 1, false, 1),
+            0xF0 => array(null, 2, false, 1),
+            0xF1 => array(null, 4, false, 1),
+            0xF2 => array(null, 3, false, 1),
+        );
+    }
+
+    /* L'UUID de service de BTHome, tel que la passerelle l'écrit. */
+    const UUID_BTHOME = 'fcd2';
+
+    /*
+     * Les mesures d'une trame BTHome v2 en clair, ou null.
+     *
+     * null quand ce n'est pas du BTHome v2 lisible : version 1 (un autre
+     * format, sur d'autres UUID), ou trame CHIFFRÉE — sans la clé de
+     * l'appareil, ses octets ne disent rien, et les lire quand même donnerait
+     * des mesures de fantaisie. Un tableau vide est une réponse valable : une
+     * trame qui ne porte que le numéro de paquet.
+     *
+     * Un objet présent deux fois — deux sondes de température — garde la
+     * première sous son nom et numérote les suivantes : `tempc`, `tempc_2`.
+     */
+    public static function decodeBthome($_hex) {
+        $hex = strtolower(preg_replace('/[^0-9A-Fa-f]/', '', (string) $_hex));
+        if ($hex === '' || strlen($hex) % 2 !== 0) {
+            return null;
+        }
+        $octets = array_values(unpack('C*', pack('H*', $hex)));
+        $info = $octets[0];
+        if (($info & 0x01) !== 0 || (($info >> 5) & 0x07) !== 2) {
+            return null;
+        }
+        $objets  = self::objetsBthome();
+        $mesures = array();
+        $n = count($octets);
+        $i = 1;
+        while ($i < $n) {
+            $id = $octets[$i++];
+            if (!isset($objets[$id])) {
+                break;
+            }
+            list($champ, $taille, $signe, $facteur) = $objets[$id];
+            if ($taille < 0) {
+                if ($i >= $n) {
+                    break;
+                }
+                $taille = 1 + $octets[$i];
+            }
+            if ($i + $taille > $n) {
+                break;
+            }
+            $valeur = 0;
+            for ($k = $taille - 1; $k >= 0; $k--) {
+                $valeur = ($valeur << 8) | $octets[$i + $k];
+            }
+            if ($signe && $valeur >= (1 << (8 * $taille - 1))) {
+                $valeur -= (1 << (8 * $taille));
+            }
+            $i += $taille;
+            if ($champ === null) {
+                continue;
+            }
+            $nom = $champ;
+            for ($rang = 2; isset($mesures[$nom]); $rang++) {
+                $nom = $champ . '_' . $rang;
+            }
+            $mesures[$nom] = ($facteur == 1) ? $valeur : round($valeur * $facteur, 6);
+        }
+        return $mesures;
     }
 
     /* Les clés de canal que l'adapter se réserve pour ce qu'il calcule. Un
@@ -1048,6 +1271,12 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             if (isset($techniques[$champ]) || is_array($valeur) || $valeur === null) {
                 continue;
             }
+            /* La passerelle décode elle-même ce que l'adapter décodait : son
+             * champ l'emporte, et la commande repasse sur son topic. */
+            if (isset($dossier['bthome'][$champ])) {
+                unset($dossier['bthome'][$champ], $dossier['mesures'][$champ]);
+                continue;
+            }
             if (isset($dossier['champs'][$champ])) {
                 continue;
             }
@@ -1063,6 +1292,35 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
              * textuelle sinon. La différence se voit sur le tableau de bord —
              * une valeur numérique se trace, se compare et se moyenne. */
             $dossier['champs'][$champ] = is_numeric($valeur) ? 'n' : 's';
+        }
+
+        /*
+         * Une trame BTHome que la passerelle a laissée brute : l'adapter la lit
+         * lui-même. Voir l'en-tête et decodeBthome().
+         *
+         * Les champs entrent dans `champs` comme ceux de la passerelle — ils
+         * font la confiance, la pile et les commandes — et sont marqués dans
+         * `bthome`, qui dit que leur valeur se lit sur le topic d'état et non
+         * sur celui de la passerelle. La valeur elle-même attend dans
+         * `mesures` : rien ne se publie d'ici, c'est le battement qui la pose
+         * sur le broker (voir suitBalise).
+         */
+        $uuid = strtolower(preg_replace('/^0x/i', '', $this->texte($trame, 'servicedatauuid')));
+        if ($uuid === self::UUID_BTHOME && $this->texte($trame, 'servicedata') !== '') {
+            $mesures = self::decodeBthome($this->texte($trame, 'servicedata'));
+            foreach ((is_array($mesures) ? $mesures : array()) as $champ => $valeur) {
+                if (isset($dossier['champs'][$champ]) && !isset($dossier['bthome'][$champ])) {
+                    continue;
+                }
+                if (!isset($dossier['champs'][$champ])) {
+                    if (count($dossier['champs']) >= self::MAX_CHAMPS) {
+                        continue;
+                    }
+                    $dossier['champs'][$champ] = 'n';
+                }
+                $dossier['bthome'][$champ]  = true;
+                $dossier['mesures'][$champ] = $valeur;
+            }
         }
         if (isset($dossier['champs']['batt'])) {
             $dossier['pile'] = true;
@@ -1308,6 +1566,16 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
              * exact où l'utilisateur vient chercher son objet. */
             'seen'     => date('Y-m-d H:i:s', (int) $this->nombre($dossier, 'vu', 0)),
         );
+        /* Et ce que l'adapter a décodé lui-même d'une trame BTHome : ces
+         * valeurs n'existent sur aucun topic de la passerelle. Les trois clés
+         * ci-dessus ne sont pas des noms que decodeBthome() puisse rendre. */
+        $mesures = (isset($dossier['mesures']) && is_array($dossier['mesures']))
+                 ? $dossier['mesures'] : array();
+        foreach ($mesures as $champ => $valeur) {
+            if (!isset($etat[$champ])) {
+                $etat[$champ] = $valeur;
+            }
+        }
         $texte = json_encode($etat, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $avant = isset($dossier['etat']) ? (string) $dossier['etat'] : '';
         $quand = $this->nombre($dossier, 'etatQuand', 0);
@@ -1352,15 +1620,24 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         $this->emetBalise($_ctx, $_mac, $_reglages);
     }
 
-    /* Présence ou pièce : les deux champs qui ne peuvent pas attendre. */
+    /* Tout sauf la date de dernière vue : présence, pièce et mesures ne
+     * peuvent pas attendre. Une mesure ne change qu'avec la grandeur qu'elle
+     * suit — une trame identique, relayée par trois passerelles, n'en est pas
+     * une — et un thermomètre qui attendrait la minute serait toujours en
+     * retard d'une valeur. */
     private function changeEtat($_avant, $_etat) {
         $ancien = json_decode($_avant, true);
         if (!is_array($ancien)) {
             return true;
         }
-        $presence = isset($ancien['presence']) ? (int) $ancien['presence'] : -1;
-        $proche   = isset($ancien['nearest']) ? (string) $ancien['nearest'] : '';
-        return ($presence !== (int) $_etat['presence']) || ($proche !== (string) $_etat['nearest']);
+        unset($ancien['seen'], $_etat['seen']);
+        $ancien['presence'] = isset($ancien['presence']) ? (int) $ancien['presence'] : -1;
+        $ancien['nearest']  = isset($ancien['nearest']) ? (string) $ancien['nearest'] : '';
+        $_etat['presence']  = (int) $_etat['presence'];
+        $_etat['nearest']   = (string) $_etat['nearest'];
+        ksort($ancien);
+        ksort($_etat);
+        return $ancien != $_etat;
     }
 
     /*
@@ -2101,9 +2378,12 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
                     $unite    = isset($unites[$champ]) ? $unites[$champ] : '';
                     $nomCanal = $champ;
                 }
+                /* Décodé par l'adapter : la valeur est sur le topic d'état, pas
+                 * sur celui de la passerelle, qui n'en porte que l'hexadécimal. */
+                $source = isset($_dossier['bthome'][$champ]) ? $etat : $filtre;
                 $modele->addChannel(new MqttbeChannel(array(
                     'key' => $cle, 'capability' => $capacite, 'name' => $nomCanal, 'unit' => $unite,
-                    'source' => array('topic' => $filtre,
+                    'source' => array('topic' => $source,
                                       'selector' => array('type' => 'json', 'path' => $champ)),
                     'value'  => $valeur,
                 )));
@@ -2177,6 +2457,11 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         }
         $champs = array_keys($_dossier['champs']);
         sort($champs, SORT_STRING);
+        /* Un champ qui passe du décodage local à celui de la passerelle change
+         * de topic : le modèle doit repartir. */
+        $locaux = isset($_dossier['bthome']) && is_array($_dossier['bthome'])
+                ? array_keys($_dossier['bthome']) : array();
+        sort($locaux, SORT_STRING);
         return implode('|', array(
             $this->texte($_dossier, 'nom'),
             $this->texte($_dossier, 'modele'),
@@ -2191,6 +2476,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
              * équipement, et Jeedom doit l'apprendre. */
             $this->texte($_dossier, 'confiance'),
             implode(',', $champs),
+            implode(',', $locaux),
             implode(',', $gws),
         ));
     }
