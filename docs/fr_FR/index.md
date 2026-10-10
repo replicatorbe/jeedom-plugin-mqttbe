@@ -7,6 +7,11 @@ et en déduit les équipements, leurs commandes, leurs unités et leurs types
 génériques — ceux qui permettent à Jeedom de savoir qu'une valeur est une
 température, une puissance ou l'état d'une prise.
 
+Il reconnaît aujourd'hui les Shelly, de la génération 1 à la génération 4, les
+passerelles OpenMQTTGateway et les balises Bluetooth qu'elles entendent, BTHome
+comprises, les modules ESPEasy et l'application CameraOnTv. Le reste se crée à
+la main.
+
 ## Ce que le plugin sait faire aujourd'hui
 
 **Les Shelly de première génération sont découverts et créés automatiquement.**
@@ -43,7 +48,7 @@ leur demande ce qu'ils savent faire, ils répondent, et tout cela passe par le
 broker MQTT, sans qu'aucune requête ne parte vers l'appareil par un autre
 chemin.
 
-Trois conséquences pratiques, et il vaut mieux les connaître :
+Quelques conséquences pratiques, et il vaut mieux les connaître :
 
 - **il n'y a rien à régler sur l'appareil**, hormis activer MQTT — ce que vous
   devez faire de toute façon. Les réglages « notifications RPC » et « contrôle
@@ -56,6 +61,12 @@ Trois conséquences pratiques, et il vaut mieux les connaître :
   par lui poser des questions ; s'il reste muet, il lui demande simplement de
   s'annoncer et de publier son état, ce à quoi un Shelly répond même quand ses
   appels RPC ont été désactivés ;
+- **les appareils sur secteur sont interrogés régulièrement.** Un Shelly
+  moderne ne publie que ce qui change : un relais qui ne bouge pas ne dit
+  jamais s'il est ouvert ou fermé. Le plugin lui demande donc son état complet
+  au démarrage du démon, après chaque reconnexion au broker, puis toutes les
+  dix minutes. Il passe pour cela par le « contrôle MQTT », actif d'usine : là
+  encore, rien à régler ;
 - **le nom que vous avez donné à l'appareil dans l'application Shelly est
   repris**, ainsi que celui de chaque sortie s'il y en a plusieurs. Le plugin
   n'a pas besoin d'aller le chercher sur l'appareil comme il le fait pour la
@@ -66,6 +77,16 @@ Trois conséquences pratiques, et il vaut mieux les connaître :
   contrepartie, ces appareils-là n'ont pas d'indicateur « connecté » : leur
   liaison est coupée à chaque sommeil, et l'afficher reviendrait à les déclarer
   en panne vingt-trois heures sur vingt-quatre.
+
+**Les modules ESPEasy sont reconnus à leur testament MQTT.** Un capteur fait
+maison sous ESPEasy devient un équipement avec ses mesures — température,
+humidité, pression, CO2, luminosité — et son état de connexion. Le détail est
+plus bas.
+
+**L'application CameraOnTv est découverte aussi.** Cette application affiche
+les caméras d'un enregistreur sur une télévision Android. Elle devient un
+équipement qui dit ce que la TV affiche, et qui porte un bouton par caméra. Le
+détail est plus bas, lui aussi.
 
 **Tout le reste se crée à la main**, et le plugin s'y prête : n'importe quel
 appareil qui publie sur MQTT peut devenir un équipement Jeedom complet, à
@@ -86,13 +107,13 @@ Autant le dire tout de suite, pour que personne n'attende en vain :
   qu'un Shelly réel répond ainsi. Si l'un d'eux ne se présente pas comme il le
   devrait, c'est un défaut attendu et non une surprise — signalez-le, il sera
   corrigé ;
-- **les valeurs d'un Gen2 ne sont pas rafraîchies au redémarrage de Jeedom.**
-  Un Gen2 n'annonce ses mesures qu'au moment où elles changent, et rien de ce
-  qu'il publie n'est conservé par le broker. Les commandes gardent donc la
-  dernière valeur connue jusqu'à ce que l'appareil reparle — immédiatement pour
-  un compteur d'énergie, au premier changement d'état pour un interrupteur. Il
-  n'existe aucun moyen de faire mieux sans modifier la configuration de
-  l'appareil, ce que le plugin s'interdit ;
+- **un Gen2+ sur pile n'est pas rafraîchi au redémarrage du démon.** Les
+  appareils sur secteur, eux, le sont : le plugin leur demande leur état complet
+  au démarrage, à chaque reconnexion, puis toutes les dix minutes. Un capteur
+  sur pile n'est jamais réveillé pour cela. Ses commandes gardent la dernière
+  valeur connue jusqu'à son prochain réveil. Il en va de même pour un appareil
+  dont l'inventaire n'a pas encore été lu en entier : tant que le plugin ne sait
+  pas s'il est sur pile, il ne l'interroge pas ;
 - **les appuis sur les boutons d'un Gen2 ne sont pas séparés entrée par
   entrée.** L'appareil annonce l'événement et le composant concerné dans un
   même message ; le plugin en fait deux commandes, *Dernier événement* et
@@ -131,8 +152,9 @@ manuelle : ils ne se créeront simplement pas tout seuls.
    surveillance du plugin.
 6. **Revenez sur la page du plugin.** La pastille *Démon* passe à « En marche »,
    la pastille *Broker* à « Connecté », et les Shelly apparaissent dans les
-   secondes qui suivent — au démarrage, le plugin demande à toute la génération 1
-   de se présenter. Les équipements se créent sans qu'il soit nécessaire de
+   secondes qui suivent — au démarrage, le plugin demande à tout le parc Shelly
+   de se présenter, et les générations 2 et suivantes se signalent aussi par
+   leur message de présence, que le broker garde. Les équipements se créent sans qu'il soit nécessaire de
    recharger la page ; un bandeau vert vous dit combien en sont arrivés.
 
 Si rien n'apparaît alors que vos Shelly fonctionnent, c'est presque toujours le
@@ -310,6 +332,107 @@ appareil vu depuis longtemps, avec une adresse stable, garde sa place.
 Enfin, la file n'est pas réservée au Bluetooth. Elle reçoit aussi ce que la
 découverte n'a pas créé pour une autre raison : la création automatique est
 décochée, ou le plafond d'équipements est atteint.
+
+## Les modules ESPEasy
+
+ESPEasy est un micrologiciel libre pour les modules ESP8266 et ESP32. Il n'a
+pas de topic d'annonce : rien, sur le broker, ne dit « je suis un ESPEasy ». Le
+plugin le reconnaît à son testament MQTT, publié sur
+`<nom système>/status/LWT` avec les valeurs `Connected`, `Connection Lost` ou
+`disconnect`. Ce message est conservé par le broker : au démarrage du démon,
+tout le parc se signale d'un coup, même un module branché depuis des mois.
+
+Dès qu'il voit ce testament, le plugin écoute les valeurs de ce module-là, et
+de lui seul, sur `<nom système>/<tâche>/<valeur>`. Chaque topic porte une
+mesure, un nombre brut. Une dizaine de secondes plus tard, l'équipement est
+créé avec ce qui est arrivé. Une mesure qui apparaît plus tard s'y ajoute.
+
+L'équipement s'appelle « ESPEasy » suivi du nom système, et porte :
+
+- **Connecté**, lu sur le testament ;
+- une commande par mesure reconnue, d'après le nom de la valeur, sans tenir
+  compte des majuscules :
+
+| Nom de la valeur | Commande | Unité |
+|---|---|---|
+| `Temperature`, `Temp` | Température | °C |
+| `TemperatureCO` | Température capteur (type « Info générique ») | °C |
+| `Humidity`, `Hum` | Humidité | % |
+| `Pressure` | Pression | hPa |
+| `ppm`, `CO2` | CO2 | ppm |
+| `Luminosity`, `Lux` | Luminosité | lx |
+
+Ce que le plugin ne fait pas, et pourquoi :
+
+- **les autres valeurs sont ignorées**, plutôt que de remplir l'équipement de
+  commandes dont personne ne saurait quoi faire. La tension brute `U` d'une
+  sonde MH-Z19, par exemple, ne crée rien. Pour la lire, ajoutez une commande à
+  la main sur l'équipement ;
+- **un module sans aucune mesure reconnue n'est pas créé** : il va dans la file
+  d'adoption, avec sa seule commande *Connecté*. À vous de trancher ;
+- **aucune action n'est créée.** Un relais ou une sortie pilotés par ESPEasy se
+  déclarent à la main ;
+- **le nom reste le nom système.** ESPEasy ne publie pas d'autre nom sur MQTT,
+  et le plugin n'envoie aucune requête au module pour le chercher. Renommez
+  l'équipement dans Jeedom si besoin : la découverte n'y touchera plus ;
+- **le format des topics doit être le format court.** Un testament publié
+  ailleurs que sur `<nom système>/status/LWT`, ou des valeurs sur plus ou moins
+  de trois niveaux, ne sont pas reconnus. Les topics publiés sous
+  `homeassistant/` sont ignorés, de même qu'un topic qui contient encore un
+  `%valname%` ou un `%tskname%` non remplacé ;
+- **les noms trop longs ou exotiques sont écartés.** Le nom système ne doit
+  contenir que des lettres, des chiffres, `.`, `_` ou `-`, et pas plus de 64
+  caractères. Les noms de tâche et de valeur suivent la même règle, à 40
+  caractères ;
+- **deux modules qui portent le même nom système** ne font qu'un équipement :
+  sur le broker, rien ne permet de les distinguer. Le nom système doit donc
+  être unique.
+
+## L'application CameraOnTv
+
+CameraOnTv tourne sur une télévision Android et y affiche les caméras d'un
+enregistreur. Elle se pilote par MQTT, sous une racine choisie dans ses
+réglages : `cameratv` par défaut.
+
+Le plugin la reconnaît à son état, publié et conservé sur `<racine>/state` :
+un message JSON qui porte à la fois l'écran courant (`screen`) et la liste des
+caméras (`cameras`). C'est la forme du message qui compte, pas le nom de la
+racine : une deuxième TV réglée sur `cameratv-chambre` est découverte de la
+même façon. Rien n'est demandé à l'application : le broker rejoue son état dès
+l'abonnement.
+
+L'équipement s'appelle « Caméras TV », ou « Caméras TV » suivi de la racine
+quand celle-ci n'est pas `cameratv`. Il porte :
+
+- en informations : **Connecté** (lu sur `<racine>/online`), **Affiché**,
+  **Écran**, **Canal affiché**, **Caméra affichée** et **Mode PTZ** ;
+- **Grille**, qui affiche la mosaïque, et **Quitter**, qui rend l'écran à la
+  TV ;
+- **Afficher caméra**, une action message pensée pour les scénarios : le
+  message est le nom de la caméra (`garage`) ou son canal (`3`). Il est publié
+  tel quel sur `<racine>/cmd/show` ;
+- un bouton **Afficher <caméra>** par caméra de la liste ;
+- un curseur **Preset <caméra>** par caméra motorisée (PTZ), qui envoie la
+  caméra sur l'une de ses positions enregistrées, de 1 à 10.
+
+Les noms des caméras viennent de l'enregistreur : vous n'avez rien à recopier.
+Les commandes de caméra suivent le **canal**, pas le nom : une caméra renommée
+dans l'enregistreur garde sa commande, et les scénarios qui s'en servent.
+Changer d'écran avec la télécommande ne réécrit pas l'équipement : seules les
+informations changent.
+
+Les limites :
+
+- **les presets sont la seule commande PTZ.** Ni déplacement, ni zoom. Et
+  l'application ne dit pas combien de positions l'enregistreur connaît : le
+  curseur s'arrête à 10, quel que soit leur nombre réel ;
+- **les boutons par caméra n'ont pas de durée** : la caméra reste affichée
+  jusqu'au geste suivant ;
+- **la liste est plafonnée à 64 caméras**, et un nom de plus de 60 caractères
+  est tronqué. Une entrée sans canal ou sans nom est ignorée, tout comme un
+  canal qui figure deux fois ;
+- **la racine** ne doit contenir que des lettres, des chiffres, `.`, `_` ou
+  `-`, et tenir sur un seul niveau de topic.
 
 ## Les autres réglages
 

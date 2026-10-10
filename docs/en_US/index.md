@@ -7,6 +7,10 @@ works out the devices, their commands, their units and their generic types — t
 ones that let Jeedom know a value is a temperature, a power reading or the state
 of a switch.
 
+Today it recognises Shelly devices, from generation 1 to generation 4,
+OpenMQTTGateway gateways and the Bluetooth beacons they hear, BTHome included,
+ESPEasy modules and the CameraOnTv app. Everything else is created by hand.
+
 ## What the plugin does today
 
 **First-generation Shelly devices are discovered and created automatically.**
@@ -41,7 +45,7 @@ value on its own topic, they hold a conversation. The plugin asks them what they
 can do, they answer, and all of it travels over the MQTT broker — no request
 ever reaches the device by any other route.
 
-Three practical consequences, worth knowing:
+A few practical consequences, worth knowing:
 
 - **there is nothing to configure on the device** beyond enabling MQTT, which
   you have to do anyway. The "RPC notifications" and "MQTT control" settings are
@@ -53,6 +57,12 @@ Three practical consequences, worth knowing:
   putting questions to it; if it stays silent, it simply asks it to announce
   itself and publish its state, which a Shelly answers even when its RPC calls
   have been disabled;
+- **mains-powered devices are polled regularly.** A modern Shelly only
+  publishes what changes: a relay that does not move never says whether it is
+  open or closed. So the plugin asks it for its full state when the daemon
+  starts, after every reconnection to the broker, then every ten minutes. It
+  goes through "MQTT control" for that, which is on out of the box: here too,
+  nothing to configure;
 - **the name you gave the device in the Shelly app is picked up**, along with
   the name of each output when there is more than one. Unlike the first
   generation, the plugin does not have to go and fetch it from the device: the
@@ -62,6 +72,16 @@ Three practical consequences, worth knowing:
   state, which it does on its own. In exchange, those devices carry no
   "connected" indicator: their link drops on every sleep, and showing it would
   declare them broken twenty-three hours a day.
+
+**ESPEasy modules are recognised by their MQTT last will.** A home-made
+sensor running ESPEasy becomes a device with its readings — temperature,
+humidity, pressure, CO2, luminosity — and its online state. The details are
+further down.
+
+**The CameraOnTv app is discovered too.** This app shows the cameras of a video
+recorder on an Android TV. It becomes a device that tells what the TV is
+showing, and that carries one button per camera. The details are further down
+as well.
 
 **Everything else is created by hand**, and the plugin is built for that: any
 device that publishes over MQTT can become a full Jeedom device, as long as you
@@ -80,12 +100,13 @@ Better said up front, so that nobody waits in vain:
   was intended, not that a real Shelly answers that way. If a device does not
   introduce itself as it should, that is an expected shortcoming rather than a
   surprise — report it and it will be fixed;
-- **Gen2 values are not refreshed when Jeedom restarts.** A Gen2 announces its
-  readings only when they change, and nothing it publishes is kept by the
-  broker. Commands therefore hold the last known value until the device speaks
-  again — immediately for an energy meter, at the next state change for a
-  switch. There is no way to do better without changing the device's own
-  configuration, which the plugin refuses to do;
+- **a battery-powered Gen2+ is not refreshed when the daemon restarts.**
+  Mains-powered devices are: the plugin asks them for their full state at
+  startup, on every reconnection, then every ten minutes. A battery sensor is
+  never woken up for that. Its commands hold the last known value until it
+  next wakes up. The same goes for a device whose inventory has not been read
+  in full yet: as long as the plugin does not know whether it runs on battery,
+  it does not poll it;
 - **Gen2 button presses are not split per input.** The device announces the
   event and the component concerned in a single message; the plugin turns that
   into two commands, *Last event* and *Event component*. A scenario reacting to
@@ -119,7 +140,9 @@ hand; they simply will not appear on their own.
    daemon by itself within the minute.
 6. **Go back to the plugin page.** The *Daemon* badge turns to "Running", the
    *Broker* badge to "Connected", and your Shellys appear within seconds —
-   on startup the plugin asks the whole first generation to introduce itself.
+   on startup the plugin asks the whole Shelly fleet to introduce itself, and
+   generations 2 and later also show up through their presence message, which
+   the broker keeps.
    Devices are created without any need to reload the page, and a green banner
    tells you how many have arrived.
 
@@ -263,6 +286,105 @@ long time, with a stable address, keeps its place.
 Finally, the queue is not only about Bluetooth. It also receives what discovery
 did not create for another reason: automatic creation is unticked, or the device
 ceiling has been reached.
+
+## ESPEasy modules
+
+ESPEasy is a free firmware for ESP8266 and ESP32 modules. It has no announce
+topic: nothing on the broker says "I am an ESPEasy". The plugin recognises it by
+its MQTT last will, published on `<system name>/status/LWT` with the values
+`Connected`, `Connection Lost` or `disconnect`. The broker keeps that message:
+when the daemon starts, the whole fleet reports in at once, even a module
+plugged in months ago.
+
+As soon as it sees that last will, the plugin listens to the values of that
+module, and that module only, on `<system name>/<task>/<value>`. Each topic
+carries one reading, a bare number. About ten seconds later, the device is
+created with whatever has arrived. A reading that shows up later is added to
+it.
+
+The device is named "ESPEasy" followed by the system name, and carries:
+
+- **Connecté** (connected), read from the last will;
+- one command per recognised reading, based on the value name, ignoring case:
+
+| Value name | Command | Unit |
+|---|---|---|
+| `Temperature`, `Temp` | Température (temperature) | °C |
+| `TemperatureCO` | Température capteur (sensor temperature, "Generic info" type) | °C |
+| `Humidity`, `Hum` | Humidité (humidity) | % |
+| `Pressure` | Pression (pressure) | hPa |
+| `ppm`, `CO2` | CO2 | ppm |
+| `Luminosity`, `Lux` | Luminosité (luminosity) | lx |
+
+What the plugin does not do, and why:
+
+- **other values are ignored**, rather than filling the device with commands
+  nobody would know what to do with. The raw `U` voltage of an MH-Z19 probe,
+  for instance, creates nothing. To read it, add a command by hand on the
+  device;
+- **a module with no recognised reading is not created**: it goes to the
+  adoption queue, with its *Connecté* command alone. The decision is yours;
+- **no action is created.** A relay or an output driven by ESPEasy is declared
+  by hand;
+- **the name stays the system name.** ESPEasy publishes no other name over
+  MQTT, and the plugin sends no request to the module to fetch one. Rename the
+  device in Jeedom if needed: discovery will not touch it again;
+- **topics must use the short format.** A last will published anywhere other
+  than `<system name>/status/LWT`, or values on more or fewer than three
+  levels, are not recognised. Topics published under `homeassistant/` are
+  ignored, and so is a topic that still contains an unreplaced `%valname%` or
+  `%tskname%`;
+- **names that are too long or unusual are set aside.** The system name may
+  only contain letters, digits, `.`, `_` or `-`, and no more than 64
+  characters. Task and value names follow the same rule, at 40 characters;
+- **two modules sharing the same system name** make a single device: nothing on
+  the broker tells them apart. The system name must therefore be unique.
+
+## The CameraOnTv app
+
+CameraOnTv runs on an Android TV and shows the cameras of a video recorder on
+it. It is driven over MQTT, under a root chosen in its settings: `cameratv` by
+default.
+
+The plugin recognises it by its state, published and kept on `<root>/state`: a
+JSON message carrying both the current screen (`screen`) and the list of
+cameras (`cameras`). What counts is the shape of the message, not the name of
+the root: a second TV set to `cameratv-chambre` is discovered the same way.
+Nothing is asked of the app: the broker replays its state as soon as the
+plugin subscribes.
+
+The device is named "Caméras TV", or "Caméras TV" followed by the root when the
+root is not `cameratv`. It carries:
+
+- as information: **Connecté** (connected, read on `<root>/online`),
+  **Affiché** (shown), **Écran** (screen), **Canal affiché** (channel shown),
+  **Caméra affichée** (camera shown) and **Mode PTZ** (PTZ mode);
+- **Grille** (grid), which shows the mosaic, and **Quitter** (exit), which hands
+  the screen back to the TV;
+- **Afficher caméra** (show camera), a message action meant for scenarios: the
+  message is the camera name (`garage`) or its channel (`3`). It is published
+  as is on `<root>/cmd/show`;
+- one **Afficher <camera>** button per camera in the list;
+- one **Preset <camera>** slider per motorised (PTZ) camera, which sends the
+  camera to one of its stored positions, from 1 to 10.
+
+Camera names come from the recorder: there is nothing to copy. Camera commands
+follow the **channel**, not the name: a camera renamed in the recorder keeps its
+command, and the scenarios that use it. Switching screens with the remote does
+not rewrite the device: only the information changes.
+
+The limits:
+
+- **presets are the only PTZ command.** No panning, no zoom. And the app does
+  not say how many positions the recorder knows: the slider stops at 10,
+  whatever their real number;
+- **per-camera buttons have no duration**: the camera stays on screen until the
+  next action;
+- **the list is capped at 64 cameras**, and a name longer than 60 characters is
+  truncated. An entry with no channel or no name is ignored, and so is a
+  channel listed twice;
+- **the root** may only contain letters, digits, `.`, `_` or `-`, and must fit
+  in a single topic level.
 
 ## The other settings
 
