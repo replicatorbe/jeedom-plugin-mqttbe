@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1 — 20 October 2026
+
+- The endpoint called by the daemon now only accepts the plugin's API key:
+  a Jeedom user's personal key used to be accepted as well.
+
 ## 0.8 — 28 September 2026
 
 ### What the production logs showed

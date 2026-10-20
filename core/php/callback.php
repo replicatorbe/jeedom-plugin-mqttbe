@@ -37,7 +37,11 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
  */
 $apikey = isset($_SERVER['HTTP_X_MQTTBE_APIKEY']) ? $_SERVER['HTTP_X_MQTTBE_APIKEY'] : init('apikey');
 
-if (!jeedom::apiAccess($apikey, 'mqttbe')) {
+/* La seule clé du plugin : jeedom::apiAccess() accepterait aussi celle de
+ * n'importe quel utilisateur. apiAccess() reste appelé pour son contrôle
+ * d'origine (accès du plugin limité à localhost). */
+if (!is_string($apikey) || !hash_equals(jeedom::getApiKey('mqttbe'), $apikey)
+    || !jeedom::apiAccess($apikey, 'mqttbe')) {
     echo 'Unauthorized access.';
     $origine = sprintf(__('Accès non autorisé depuis %s', __FILE__),
                        isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '?');

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1 — 20 octobre 2026
+
+- Le point d'entrée appelé par le démon n'accepte plus que la clé API du
+  plugin : la clé personnelle d'un utilisateur Jeedom y donnait aussi accès.
+
 ## 0.10 — 6 octobre 2026
 
 - **CameraOnTv** (affichage des caméras sur une TV Android) : découverte
