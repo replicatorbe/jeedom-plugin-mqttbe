@@ -671,7 +671,8 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * $_motif dit pourquoi null : 'format' (pas du BTHome v2 lisible),
      * 'chiffree' (chiffrée, pas de clé), 'en_clair' (en clair, clé attendue),
      * 'authentification' (étiquette fausse : mauvaise clé, trame altérée ou
-     * forgée).
+     * forgée), 'adresse' (adresse incluse dans la trame différente de celle de
+     * l'expéditeur).
      *
      * Le bit « adresse incluse » de l'octet d'info est honoré : les six
      * octets qui suivent sont l'adresse, à l'envers, et non des mesures.
@@ -715,7 +716,14 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
                 $_motif = 'en_clair';
                 return null;
             }
-            $mac = ($macTrame !== '') ? $macTrame : pack('H*', strtolower(preg_replace('/[^0-9A-Fa-f]/', '', (string) $_mac)));
+            $mac = pack('H*', strtolower(preg_replace('/[^0-9A-Fa-f]/', '', (string) $_mac)));
+            /* L'adresse incluse dans la trame doit être celle de l'expéditeur :
+             * sinon la trame d'un appareil serait acceptée sous l'adresse d'un
+             * autre qui partage sa clé. */
+            if ($macTrame !== '' && $macTrame !== $mac) {
+                $_motif = 'adresse';
+                return null;
+            }
             if (strlen($cle) !== 32 || strlen($mac) !== 6 || strlen($brut) < $debut + 8) {
                 return null;
             }
@@ -772,18 +780,26 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
 
     /*
      * L'anti-rejeu d'un appareil chiffré : une trame n'est acceptée que si son
-     * compteur n'a pas reculé. L'égalité passe — la même trame relayée par
-     * deux passerelles, ou répétée par l'appareil, porte le même compteur.
+     * compteur a AVANCÉ. La même trame relayée par une seconde passerelle, ou
+     * répétée par l'appareil, porte le même compteur et n'apporte rien : elle
+     * est écartée sans bruit. L'accepter, c'était laisser rejouer sans fin la
+     * dernière trame enregistrée — et garder « présent » un capteur qu'on fait
+     * taire.
      *
-     * Une trame enregistrée puis rejouée porte un compteur ancien : elle est
-     * refusée. Si l'appareil repart lui-même de plus bas (pile changée, retour
-     * usine), ses trames seront refusées aussi jusqu'à ce que son compteur
-     * soit oublié : retirer puis remettre sa clé dans la configuration, ou
-     * redémarrer le démon. C'est voulu — accepter un compteur qui recule,
-     * c'est accepter le rejeu.
+     * Si l'appareil repart lui-même de plus bas (pile changée, retour usine),
+     * ses trames sont refusées jusqu'à ce que son compteur soit oublié :
+     * retirer sa clé dans la configuration, enregistrer, puis la remettre.
+     * C'est voulu — accepter un compteur qui recule, c'est accepter le rejeu.
      */
     public static function compteurAccepte($_dernier, $_nouveau) {
-        return $_dernier === null || (int) $_nouveau >= (int) $_dernier;
+        return $_dernier === null || (int) $_nouveau > (int) $_dernier;
+    }
+
+    /* La signature d'un compteur retenu sur le broker, calculée avec la clé de
+     * l'appareil : sans la clé, impossible d'en poser un faux — ni pour
+     * bloquer le capteur avec un compteur immense, ni pour rouvrir le rejeu. */
+    public static function signeCompteur($_cle, $_mac, $_compteur) {
+        return substr(hash_hmac('sha256', 'bthome|' . $_mac . '|' . (int) $_compteur, (string) $_cle), 0, 32);
     }
 
     /* Les clés de canal que l'adapter se réserve pour ce qu'il calcule. Un
@@ -863,7 +879,11 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * topic, pas sa racine, qui est libre.
      */
     public function subscriptions() {
-        $filtres = array();
+        /* Les compteurs des appareils BTHome chiffrés EN PREMIER : le broker
+         * rejoue leurs messages retenus avant ceux des trames, si bien qu'une
+         * vieille trame rejouée au démarrage trouve déjà son compteur. Voir
+         * mesuresBthome(). */
+        $filtres = array(self::RACINE_ETAT . '/+/' . self::FEUILLE_COMPTEUR);
         $prefixe = '';
         for ($niveaux = 1; $niveaux <= self::PROFONDEUR_MAX; $niveaux++) {
             $prefixe .= '+/';
@@ -886,9 +906,6 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
          * corriger. Voir recoitEtatRetenu().
          */
         $filtres[] = self::RACINE_ETAT . '/+/' . self::FEUILLE_ETAT;
-        /* Et les compteurs des appareils BTHome chiffrés, pour que l'anti-rejeu
-         * survive au redémarrage. Voir mesuresBthome(). */
-        $filtres[] = self::RACINE_ETAT . '/+/' . self::FEUILLE_COMPTEUR;
         return $filtres;
     }
 
@@ -920,7 +937,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         }
         if ($nombre === 5 && $niveaux[$nombre - 1] === self::FEUILLE_COMPTEUR
             && implode('/', array_slice($niveaux, 0, 3)) === self::RACINE_ETAT) {
-            $this->recoitCompteurRetenu($_ctx, $niveaux[3], $_payload);
+            $this->recoitCompteurRetenu($_ctx, $niveaux[3], $_payload, $_retained);
             return;
         }
 
@@ -1308,10 +1325,6 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * récent —, mais ce n'est pas un rejeu qu'il faille crier au journal. */
     const RECUL_SILENCIEUX = 3;
 
-    /* Avance maximale qu'un compteur retenu peut prendre sur celui qu'on tient
-     * en mémoire : au-delà, il ne vient pas de nous. */
-    const ECART_RETENU_MAX = 100000;
-
     /*
      * Les mesures BTHome d'une balise, avec sa clé si elle en a une.
      *
@@ -1327,7 +1340,10 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
      * trame refusée est dite au journal, une fois par heure et par motif,
      * sans jamais y écrire la clé.
      */
-    private function mesuresBthome($_ctx, $_mac, $_servicedata, $_reglages) {
+    const RELAI_FENETRE = 5;
+
+    private function mesuresBthome($_ctx, $_mac, $_servicedata, $_reglages, &$_relai = false) {
+        $_relai = false;
         $cle = isset($_reglages['cles'][$_mac]) ? $_reglages['cles'][$_mac] : '';
         $mesures = self::decodeBthome($_servicedata, $cle, $_mac, $compteur, $motif);
         if ($cle === '') {
@@ -1338,6 +1354,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
                 'en_clair' => 'trame EN CLAIR refusée pour un appareil déclaré chiffré — chiffrement désactivé sur l\'appareil, ou trame forgée',
                 'authentification' => 'trame chiffrée qui ne s\'authentifie pas — mauvaise clé, ou trame altérée ou forgée',
                 'format' => 'trame chiffrée illisible',
+                'adresse' => 'trame chiffrée portant l\'adresse d\'un autre appareil — refusée',
             );
             $this->plainte($_ctx, 'bthome:' . $motif . ':' . $_mac, 'balise ' . $_mac . ' : '
                 . (isset($raisons[$motif]) ? $raisons[$motif] : $motif) . '.');
@@ -1353,6 +1370,16 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
             }
         }
         if (!self::compteurAccepte($dernier, $compteur)) {
+            /* Égalité dans les secondes qui suivent : la même trame relayée par
+             * une autre passerelle. Elle ne dit rien de neuf sur l'appareil,
+             * mais dit qu'ELLE l'entend — c'est ce qui fait la pièce la plus
+             * proche et son signal. Au-delà, c'est un rejeu. */
+            $memoireEtat = $_ctx->recall(self::ID . ':bthome:' . $_mac);
+            if ($compteur === $dernier && is_array($memoireEtat) && isset($memoireEtat['t'])
+                && $this->maintenant($_ctx) - (float) $memoireEtat['t'] <= self::RELAI_FENETRE) {
+                $_relai = true;
+                return null;
+            }
             if ($dernier - $compteur > self::RECUL_SILENCIEUX) {
                 $this->plainte($_ctx, 'bthome:rejeu:' . $_mac, 'balise ' . $_mac . ' : trame chiffrée REJOUÉE refusée (compteur '
                     . $compteur . ' après ' . $dernier . '). Si l\'appareil a été réinitialisé ou sa pile changée, retirez '
@@ -1362,58 +1389,63 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         }
         /* Sans mémoire, pas d'anti-rejeu : la trame est refusée plutôt que
          * lue sans protection. */
-        if (!$_ctx->remember(self::ID . ':bthome:' . $_mac, array('c' => $compteur, 'k' => $empreinte))) {
+        if (!$_ctx->remember(self::ID . ':bthome:' . $_mac, array('c' => $compteur, 'k' => $empreinte, 't' => $this->maintenant($_ctx)))) {
             $this->plainte($_ctx, 'bthome:memoire', 'mémoire pleine : les trames chiffrées ne peuvent plus être protégées du rejeu, '
                 . 'elles sont refusées.');
             return null;
         }
-        $registre = $_ctx->recall(self::ID . ':bthome:registre');
-        $registre = is_array($registre) ? $registre : array();
-        if (!isset($registre[$_mac])) {
-            $registre[$_mac] = true;
-            $_ctx->remember(self::ID . ':bthome:registre', $registre);
-        }
-        if ($dernier === null || $compteur > $dernier) {
-            $_ctx->publish(self::RACINE_ETAT . '/' . $_mac . '/' . self::FEUILLE_COMPTEUR,
-                json_encode(array('c' => $compteur, 'k' => $empreinte)), 0, true);
-        }
+        $this->inscritRegistre($_ctx, $_mac);
+        $_ctx->publish(self::RACINE_ETAT . '/' . $_mac . '/' . self::FEUILLE_COMPTEUR,
+            json_encode(array('c' => $compteur, 's' => self::signeCompteur($cle, $_mac, $compteur))), 0, true);
         return $mesures;
     }
 
-    /* Le compteur retenu d'un appareil, rejoué par le broker au démarrage, ou
-     * publié par nous-mêmes : le plus grand l'emporte. */
-    private function recoitCompteurRetenu($_ctx, $_mac, $_payload) {
-        $mac = self::normaliseMac($_mac);
-        $lu = $this->json($_payload);
-        if ($mac === '' || !is_array($lu) || !isset($lu['c'], $lu['k']) || !is_numeric($lu['c'])
-            || !preg_match('/^[0-9a-f]{8}$/', (string) $lu['k'])) {
-            return;
-        }
-        /* Inscrit au registre dans tous les cas : une clé retirée pendant que
-         * le démon était arrêté doit voir ce compteur oublié au premier tick. */
+    /* Le registre des adresses dont un compteur est gardé, borné : seules les
+     * adresses qui ont une clé y entrent, si bien qu'une avalanche de faux
+     * messages ne peut pas le faire enfler. */
+    const REGISTRE_MAX = 256;
+
+    private function inscritRegistre($_ctx, $_mac) {
         $registre = $_ctx->recall(self::ID . ':bthome:registre');
         $registre = is_array($registre) ? $registre : array();
-        if (!isset($registre[$mac])) {
-            $registre[$mac] = true;
-            $_ctx->remember(self::ID . ':bthome:registre', $registre);
+        if (isset($registre[$_mac]) || count($registre) >= self::REGISTRE_MAX) {
+            return;
         }
-        /* Seulement pour une adresse qui a une clé, et seulement la sienne.
-         * Un compteur sans commune mesure avec celui qu'on tient déjà — posé
-         * par quelqu'un qui écrit sur le broker — est ignoré : il bloquerait le
-         * capteur pour de bon. */
+        $registre[$_mac] = true;
+        $_ctx->remember(self::ID . ':bthome:registre', $registre);
+    }
+
+    /*
+     * Le compteur retenu d'un appareil, rejoué par le broker au démarrage.
+     *
+     * Seul un message RETENU compte, et seulement s'il porte la signature
+     * calculée avec la clé de l'appareil (signeCompteur) : quelqu'un qui écrit
+     * sur le broker sans connaître la clé ne peut ni bloquer le capteur ni
+     * rouvrir le rejeu. Une adresse sans clé : rien n'est gardé, mais elle
+     * est inscrite pour que son retenu soit effacé (oublieCompteursSansCle).
+     */
+    private function recoitCompteurRetenu($_ctx, $_mac, $_payload, $_retained) {
+        $mac = self::normaliseMac($_mac);
+        $lu = $this->json($_payload);
+        if (!$_retained || $mac === '' || !is_array($lu) || !isset($lu['c'], $lu['s']) || !is_numeric($lu['c']) || !is_string($lu['s'])) {
+            return;
+        }
         $reglages = $this->reglages($_ctx);
-        if (!isset($reglages['cles'][$mac]) || substr(sha1($reglages['cles'][$mac]), 0, 8) !== (string) $lu['k']) {
+        if (!isset($reglages['cles'][$mac])) {
+            $this->inscritRegistre($_ctx, $mac);
             return;
         }
-        $enMemoire = $_ctx->recall(self::ID . ':bthome:' . $mac);
-        if (is_array($enMemoire) && isset($enMemoire['c']) && (int) $lu['c'] > (int) $enMemoire['c'] + self::ECART_RETENU_MAX) {
+        $cle = $reglages['cles'][$mac];
+        if (!hash_equals(self::signeCompteur($cle, $mac, (int) $lu['c']), (string) $lu['s'])) {
             return;
         }
+        $this->inscritRegistre($_ctx, $mac);
+        $empreinte = substr(sha1($cle), 0, 8);
         $connu = $_ctx->recall(self::ID . ':bthome-retenu:' . $mac);
-        if (is_array($connu) && $connu['k'] === $lu['k'] && (int) $connu['c'] >= (int) $lu['c']) {
+        if (is_array($connu) && isset($connu['k'], $connu['c']) && $connu['k'] === $empreinte && (int) $connu['c'] >= (int) $lu['c']) {
             return;
         }
-        $_ctx->remember(self::ID . ':bthome-retenu:' . $mac, array('c' => (int) $lu['c'], 'k' => (string) $lu['k']));
+        $_ctx->remember(self::ID . ':bthome-retenu:' . $mac, array('c' => (int) $lu['c'], 'k' => $empreinte));
     }
 
     /*
@@ -1567,9 +1599,10 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
          * sur le broker (voir suitBalise).
          */
         $authentique = false;
+        $relai = false;
         $uuid = strtolower(preg_replace('/^0x/i', '', $this->texte($trame, 'servicedatauuid')));
         if ($uuid === self::UUID_BTHOME && $this->texte($trame, 'servicedata') !== '') {
-            $mesures = $this->mesuresBthome($_ctx, $mac, $this->texte($trame, 'servicedata'), $reglages);
+            $mesures = $this->mesuresBthome($_ctx, $mac, $this->texte($trame, 'servicedata'), $reglages, $relai);
             $authentique = is_array($mesures);
             /* Authentifiée, la balise est un capteur : décodée d'office. */
             if ($chiffree && $authentique) {
@@ -1618,7 +1651,7 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         /* Pour un appareil chiffré, une trame qui ne s'est pas authentifiée ne
          * prouve même pas qu'il a été entendu : sinon un émetteur qui l'imite
          * le maintiendrait « présent » pendant qu'on le fait taire. */
-        if ($chiffree && !$authentique) {
+        if ($chiffree && !$authentique && !$relai) {
             $this->range($_ctx, $cle, $dossier);
             return;
         }
@@ -1640,6 +1673,14 @@ class MqttbeOpenMqttGateway implements MqttbeAdapter {
         $dossier['gws'][$slug]['nom']   = self::dernierNiveau($_base);
         $dossier['gws'][$slug]['vu']    = $maintenant;
         $dossier['gws'][$slug]['rssi']  = $this->nombre($trame, 'rssi', null);
+        /* Une trame relayée (même compteur, autre passerelle) met à jour la
+         * passerelle, pas la vie de l'appareil : sinon rejouer sa dernière
+         * trame le garderait « présent ». */
+        if ($relai) {
+            $dossier['signature'] = $this->signatureBalise($dossier);
+            $this->range($_ctx, $cle, $dossier);
+            return;
+        }
         $dossier['vu'] = $maintenant;
         /* Combien de fois vue : avec `depuis`, c'est le faisceau qui distingue
          * une balise de la maison d'un capteur du voisinage aperçu une fois.

@@ -279,13 +279,15 @@ ajoutez une ligne « adresse clé » dans la configuration du plugin, section
   lues ;
 - une trame **en clair** est refusée — chiffrement désactivé sur l'appareil, ou
   trame forgée ;
-- une trame **rejouée**, dont le compteur a reculé, est refusée ; la même trame
-  relayée par deux passerelles, elle, passe ;
+- une trame **rejouée** est refusée : son compteur doit avoir avancé. La même
+  trame relayée par une seconde passerelle n'apporte rien et est écartée sans
+  bruit ;
+- une trame qui porte dans son corps l'adresse d'un autre appareil est
+  refusée ;
 - chaque refus est écrit au journal du plugin, une fois par heure et par
   motif, sans jamais y recopier la clé ;
 - aucun champ déjà décodé ailleurs — par une passerelle qui lirait elle-même
-  une trame en clair, ou par un message posé sur le broker — ne peut y écrire
-  une mesure ;
+  une trame en clair arrivée par radio — ne peut y écrire une mesure ;
 - seule une trame authentifiée compte pour sa présence : un émetteur qui
   l'imite ne la maintient pas « présente » pendant qu'on la fait taire.
 
@@ -294,9 +296,16 @@ l'enregistrement. La sauvegarde de Jeedom contient aussi la clé qui les
 déchiffre : protégez vos sauvegardes comme les clés elles-mêmes.
 
 Le dernier compteur de chaque appareil est gardé par le démon et retenu sur le
-broker (`mqttbe/omg/ble/<adresse>/bthome`) : un redémarrage du démon ne rouvre
-pas la porte au rejeu. Cette protection vaut ce que vaut l'accès au broker —
-réservez-le par un mot de passe. Si un appareil est refusé pour rejeu après un
+broker (`mqttbe/omg/ble/<adresse>/bthome`), signé avec la clé de l'appareil :
+un redémarrage du démon ne rouvre pas la porte au rejeu, et un compteur posé
+par quelqu'un qui ne connaît pas la clé est ignoré.
+
+**Le chiffrement protège la radio, pas le broker.** Les mesures déchiffrées
+sont publiées sur le broker (`…/state`), et c'est là que Jeedom les lit :
+quiconque peut écrire sur un broker ouvert peut y poser une fausse mesure,
+comme il peut déjà piloter les Shelly. Réservez le broker par un mot de passe
+et des droits d'écriture : sans cela, la protection BTHome n'arrête que
+l'imitation par radio. Si un appareil est refusé pour rejeu après un
 changement de pile ou une réinitialisation (son compteur repart de plus bas),
 retirez sa ligne, enregistrez, puis remettez-la : son compteur est oublié. Un
 léger recul — une passerelle lente qui relaie une trame après la suivante —

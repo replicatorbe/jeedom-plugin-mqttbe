@@ -1317,7 +1317,7 @@ function mqttbeControlesOmg() {
     }
     $identifiants = mqttbeIdentifiants($horsBthome);
     foreach ($identifiants as $identifiant) {
-        if (preg_match('/^(hexdec|bindec|unpack|pack|base_convert|bin2hex|hex2bin)$/i', $identifiant)) {
+        if (preg_match('/^(hexdec|bindec|unpack|pack|base_convert|bin2hex|hex2bin|ord|chr|openssl_\w+)$/i', $identifiant)) {
             $fautes[] = 'l\'adapter appelle ' . $identifiant . '() : décoder une trame est le métier '
                       . 'de la passerelle, et elle le fait mieux.';
         }
@@ -2553,9 +2553,9 @@ function mqttbeControlesOmg() {
         || MqttbeOpenMqttGateway::decodeBthome('42a5808fe648540164', '', '') != array('batt' => 100)) {
         $fautes[] = 'l\'adresse incluse est lue comme des mesures.';
     }
-    if (!MqttbeOpenMqttGateway::compteurAccepte(null, 5) || !MqttbeOpenMqttGateway::compteurAccepte(5, 5)
-        || MqttbeOpenMqttGateway::compteurAccepte(6, 5)) {
-        $fautes[] = 'règle du compteur : premier accepté, égalité acceptée, recul refusé.';
+    if (!MqttbeOpenMqttGateway::compteurAccepte(null, 5) || MqttbeOpenMqttGateway::compteurAccepte(5, 5)
+        || MqttbeOpenMqttGateway::compteurAccepte(6, 5) || !MqttbeOpenMqttGateway::compteurAccepte(5, 6)) {
+        $fautes[] = 'règle du compteur : premier accepté, égalité (dernière trame rejouée) refusée, recul refusé.';
     }
 
     /* Par l'adapter : une trame forgée en clair et un rejeu sont refusés. Les
@@ -2631,6 +2631,42 @@ function mqttbeControlesOmg() {
         $fautes[] = 'la clé apparaît au journal.';
     }
 
+    /* La même trame relayée par une seconde passerelle, aussitôt : elle compte
+     * pour cette passerelle (pièce la plus proche, signal). */
+    $envoie($chiffre('00062d01', 1020, $macC), 'SAM');
+    $adapterC->onMessage($reperes['SALON'] . '/BTtoMQTT/A8B0C100CC01', str_replace('-60', '-40', $trameC($chiffre('00062d01', 1020, $macC))), false, $ctxC);
+    $ctxC->avance(1);
+    $adapterC->onTick($ctxC);
+    $modelesG = mqttbeModelesParUidOmg($ctxC);
+    $canaux = isset($modelesG['ble:' . $macC]) ? implode(' ', array_map(function ($_c) { return $_c->key(); }, $modelesG['ble:' . $macC]->channels())) : '';
+    if (strpos($canaux, 'SALON') === false) {
+        $fautes[] = 'une seconde passerelle qui relaie la même trame n\'est pas comptée : ' . $canaux . '.';
+    }
+
+    /* La dernière trame authentique, rejouée en boucle, n'entretient rien. */
+    $avantC = $ctxC->etats($macC);
+    $ctxC->avance(10);
+    $envoie($chiffre('00062d01', 1020, $macC));
+    $envoie($chiffre('00062d01', 1020, $macC));
+    if ($ctxC->etats($macC) !== $avantC) {
+        $fautes[] = 'la dernière trame rejouée republie l\'état.';
+    }
+    /* Une trame qui porte, dans son corps, l'adresse d'un autre appareil. */
+    $avecAdresse = function ($_clair, $_compteur, $_macTrame) use ($cle) {
+        $info = 0x43;
+        $compteur = pack('V', $_compteur);
+        $tag = '';
+        $texte = openssl_encrypt(hex2bin($_clair), 'aes-128-ccm', hex2bin($cle), OPENSSL_RAW_DATA,
+                                 hex2bin($_macTrame) . "\xD2\xFC" . chr($info) . $compteur, $tag, '', 4);
+        return bin2hex(chr($info) . strrev(hex2bin($_macTrame)) . $texte . $compteur . $tag);
+    };
+    if (MqttbeOpenMqttGateway::decodeBthome($avecAdresse('2d01', 9, 'a8b0c100dd01'), $cle, 'a8b0c100cc01', $c, $motif) !== null || $motif !== 'adresse') {
+        $fautes[] = 'une trame portant l\'adresse d\'un autre appareil est acceptée (motif ' . var_export($motif, true) . ').';
+    }
+    if (MqttbeOpenMqttGateway::decodeBthome($avecAdresse('2d01', 9, 'a8b0c100cc01'), $cle, 'a8b0c100cc01', $c, $motif) != array('window' => 1)) {
+        $fautes[] = 'une trame portant sa propre adresse est refusée.';
+    }
+
     /* Redémarrage du démon : le compteur retenu sur le broker est rejoué au
      * nouveau démon, et une vieille trame reste refusée. */
     $retenu = null;
@@ -2653,6 +2689,21 @@ function mqttbeControlesOmg() {
     $etat = $ctxD->derniereEtat($macC);
     if (is_array($etat) && isset($etat['window'])) {
         $fautes[] = 'après redémarrage, une vieille trame est acceptée : ' . json_encode($etat) . '.';
+    }
+    /* Un compteur retenu forgé, sans la signature de la clé, ne bloque rien ;
+     * et un message non retenu n'est pas lu comme un compteur. */
+    $adapterF = new MqttbeOpenMqttGateway();
+    $ctxF = new MqttbeContexteEssaiOmg();
+    $ctxF->pose('omg', array('bthomeKeys' => array('A8B0C100CC01' => $cle)));
+    $adapterF->onMessage('mqttbe/omg/ble/' . $macC . '/bthome', '{"c":4294967295,"s":"00000000000000000000000000000000"}', true, $ctxF);
+    $adapterF->onMessage('mqttbe/omg/ble/' . $macC . '/bthome', json_encode(array('c' => 4294967295,
+        's' => MqttbeOpenMqttGateway::signeCompteur($cle, $macC, 4294967295))), false, $ctxF);
+    $adapterF->onMessage($reperes['SAM'] . '/BTtoMQTT/A8B0C100CC01', $trameC($chiffre('00012d01', 2000, $macC)), false, $ctxF);
+    $ctxF->avance(1);
+    $adapterF->onTick($ctxF);
+    $etat = $ctxF->derniereEtat($macC);
+    if (!is_array($etat) || !isset($etat['window']) || $etat['window'] != 1) {
+        $fautes[] = 'un compteur retenu forgé (ou non retenu) bloque le capteur : ' . json_encode($etat) . '.';
     }
 
     /* Un capteur d'abord décodé en clair par la passerelle, puis chiffré : le

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.1 — 31 octobre 2026
+
+- BTHome chiffré : la dernière trame ne peut plus être rejouée en boucle (le
+  compteur doit avancer) ; le compteur retenu sur le broker est signé avec la
+  clé de l'appareil ; une trame portant l'adresse d'un autre appareil est
+  refusée ; registre des compteurs borné. La documentation précise que le
+  chiffrement protège la radio, pas un broker ouvert.
+
 ## 0.11 — 31 octobre 2026
 
 - **Capteurs BTHome chiffrés** (Shelly BLU avec chiffrement) : nouveau champ
