@@ -582,6 +582,10 @@ class mqttbeDaemon {
              * tout ce qu'il doit savoir passe par cet ordre. */
             'bleAwayDelay' => (int) config::byKey('discovery::bleAwayDelay', 'mqttbe', 300),
             'bleAdoptAll'  => config::byKey('discovery::bleAdoptAll', 'mqttbe', 0) == 1,
+            /* Les clés des appareils BTHome chiffrés (Shelly BLU…), par
+             * adresse. Une adresse qui a une clé n'est plus lue qu'en
+             * trames chiffrées et authentifiées. */
+            'bthomeKeys'   => self::clesBthome(config::byKey('discovery::bthomeKeys', 'mqttbe', '')),
         );
 
         /*
@@ -596,6 +600,32 @@ class mqttbeDaemon {
             $ordre['adapters'] = array_values(array_filter(array_map('trim', explode(',', $adapters))));
         }
         return self::send($ordre, false);
+    }
+
+    /*
+     * Les clés BTHome saisies dans la configuration : une ligne par appareil,
+     * l'adresse puis la clé, séparées par une espace, un « = », une virgule
+     * ou un point-virgule ; les lignes vides et celles qui commencent par #
+     * sont ignorées. Rend array(adresse sans séparateur => clé). Une ligne mal
+     * formée est écartée et signalée — sans jamais recopier la clé au journal.
+     */
+    public static function clesBthome($_texte) {
+        $cles = array();
+        foreach (preg_split('/\r?\n/', (string) $_texte) as $numero => $ligne) {
+            $ligne = trim($ligne);
+            if ($ligne === '' || $ligne[0] === '#') {
+                continue;
+            }
+            $morceaux = preg_split('/[\s=,;]+/', $ligne, -1, PREG_SPLIT_NO_EMPTY);
+            $adresse = isset($morceaux[0]) ? strtolower(preg_replace('/[^0-9A-Fa-f]/', '', $morceaux[0])) : '';
+            $cle = isset($morceaux[1]) ? strtolower($morceaux[1]) : '';
+            if (count($morceaux) !== 2 || !preg_match('/^[0-9a-f]{12}$/', $adresse) || !preg_match('/^[0-9a-f]{32}$/', $cle)) {
+                mqttbe::logger('warning', sprintf(__('Clé BTHome ignorée, ligne %d : il faut l\'adresse (12 chiffres hexadécimaux) puis la clé (32).', __FILE__), $numero + 1));
+                continue;
+            }
+            $cles[$adresse] = $cle;
+        }
+        return $cles;
     }
 
     public static function sendBrokerConfig() {

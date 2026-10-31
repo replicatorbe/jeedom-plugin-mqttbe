@@ -35,7 +35,8 @@
         "Non renseigné": "Not set",
         "Renseignez l'adresse du broker dans la configuration du plugin": "Enter the broker address in the plugin configuration",
         "Établie": "Established",
-        "Usage du relais :": "Relay usage:"
+        "Usage du relais :": "Relay usage:",
+        "Clés BTHome non transmises au démon :": "BTHome keys not sent to the daemon:"
     },
     "plugins/mqttbe/core/class/mqttbeDaemon.class.php": {
         "%1$s équipement(s) découvert(s) sur le broker, %2$s au total.": "%1$s device(s) discovered on the broker, %2$s in total.",
@@ -71,7 +72,8 @@
         "motif inconnu": "reason unknown",
         "Échec de l'envoi d'un ordre au démon": "Failed to send an order to the daemon",
         "File d'adoption illisible : le candidat n'en a pas été retiré.": "Adoption queue unreadable: the candidate was not removed from it.",
-        "File d'adoption illisible : le candidat n'y a pas été ajouté.": "Adoption queue unreadable: the candidate was not added to it."
+        "File d'adoption illisible : le candidat n'y a pas été ajouté.": "Adoption queue unreadable: the candidate was not added to it.",
+        "Clé BTHome ignorée, ligne %d : il faut l'adresse (12 chiffres hexadécimaux) puis la clé (32).": "BTHome key ignored, line %d: expected the address (12 hexadecimal digits) then the key (32)."
     },
     "plugins/mqttbe/core/class/mqttbeFactory.class.php": {
         "Canal disparu, commande désactivée :": "Channel gone, command disabled:",
@@ -407,7 +409,9 @@
         "équipement(s) seraient supprimés, avec": "device(s) would be removed, along with",
         "commande(s) et": "command(s) and",
         "commande(s) portant des relevés. Relisez la liste, puis confirmez.": "command(s) carrying recorded readings. Read the list again, then confirm.",
-        "Sont épargnés : tout ce qui n'est pas une balise Bluetooth, tout ce que la passerelle a su nommer, tout ce qui a reçu quoi que ce soit dans les dernières vingt-quatre heures, tout ce que vous avez renommé ou complété d'une commande, et tout ce qui est utilisé dans un scénario, une vue ou un design.": "Left untouched: anything that is not a Bluetooth beacon, anything the gateway was able to name, anything that received something in the last twenty-four hours, anything you renamed or added a command to, and anything used in a scenario, a view or a design."
+        "Sont épargnés : tout ce qui n'est pas une balise Bluetooth, tout ce que la passerelle a su nommer, tout ce qui a reçu quoi que ce soit dans les dernières vingt-quatre heures, tout ce que vous avez renommé ou complété d'une commande, et tout ce qui est utilisé dans un scénario, une vue ou un design.": "Left untouched: anything that is not a Bluetooth beacon, anything the gateway was able to name, anything that received something in the last twenty-four hours, anything you renamed or added a command to, and anything used in a scenario, a view or a design.",
+        "Clés BTHome (appareils chiffrés)": "BTHome keys (encrypted devices)",
+        "Une ligne par appareil chiffré (Shelly BLU avec chiffrement activé dans l'application Shelly) : son adresse, puis sa clé de 32 caractères. Une adresse qui a une clé n'est plus lue qu'en trames chiffrées et authentifiées : une trame en clair, forgée ou rejouée est refusée et signalée au journal. Si un appareil est refusé après un changement de pile ou une réinitialisation, retirez sa ligne, enregistrez, puis remettez-la. Gardez ces clés pour vous, et vos sauvegardes Jeedom aussi : elles suffisent à imiter le capteur.": "One line per encrypted device (Shelly BLU with encryption enabled in the Shelly app): its address, then its 32-character key. An address with a key is only read from encrypted, authenticated frames: a plain, forged or replayed frame is rejected and reported in the log. If a device is rejected after a battery change or a reset, remove its line, save, then add it back. Keep these keys, and your Jeedom backups, to yourself: they are enough to impersonate the sensor."
     },
     "plugins/mqttbe/plugin_info/install.php": {
         "Arrêt du démon :": "Stopping the daemon:",

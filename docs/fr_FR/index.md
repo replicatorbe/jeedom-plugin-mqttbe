@@ -266,7 +266,43 @@ pile. Là encore, rien n'est recopié d'un catalogue — ce qui arrive est ce qu
 est créé.
 Les capteurs au format ouvert **BTHome v2** (Shelly BLU H&T, Door/Window,
 Motion…) sont lus par le plugin lui-même quand la passerelle les relaie sans
-les décoder ; seules les trames chiffrées restent illisibles.
+les décoder.
+
+**Capteurs BTHome chiffrés.** Un capteur de sécurité — contact de porte ou de
+fenêtre — devrait être chiffré : en clair, n'importe quel émetteur Bluetooth
+peut imiter ses trames, ou rejouer celles qu'il a enregistrées. Activez le
+chiffrement dans l'application Shelly, relevez la clé de 32 caractères, et
+ajoutez une ligne « adresse clé » dans la configuration du plugin, section
+*Découverte*, champ **Clés BTHome**. Pour une adresse qui a une clé :
+
+- seules les trames chiffrées et authentifiées (AES-128-CCM, bthome.io) sont
+  lues ;
+- une trame **en clair** est refusée — chiffrement désactivé sur l'appareil, ou
+  trame forgée ;
+- une trame **rejouée**, dont le compteur a reculé, est refusée ; la même trame
+  relayée par deux passerelles, elle, passe ;
+- chaque refus est écrit au journal du plugin, une fois par heure et par
+  motif, sans jamais y recopier la clé ;
+- aucun champ déjà décodé ailleurs — par une passerelle qui lirait elle-même
+  une trame en clair, ou par un message posé sur le broker — ne peut y écrire
+  une mesure ;
+- seule une trame authentifiée compte pour sa présence : un émetteur qui
+  l'imite ne la maintient pas « présente » pendant qu'on la fait taire.
+
+Les clés sont chiffrées en base par Jeedom et transmises au démon dès
+l'enregistrement. La sauvegarde de Jeedom contient aussi la clé qui les
+déchiffre : protégez vos sauvegardes comme les clés elles-mêmes.
+
+Le dernier compteur de chaque appareil est gardé par le démon et retenu sur le
+broker (`mqttbe/omg/ble/<adresse>/bthome`) : un redémarrage du démon ne rouvre
+pas la porte au rejeu. Cette protection vaut ce que vaut l'accès au broker —
+réservez-le par un mot de passe. Si un appareil est refusé pour rejeu après un
+changement de pile ou une réinitialisation (son compteur repart de plus bas),
+retirez sa ligne, enregistrez, puis remettez-la : son compteur est oublié. Un
+léger recul — une passerelle lente qui relaie une trame après la suivante —
+est refusé sans être signalé.
+
+Sans clé, une trame chiffrée reste illisible.
 
 Le cas du **traceur** mérite un mot, parce que c'est le plus utile et le moins
 évident. Un traceur ne mesure rien : il se contente d'exister. Ce que le plugin

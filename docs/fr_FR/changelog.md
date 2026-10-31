@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11 — 31 octobre 2026
+
+- **Capteurs BTHome chiffrés** (Shelly BLU avec chiffrement) : nouveau champ
+  « Clés BTHome » dans la configuration, une ligne « adresse clé » par
+  appareil. Les trames chiffrées sont déchiffrées et authentifiées
+  (AES-128-CCM, validé sur le vecteur officiel de bthome.io). Pour une adresse
+  qui a une clé, les trames en clair et les trames rejouées sont refusées et
+  signalées au journal ; aucun champ décodé ailleurs ne peut écrire une mesure,
+  et seule une trame authentifiée compte pour la présence. Le compteur
+  anti-rejeu est retenu sur le broker et survit au redémarrage du démon. Les
+  clés sont chiffrées en base et transmises au démon dès l'enregistrement.
+- Le bit « adresse incluse » de BTHome est honoré : ces six octets ne sont
+  plus lus comme des mesures.
+
 ## 0.10.1 — 20 octobre 2026
 
 - Le point d'entrée appelé par le démon n'accepte plus que la clé API du

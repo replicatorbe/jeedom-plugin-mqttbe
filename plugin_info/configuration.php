@@ -126,6 +126,15 @@ if (!isConnect('admin')) {
             </div>
         </div>
         <div class="form-group">
+            <label class="col-sm-3 control-label">{{Clés BTHome (appareils chiffrés)}}</label>
+            <div class="col-sm-4">
+                <textarea class="configKey form-control" data-l1key="discovery::bthomeKeys" rows="4" spellcheck="false" autocomplete="off" style="font-family:monospace;" placeholder="7C:C6:B6:00:00:01 231d39c1d7cc1ab1aee224cd096db932"></textarea>
+            </div>
+            <div class="col-sm-5">
+                <span class="help-block" style="margin:0;">{{Une ligne par appareil chiffré (Shelly BLU avec chiffrement activé dans l'application Shelly) : son adresse, puis sa clé de 32 caractères. Une adresse qui a une clé n'est plus lue qu'en trames chiffrées et authentifiées : une trame en clair, forgée ou rejouée est refusée et signalée au journal. Si un appareil est refusé après un changement de pile ou une réinitialisation, retirez sa ligne, enregistrez, puis remettez-la. Gardez ces clés pour vous, et vos sauvegardes Jeedom aussi : elles suffisent à imiter le capteur.}}</span>
+            </div>
+        </div>
+        <div class="form-group">
             <label class="col-sm-3 control-label">{{Délai d'absence d'une balise (s)}}</label>
             <div class="col-sm-2">
                 <input class="configKey form-control" data-l1key="discovery::bleAwayDelay" placeholder="300" />

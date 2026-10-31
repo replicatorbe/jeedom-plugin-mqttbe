@@ -47,7 +47,22 @@ class mqttbe extends eqLogic {
      * pièges du cœur — DB::save() ignore les statiques, et ce n'est pas une clé
      * de formulaire.
      */
-    public static $_encryptConfigKey = array('broker::password');
+    public static $_encryptConfigKey = array('broker::password', 'discovery::bthomeKeys');
+
+    /*
+     * Les clés BTHome viennent de changer : le démon les reçoit tout de suite,
+     * sans attendre « Relancer la découverte » — une clé ajoutée doit protéger
+     * l'appareil dès l'enregistrement, et une clé retirée cesser de le faire.
+     */
+    public static function postConfig_discovery_bthomeKeys($_value) {
+        try {
+            if (mqttbeDaemon::state()) {
+                mqttbeDaemon::sendDiscoveryConfig();
+            }
+        } catch (Throwable $e) {
+            mqttbe::logger('warning', __('Clés BTHome non transmises au démon :', __FILE__) . ' ' . $e->getMessage());
+        }
+    }
 
     /* Toute propriété d'instance doit commencer par un souligné : DB::save()
      * traite les autres comme des colonnes de la table eqLogic et l'ajout d'un
