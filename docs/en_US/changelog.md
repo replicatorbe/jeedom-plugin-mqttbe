@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.11.2 — 11 November 2026
+
+- **Commands sent while the daemon is starting are no longer lost.** When the
+  machine reboots, Jeedom runs scenarios and crons before daemons. During a
+  daemon start (or within fifteen minutes of the machine booting, when
+  automatic management is on), a command is queued and published as soon as
+  the daemon and the broker are ready. One command per topic, the latest; at
+  most a hundred; a command queued for more than three minutes is dropped,
+  with a warning in the log. A daemon stopped outside a start still refuses
+  commands.
+- CameraOnTv: the empty camera list the app publishes when it starts no longer
+  replaces the known list (no more "13 of 22 commands no longer appear"
+  warning).
+- Daemon log: a discovery is logged at info level only the first time a
+  device is seen, and never for a "guess". Re-emissions and guesses go to
+  debug.
+
 ## 0.10.1 — 20 October 2026
 
 - The endpoint called by the daemon now only accepts the plugin's API key:

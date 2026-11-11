@@ -133,6 +133,24 @@ class MqttbeCameraOnTv implements MqttbeAdapter {
 
         $cameras = $this->cameras($etat['cameras']);
         $dossier = $this->dossier($_ctx, $racine);
+        /*
+         * Une liste vide ne remplace jamais une liste connue.
+         *
+         * Au démarrage, l'application publie d'abord un `state` dont la liste
+         * est vide — elle n'a pas encore interrogé l'enregistreur —, puis la
+         * liste complète une seconde plus tard. Prendre la première au mot,
+         * c'était retirer du modèle tous les boutons « Afficher » et tous les
+         * presets, et faire annoncer par la fabrique « 13 commandes sur 22
+         * n'apparaissent plus » deux fois par jour, pour rien. Un
+         * enregistreur ne perd pas ses caméras d'un coup : la liste vide est
+         * un état transitoire, pas une information. La toute première liste,
+         * elle, est acceptée même vide : il n'y a rien de mieux à garder.
+         */
+        if (empty($cameras) && !empty($dossier['cameras'])) {
+            $_ctx->log('debug', 'CameraOnTv : liste de caméras vide ignorée sous « ' . $racine
+                . ' » (' . count($dossier['cameras']) . ' caméras déjà connues).');
+            $cameras = $dossier['cameras'];
+        }
         if (!isset($dossier['cameras']) || $dossier['cameras'] !== $cameras) {
             if (!isset($dossier['cameras'])) {
                 $_ctx->log('info', 'CameraOnTv : TV détectée sous « ' . $racine . ' » ('

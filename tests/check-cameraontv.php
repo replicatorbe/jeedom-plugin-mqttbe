@@ -139,6 +139,36 @@ function mqttbeControlesCameraOnTv() {
     $resultats[] = count($ctx->modeles) === $avant + 1 ? mqttbeOk($titre)
         : mqttbeEchec($titre, 'aucune réémission : un équipement supprimé par erreur ne reviendrait pas.');
 
+    /* 5. Une liste vide ne remplace pas la liste connue. Au démarrage,
+     * l'application publie d'abord un `state` aux caméras vides, puis la
+     * liste complète une seconde plus tard : la fabrique annonçait deux fois
+     * par jour que la plupart des commandes avaient disparu. */
+    $titre = 'une liste de caméras vide n\'efface pas la liste connue';
+    $ctx3 = new MqttbeContexteEssaiCameraOnTv();
+    $adapter3 = new MqttbeCameraOnTv();
+    $adapter3->onMessage('cameratv/state', mqttbeEtatCameraOnTv(), true, $ctx3);
+    $adapter3->onMessage('cameratv/state', mqttbeEtatCameraOnTv(array('cameras' => array())), false, $ctx3);
+    $adapter3->onMessage('cameratv/state', mqttbeEtatCameraOnTv(), false, $ctx3);
+    $fautes = array();
+    if (count($ctx3->modeles) !== 1) {
+        $fautes[] = count($ctx3->modeles) . ' modèle(s) émis au lieu d\'un : la liste vide a été prise au mot.';
+    }
+    foreach ($ctx3->modeles as $modele) {
+        if (!isset(mqttbeCanauxCameraOnTv($modele)['cmd.show.5'])) {
+            $fautes[] = 'un modèle sans le bouton « Afficher OUESTPTZ » est parti vers Jeedom.';
+        }
+    }
+    /* Mais une toute première liste vide reste acceptée : rien de mieux à garder. */
+    $ctx4 = new MqttbeContexteEssaiCameraOnTv();
+    $adapter4 = new MqttbeCameraOnTv();
+    $adapter4->onMessage('tv2/state', mqttbeEtatCameraOnTv(array('cameras' => array())), true, $ctx4);
+    $adapter4->onMessage('tv2/state', mqttbeEtatCameraOnTv(), false, $ctx4);
+    if (count($ctx4->modeles) !== 2) {
+        $fautes[] = 'une TV d\'abord vue sans caméras ne reçoit pas sa liste ensuite ('
+            . count($ctx4->modeles) . ' modèle(s)).';
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
     return $resultats;
 }
 

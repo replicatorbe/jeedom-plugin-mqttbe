@@ -496,6 +496,46 @@ function mqttbeControlesModeles() {
         . 'l\'enregistrement échouerait côté Jeedom sur une erreur SQL, et personne ne '
         . 'remonterait jusqu\'à l\'adapter qui l\'a produit.');
 
+    /* Le journal « info » ne dit qu'une fois chaque appareil, et jamais une
+     * simple supposition. Une balise Bluetooth gagne un canal à chaque mesure
+     * nouvellement décodée : chaque version réémise faisait une ligne
+     * « info », six cents par jour sur l'installation réelle. */
+    list($moteur, $banc) = mqttbeMoteurNeuf();
+    $a = new MqttbeAdapterFactice('factice.a', 100, array('parc/+'));
+    $a->surMessage = function ($_moi, $_ctx, $_topic, $_payload) {
+        list($uid, $confiance, $canaux) = explode(',', $_payload);
+        $modele = mqttbeModeleFactice($uid);
+        $modele['identity']['confidence'] = $confiance;
+        for ($i = 1; $i < (int) $canaux; $i++) {
+            $canal = $modele['channels'][0];
+            $canal['key'] = 'state' . $i;
+            $canal['name'] = 'État ' . $i;
+            $canal['source']['topic'] .= $i;
+            $modele['channels'][] = $canal;
+        }
+        $_ctx->emit($modele);
+    };
+    $moteur->register($a);
+    $moteur->apply(array('enabled' => true));
+    $banc->oublie();
+    $moteur->onMessage('parc/1', 'factice:sur,certain,1', false);
+    $moteur->onMessage('parc/1', 'factice:sur,certain,2', false);
+    $moteur->onMessage('parc/1', 'factice:balise,guess,1', false);
+    $moteur->onMessage('parc/1', 'factice:balise,guess,2', false);
+    $infos = array();
+    foreach ($banc->lignes as $ligne) {
+        if ($ligne[0] === 'info' && strpos($ligne[1], 'découverte[factice.a]') === 0) {
+            $infos[] = $ligne[1];
+        }
+    }
+    $resultats[] = mqttbeVerifie('une découverte n\'est dite en info qu\'une fois, et jamais pour un « guess »',
+        count($banc->modeles) === 4 && count($infos) === 1
+        && strpos($infos[0], 'factice:sur') !== false && strpos($infos[0], '1 canal') !== false
+        && $banc->dit('factice:balise', 'debug'),
+        count($infos) . ' ligne(s) info pour 4 modèles émis (attendu : 1, la première '
+        . 'découverte de l\'appareil certain) : ' . implode(' | ', $infos) . ' — chaque '
+        . 'version d\'une balise qui grossit noie le journal.');
+
     return $resultats;
 }
 

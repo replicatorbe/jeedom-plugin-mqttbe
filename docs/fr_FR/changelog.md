@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.2 — 11 novembre 2026
+
+- **Les ordres émis pendant le démarrage du démon ne sont plus perdus.** Au
+  redémarrage de la machine, Jeedom lance scénarios et crons avant les démons :
+  le 5 novembre, vingt « Allumer » et cinq « Chaudière Éteindre » avaient
+  échoué sur « le démon n'est pas démarré ». Pendant un démarrage du démon (ou
+  dans les quinze minutes qui suivent celui de la machine, si la gestion
+  automatique est active), un ordre est gardé en file puis publié dès que le
+  démon et le broker sont prêts. Un seul ordre par topic, le dernier ; cent au
+  plus ; un ordre en attente depuis plus de trois minutes est abandonné, avec
+  un avertissement au journal. Un démon arrêté hors démarrage refuse toujours
+  les ordres.
+- CameraOnTv : la liste de caméras vide que l'application publie à son
+  démarrage ne remplace plus la liste connue. Fin de l'avertissement
+  « 13 commandes sur 22 n'apparaissent plus » deux fois par jour.
+- Journal du démon : une découverte n'est écrite en info qu'à la première vue
+  d'un appareil dont la confiance n'est pas « guess ». Les réémissions (le
+  modèle d'une balise qui gagne un canal) et les suppositions passent en debug
+  — environ six cents lignes par jour de moins.
+
 ## 0.11.1 — 31 octobre 2026
 
 - BTHome chiffré : la dernière trame ne peut plus être rejouée en boucle (le

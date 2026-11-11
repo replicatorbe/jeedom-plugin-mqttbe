@@ -1228,6 +1228,11 @@ class jeedom {
     public static function addRemoveHistory($_history) {
         return true;
     }
+
+    /* Le vrai démon la joint à chaque ordre envoyé par la socket. */
+    public static function getApiKey($_plugin = 'core') {
+        return 'cle-essai-' . $_plugin;
+    }
 }
 
 class log {
@@ -1392,6 +1397,10 @@ class mqttbeDaemon {
 
     public static function logLatency() {
         return true;
+    }
+
+    public static function flushQueued() {
+        return 0;
     }
 }
 

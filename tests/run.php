@@ -90,23 +90,26 @@ foreach ($sections as $titre => $resultats) {
 
 $bilan = mqttbeBilan($tous);
 
-/* La file d'adoption, dans son propre processus. */
-$aPart = mqttbeSousProcessus('check-adoption.php');
-foreach ($aPart['sortie'] as $ligne) {
-    /* Le bilan du sous-processus n'est pas réimprimé : il est replié dans
-     * celui de la suite, et deux bilans se contrediraient à l'œil. */
-    if (strpos($ligne, '==>') === false) {
-        echo $ligne . "\n";
+/* La file d'adoption et la file des ordres en attente, chacune dans son
+ * propre processus : toutes deux chargent le vrai mqttbeDaemon. */
+foreach (array('check-adoption.php', 'check-attente.php') as $fichierAPart) {
+    $aPart = mqttbeSousProcessus($fichierAPart);
+    foreach ($aPart['sortie'] as $ligne) {
+        /* Le bilan du sous-processus n'est pas réimprimé : il est replié dans
+         * celui de la suite, et deux bilans se contrediraient à l'œil. */
+        if (strpos($ligne, '==>') === false) {
+            echo $ligne . "\n";
+        }
     }
-}
-$bilanAPart = mqttbeBilanLu($aPart['sortie']);
-if ($bilanAPart === null) {
-    echo "\n  ÉCHEC : check-adoption.php n'a rien annoncé (code de retour "
-       . $aPart['code'] . ") — il est tombé avant de conclure.\n";
-    $bilan[MQTTBE_ECHEC]++;
-} else {
-    foreach ($bilanAPart as $etat => $nombre) {
-        $bilan[$etat] += $nombre;
+    $bilanAPart = mqttbeBilanLu($aPart['sortie']);
+    if ($bilanAPart === null) {
+        echo "\n  ÉCHEC : " . $fichierAPart . " n'a rien annoncé (code de retour "
+           . $aPart['code'] . ") — il est tombé avant de conclure.\n";
+        $bilan[MQTTBE_ECHEC]++;
+    } else {
+        foreach ($bilanAPart as $etat => $nombre) {
+            $bilan[$etat] += $nombre;
+        }
     }
 }
 

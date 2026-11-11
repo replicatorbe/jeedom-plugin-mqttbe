@@ -1071,10 +1071,25 @@ class MqttbeDiscoveryEngine {
             $this->log('warning', 'découverte : ' . self::SEEN_MAX . ' empreintes distinctes retenues, '
                                 . 'la table est vidée (le parc sera réémis une fois).');
         }
+        $premiere = !isset($this->seen[$cle]);
         $this->seen[$cle] = $empreinte;
         $this->emitted++;
 
-        $this->log('info', 'découverte[' . $_id . '] : ' . ($modele->name() !== '' ? $modele->name() : $modele->uid())
+        /*
+         * Au journal « info », seulement la première découverte d'un appareil
+         * dont on est sûr.
+         *
+         * Le modèle d'une balise Bluetooth grossit message après message : un
+         * canal de plus à chaque mesure nouvellement décodée, donc une
+         * empreinte nouvelle, donc une réémission — et une ligne « info » à
+         * chaque fois. Mesuré sur l'installation réelle : six cents lignes par
+         * jour pour des balises de passage, qui noyaient tout le reste. Une
+         * réémission (le modèle a changé) et un modèle simplement deviné
+         * (« guess », qui ne crée rien d'office) passent donc en debug : ils
+         * restent visibles à qui les demande.
+         */
+        $niveau = ($premiere && $modele->confidence() !== 'guess') ? 'info' : 'debug';
+        $this->log($niveau, 'découverte[' . $_id . '] : ' . ($modele->name() !== '' ? $modele->name() : $modele->uid())
                          . ($modele->deviceName() !== '' ? ' « ' . $modele->deviceName() . ' »' : '')
                          . ' (' . $modele->uid() . ', ' . $modele->countChannels() . ' canal/canaux, '
                          . $modele->confidence() . ')');

@@ -81,6 +81,52 @@ class mqttbeDaemon {
      * adresse aléatoire aura changé dans le quart d'heure. */
     const PENDING_STABLE_BONUS = 3600;
 
+    /*
+     * LA FILE DES ORDRES EN ATTENTE DU DÉMON.
+     *
+     * Au démarrage de la machine, Jeedom lance ses crons et ses scénarios
+     * AVANT plugin::start : le 5 novembre 2026, vingt « Allumer » et cinq
+     * « Chaudière Éteindre » sont partis entre 17:06 et 17:10, quand le démon
+     * n'a démarré qu'à 17:10:14. Tous ont échoué sur « le démon n'est pas
+     * démarré », et les lampes sont restées éteintes.
+     *
+     * Un ordre émis pendant que le démon démarre est donc gardé ici, puis
+     * publié dès qu'il est prêt. Trois garde-fous, chacun pour une raison :
+     *
+     *   - une DURÉE DE VIE courte. Un « Allumer » rejoué dix minutes plus tard
+     *     est pire que perdu : la personne a déjà allumé à la main, ou est
+     *     partie. Au-delà, l'ordre est abandonné, et le journal le dit ;
+     *   - UN SEUL ORDRE PAR TOPIC, le dernier : « Allumer » puis « Éteindre »
+     *     sur la même lampe, c'est l'état voulu qui compte, pas l'historique ;
+     *   - une TAILLE BORNÉE : un scénario emballé ne doit pas remplir le cache.
+     *
+     * La file n'est ouverte que dans une fenêtre de démarrage (voir
+     * enDemarrage()) : un démon arrêté exprès doit continuer de refuser, à
+     * voix haute, les ordres qu'on lui envoie.
+     *
+     * Elle vit dans le cache, comme la file d'adoption : plusieurs processus
+     * www-data (scénarios, cron, pages) y écrivent en même temps, et le cache
+     * leur est commun. Un verrou flock dans le dossier temporaire du plugin
+     * sérialise lecture et écriture — même dossier, mêmes droits que les
+     * verrous existants. Le cache ne survit pas forcément à un redémarrage de
+     * la machine : c'est sans importance, un ordre d'avant le redémarrage
+     * serait de toute façon périmé.
+     */
+    const ATTENTE_KEY     = 'mqttbe::ordresEnAttente';
+    const ATTENTE_TTL     = 180;
+    const ATTENTE_MAX     = 100;
+    /* Posé par start() et par le chien de garde quand il relance le démon :
+     * tant qu'il est frais, un démon absent est un démon qui arrive. */
+    const CACHE_DEMARRAGE = 'mqttbe::demarrageDepuis';
+    /* Après un démarrage de la machine, Jeedom met plusieurs minutes à lancer
+     * les démons (cinq et demie le 5 novembre). Quinze laissent de la marge
+     * sans ouvrir la file à un démon qui ne viendra pas : de toute façon,
+     * aucun ordre n'y survit plus de ATTENTE_TTL. */
+    const ATTENTE_BOOT    = 900;
+    /* Ce que start() accepte d'attendre la connexion au broker avant de
+     * vider la file. Au-delà, le cron prend le relais à la minute suivante. */
+    const ATTENTE_BROKER  = 5;
+
     /**
      * URL que le démon appellera pour parler à Jeedom.
      *
@@ -232,6 +278,7 @@ class mqttbeDaemon {
         list($cpid, $cport) = array_map('intval', explode(':', $cuid));
         if ($cpid <= 0 || !@posix_getsid($cpid)) {
             mqttbe::logger('debug', __('Démon déclaré vivant mais son processus a disparu', __FILE__));
+            cache::set(self::CACHE_DEMARRAGE, time());
             self::stop();
             return false;
         }
@@ -249,6 +296,9 @@ class mqttbeDaemon {
                 __('Aucune nouvelle du démon depuis %ss : il est relancé', __FILE__),
                 $deltaRx
             ));
+            /* Le cœur le relancera dans la minute : les ordres émis d'ici là
+             * attendent au lieu d'échouer. */
+            cache::set(self::CACHE_DEMARRAGE, time());
             self::stop();
             return false;
         }
@@ -293,6 +343,9 @@ class mqttbeDaemon {
                               . (isset($info['launchable_message']) ? $info['launchable_message'] : ''));
         }
 
+        /* Dès maintenant, un ordre envoyé au démon l'attend au lieu d'échouer. */
+        cache::set(self::CACHE_DEMARRAGE, time());
+
         /* On repart d'horodatages frais : sans cela, le premier passage du cron
          * pourrait tuer un démon qui n'a pas encore eu le temps de parler. */
         cache::set(self::CACHE_LAST_RCV, time());
@@ -329,10 +382,17 @@ class mqttbeDaemon {
                  * à tort que la table est déjà en place. */
                 mqttbeRouting::push(true);
                 self::sendDiscoveryConfig();
+                self::flushAfterStart();
+                cache::set(self::CACHE_DEMARRAGE, 0);
                 return true;
             }
             usleep(500000);
         }
+
+        /* Échec : la file se referme, les ordres suivants échouent à voix
+         * haute. Ceux qui attendent périront de vieillesse, avec une ligne au
+         * journal, si aucune autre tentative n'aboutit à temps. */
+        cache::set(self::CACHE_DEMARRAGE, 0);
 
         mqttbe::logger('error', __("Le démon n'a pas démarré. Consultez le journal mqttbed.", __FILE__));
         message::add('mqttbe', __("Le démon n'a pas démarré. Consultez le journal mqttbed.", __FILE__),
@@ -667,13 +727,209 @@ class mqttbeDaemon {
     }
 
     public static function publish($_topic, $_payload, $_qos = 0, $_retain = false) {
-        return self::send(array(
+        $ordre = array(
             'cmd'     => 'publish',
             'topic'   => $_topic,
             'payload' => (string) $_payload,
             'qos'     => (int) $_qos,
             'retain'  => (bool) $_retain,
+        );
+        if (!self::state() && self::enDemarrage()) {
+            self::queuePublish($ordre);
+            /* Le démon a pu s'annoncer et vider la file entre notre test et
+             * notre écriture : sans ce second regard, l'ordre attendrait le
+             * cron suivant, une minute plus tard. */
+            if (self::state()) {
+                self::flushQueued();
+            }
+            return true;
+        }
+        return self::send($ordre);
+    }
+
+    /* ------------------------------------------- ordres en attente du démon */
+
+    /**
+     * Le démon absent est-il un démon qui arrive ?
+     *
+     * Oui si start() ou le chien de garde l'ont annoncé il y a peu, ou si la
+     * machine vient de démarrer et que le cœur doit lancer le démon de
+     * lui-même (gestion automatique active). Non dans tous les autres cas :
+     * un démon arrêté par l'utilisateur doit refuser les ordres, pas les
+     * accumuler en silence.
+     */
+    public static function enDemarrage() {
+        $depuis = (int) self::cachedValue(self::CACHE_DEMARRAGE, 0);
+        if ($depuis > 0 && time() - $depuis <= self::ATTENTE_TTL) {
+            return true;
+        }
+        if (config::byKey('deamonAutoMode', 'mqttbe', 1) == 0) {
+            return false;
+        }
+        $uptime = self::uptime();
+        return $uptime !== null && $uptime < self::ATTENTE_BOOT;
+    }
+
+    /** Secondes écoulées depuis le démarrage de la machine, null si inconnu. */
+    private static function uptime() {
+        $brut = @file_get_contents('/proc/uptime');
+        if (!is_string($brut) || !preg_match('/^(\d+)/', $brut, $trouve)) {
+            return null;
+        }
+        return (int) $trouve[1];
+    }
+
+    /** La file telle qu'elle est stockée : array(topic => ordre + 'at'). */
+    public static function queuedOrders() {
+        $file = self::cachedValue(self::ATTENTE_KEY, array());
+        return is_array($file) ? $file : array();
+    }
+
+    private static function attenteLock() {
+        $fichier = @fopen(jeedom::getTmpFolder('mqttbe') . '/attente.lock', 'c');
+        if ($fichier === false) {
+            return null;
+        }
+        if (!@flock($fichier, LOCK_EX)) {
+            fclose($fichier);
+            return null;
+        }
+        return $fichier;
+    }
+
+    /**
+     * Met un ordre de publication en file.
+     *
+     * Le même topic remplace l'ordre précédent : seul compte le dernier état
+     * demandé. La file pleine, c'est le plus ancien qui sort — il est aussi le
+     * plus près de périmer.
+     */
+    public static function queuePublish($_ordre, $_maintenant = null) {
+        $maintenant = $_maintenant === null ? time() : (int) $_maintenant;
+        $verrou = self::attenteLock();
+        try {
+            $file = self::queuedOrders();
+            $topic = (string) $_ordre['topic'];
+            if (isset($file[$topic])) {
+                mqttbe::logger('debug', sprintf(
+                    __('Ordre en attente sur « %1$s » remplacé par le plus récent', __FILE__), $topic
+                ));
+                unset($file[$topic]);
+            }
+            $_ordre['at'] = $maintenant;
+            $file[$topic] = $_ordre;
+            while (count($file) > self::ATTENTE_MAX) {
+                reset($file);
+                $sorti = key($file);
+                unset($file[$sorti]);
+                mqttbe::logger('warning', sprintf(
+                    __('File des ordres en attente pleine : ordre sur « %s » abandonné', __FILE__), $sorti
+                ));
+            }
+            cache::set(self::ATTENTE_KEY, $file);
+        } finally {
+            self::pendingUnlock($verrou);
+        }
+        mqttbe::logger('info', sprintf(
+            __('Démon pas encore prêt : ordre sur « %1$s » (%2$s) mis en attente', __FILE__),
+            $topic, $_ordre['payload']
         ));
+    }
+
+    /**
+     * Retire de la file les ordres à publier, et jette les périmés.
+     *
+     * La file est vidée sous verrou : deux processus qui la vident en même
+     * temps (start() et le cron, ou deux publish()) ne publient jamais deux
+     * fois le même ordre.
+     */
+    public static function takeQueued($_maintenant = null) {
+        $maintenant = $_maintenant === null ? time() : (int) $_maintenant;
+        $verrou = self::attenteLock();
+        try {
+            $file = self::queuedOrders();
+            if (!empty($file)) {
+                cache::set(self::ATTENTE_KEY, array());
+            }
+        } finally {
+            self::pendingUnlock($verrou);
+        }
+        $aPublier = array();
+        foreach ($file as $topic => $ordre) {
+            $age = $maintenant - (int) (isset($ordre['at']) ? $ordre['at'] : 0);
+            if ($age > self::ATTENTE_TTL) {
+                mqttbe::logger('warning', sprintf(
+                    __('Ordre sur « %1$s » (%2$s) abandonné : en attente depuis %3$s s, il ne correspond plus à rien', __FILE__),
+                    $topic, isset($ordre['payload']) ? $ordre['payload'] : '', $age
+                ));
+                continue;
+            }
+            $aPublier[$topic] = $ordre;
+        }
+        return $aPublier;
+    }
+
+    /**
+     * Remet en file un ordre dont la publication a échoué, s'il n'a pas été
+     * remplacé entre-temps par un plus récent sur le même topic.
+     */
+    private static function requeue($_ordre) {
+        $verrou = self::attenteLock();
+        try {
+            $file = self::queuedOrders();
+            if (!isset($file[$_ordre['topic']])) {
+                $file[$_ordre['topic']] = $_ordre;
+                cache::set(self::ATTENTE_KEY, $file);
+            }
+        } finally {
+            self::pendingUnlock($verrou);
+        }
+    }
+
+    /**
+     * Publie les ordres en attente. Rend le nombre d'ordres publiés.
+     *
+     * Rien ne part tant que le broker n'est pas connecté : le démon
+     * refuserait la publication. Un ordre refusé retourne en file, où sa
+     * durée de vie continue de courir depuis son émission d'origine.
+     */
+    public static function flushQueued() {
+        if (empty(self::queuedOrders()) || !self::state() || self::brokerState() !== 'ok') {
+            return 0;
+        }
+        $publies = 0;
+        foreach (self::takeQueued() as $topic => $ordre) {
+            $age = time() - (int) $ordre['at'];
+            $envoi = $ordre;
+            unset($envoi['at']);
+            if (self::send($envoi, false)) {
+                $publies++;
+                mqttbe::logger('info', sprintf(
+                    __('Ordre en attente publié sur « %1$s » (%2$s), émis il y a %3$s s', __FILE__),
+                    $topic, $ordre['payload'], $age
+                ));
+            } else {
+                self::requeue($ordre);
+            }
+        }
+        return $publies;
+    }
+
+    /**
+     * Après start() : attend un peu la connexion au broker, puis vide la file.
+     *
+     * L'annonce « brokerUp » arrive par le callback, dans un autre processus,
+     * une fraction de seconde après le démarrage. Attendre ici, borné, évite
+     * qu'un ordre en file patiente encore une minute le cron suivant.
+     */
+    private static function flushAfterStart() {
+        if (empty(self::queuedOrders())) {
+            return;
+        }
+        for ($i = 0; $i < self::ATTENTE_BROKER * 4 && self::brokerState() !== 'ok'; $i++) {
+            usleep(250000);
+        }
+        self::flushQueued();
     }
 
     /* ------------------------------------------------------- démon -> Jeedom */

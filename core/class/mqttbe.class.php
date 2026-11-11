@@ -94,6 +94,9 @@ class mqttbe extends eqLogic {
             return;
         }
         mqttbeDaemon::syncLogLevel();
+        /* Les ordres émis pendant le démarrage du démon, si start() n'a pas pu
+         * les publier lui-même (broker encore absent, démon lancé autrement). */
+        mqttbeDaemon::flushQueued();
         /* Filet de sécurité : si un envoi de table a échoué parce que le démon
          * redémarrait, la minute suivante le rattrape sans que personne n'ait
          * à s'en apercevoir. */

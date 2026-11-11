@@ -73,7 +73,12 @@
         "Échec de l'envoi d'un ordre au démon": "Failed to send an order to the daemon",
         "File d'adoption illisible : le candidat n'en a pas été retiré.": "Adoption queue unreadable: the candidate was not removed from it.",
         "File d'adoption illisible : le candidat n'y a pas été ajouté.": "Adoption queue unreadable: the candidate was not added to it.",
-        "Clé BTHome ignorée, ligne %d : il faut l'adresse (12 chiffres hexadécimaux) puis la clé (32).": "BTHome key ignored, line %d: expected the address (12 hexadecimal digits) then the key (32)."
+        "Clé BTHome ignorée, ligne %d : il faut l'adresse (12 chiffres hexadécimaux) puis la clé (32).": "BTHome key ignored, line %d: expected the address (12 hexadecimal digits) then the key (32).",
+        "Ordre en attente sur « %1$s » remplacé par le plus récent": "Queued command on “%1$s” replaced by the most recent one",
+        "File des ordres en attente pleine : ordre sur « %s » abandonné": "Queue of pending commands full: command on “%s” dropped",
+        "Démon pas encore prêt : ordre sur « %1$s » (%2$s) mis en attente": "Daemon not ready yet: command on “%1$s” (%2$s) queued",
+        "Ordre sur « %1$s » (%2$s) abandonné : en attente depuis %3$s s, il ne correspond plus à rien": "Command on “%1$s” (%2$s) dropped: queued for %3$s s, it no longer makes sense",
+        "Ordre en attente publié sur « %1$s » (%2$s), émis il y a %3$s s": "Queued command published on “%1$s” (%2$s), issued %3$s s ago"
     },
     "plugins/mqttbe/core/class/mqttbeFactory.class.php": {
         "Canal disparu, commande désactivée :": "Channel gone, command disabled:",
