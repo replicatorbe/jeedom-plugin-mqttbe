@@ -522,18 +522,22 @@ function mqttbeControlesModeles() {
     $moteur->onMessage('parc/1', 'factice:sur,certain,2', false);
     $moteur->onMessage('parc/1', 'factice:balise,guess,1', false);
     $moteur->onMessage('parc/1', 'factice:balise,guess,2', false);
+    /* La supposition devient sûre : c'est sa vraie découverte, dite une fois. */
+    $moteur->onMessage('parc/1', 'factice:balise,certain,3', false);
+    $moteur->onMessage('parc/1', 'factice:balise,certain,4', false);
     $infos = array();
     foreach ($banc->lignes as $ligne) {
         if ($ligne[0] === 'info' && strpos($ligne[1], 'découverte[factice.a]') === 0) {
             $infos[] = $ligne[1];
         }
     }
-    $resultats[] = mqttbeVerifie('une découverte n\'est dite en info qu\'une fois, et jamais pour un « guess »',
-        count($banc->modeles) === 4 && count($infos) === 1
+    $resultats[] = mqttbeVerifie('une découverte n\'est dite en info qu\'une fois, quand elle est sûre',
+        count($banc->modeles) === 6 && count($infos) === 2
         && strpos($infos[0], 'factice:sur') !== false && strpos($infos[0], '1 canal') !== false
+        && strpos($infos[1], 'factice:balise') !== false && strpos($infos[1], '3 canal') !== false
         && $banc->dit('factice:balise', 'debug'),
-        count($infos) . ' ligne(s) info pour 4 modèles émis (attendu : 1, la première '
-        . 'découverte de l\'appareil certain) : ' . implode(' | ', $infos) . ' — chaque '
+        count($infos) . ' ligne(s) info pour 6 modèles émis (attendu : 2, la première '
+        . 'découverte de l\'appareil certain, et la balise quand elle devient sûre) : ' . implode(' | ', $infos) . ' — chaque '
         . 'version d\'une balise qui grossit noie le journal.');
 
     return $resultats;

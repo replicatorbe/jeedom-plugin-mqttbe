@@ -124,6 +124,7 @@ class MqttbeDiscoveryEngine {
 
     private $memory = array();    // id => clé => données
     private $seen   = array();    // adapter|uid => empreinte du dernier modèle émis
+    private $annonces = array();  // adapter|uid => déjà annoncé en info (voir emitModel)
     /*
      * topic => array('adapters' => array(id => true), 'qos' => int)
      *
@@ -489,6 +490,7 @@ class MqttbeDiscoveryEngine {
              * $ctx->rescan() qui leur dit de reprendre ce qu'ils jugent bon.
              */
             $this->seen = array();
+            $this->annonces = array();
             /* Les sondes abandonnées repartent, et les noms connus sont
              * redemandés : « relancer la découverte » est justement le geste de
              * celui qui vient de renommer son appareil dans l'application du
@@ -1068,10 +1070,10 @@ class MqttbeDiscoveryEngine {
              * idempotente, n'écrira rien — plutôt que de laisser cette table
              * croître avec le nombre d'uid distincts vus. */
             $this->seen = array();
+            $this->annonces = array();
             $this->log('warning', 'découverte : ' . self::SEEN_MAX . ' empreintes distinctes retenues, '
                                 . 'la table est vidée (le parc sera réémis une fois).');
         }
-        $premiere = !isset($this->seen[$cle]);
         $this->seen[$cle] = $empreinte;
         $this->emitted++;
 
@@ -1086,9 +1088,14 @@ class MqttbeDiscoveryEngine {
          * jour pour des balises de passage, qui noyaient tout le reste. Une
          * réémission (le modèle a changé) et un modèle simplement deviné
          * (« guess », qui ne crée rien d'office) passent donc en debug : ils
-         * restent visibles à qui les demande.
+         * restent visibles à qui les demande. Un « guess » qui devient sûr
+         * est annoncé à ce moment-là, une fois : c'est sa vraie découverte.
          */
-        $niveau = ($premiere && $modele->confidence() !== 'guess') ? 'info' : 'debug';
+        $niveau = 'debug';
+        if ($modele->confidence() !== 'guess' && !isset($this->annonces[$cle])) {
+            $niveau = 'info';
+            $this->annonces[$cle] = true;
+        }
         $this->log($niveau, 'découverte[' . $_id . '] : ' . ($modele->name() !== '' ? $modele->name() : $modele->uid())
                          . ($modele->deviceName() !== '' ? ' « ' . $modele->deviceName() . ' »' : '')
                          . ' (' . $modele->uid() . ', ' . $modele->countChannels() . ' canal/canaux, '

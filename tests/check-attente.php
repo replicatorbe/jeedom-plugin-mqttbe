@@ -172,6 +172,49 @@ function mqttbeControlesAttente() {
     }
     $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
 
+    /* 7. Un ordre direct rend caduc l'ordre en file sur le même topic.
+     * « Allumer » en file au démarrage, le démon s'annonce mais le broker
+     * tarde, « Éteindre » est envoyé directement et échoue : quand le broker
+     * revient, le vieil « Allumer » ne doit pas partir. */
+    $titre = 'un ordre direct annule l\'ordre en file sur le même topic';
+    mqttbeAttenteRAZ();
+    cache::set(mqttbeDaemon::CACHE_DEMARRAGE, time());
+    mqttbeAttentePublie('lampe', 'on');
+    mqttbeAttentePublie('autre', 'on');
+    mqttbeAttenteDemonInjoignable('nok');
+    mqttbeAttentePublie('lampe', 'off');
+    $file = mqttbeDaemon::queuedOrders();
+    $resultats[] = (!isset($file['lampe']) && isset($file['autre']))
+        ? mqttbeOk($titre)
+        : mqttbeEchec($titre, 'le vieil « Allumer » est resté en file derrière un « Éteindre » '
+            . 'plus récent : il partirait au retour du broker.');
+
+    /* 8. Un ordre en vol (sorti de la file par un vidage) ne revient pas
+     * en file si un ordre direct plus récent est parti entre-temps. */
+    $titre = 'un ordre en vol ne revient pas en file derrière un ordre plus récent';
+    mqttbeAttenteRAZ();
+    mqttbeDaemon::queuePublish(array('cmd' => 'publish', 'topic' => 'lampe', 'payload' => 'on',
+                                     'qos' => 0, 'retain' => false));
+    mqttbeAttenteDemonInjoignable('ok');
+    $fautes = array();
+    $enVol = mqttbeDaemon::takeQueued();
+    if (!isset($enVol['lampe'])) {
+        $fautes[] = "l'ordre n'est pas sorti de la file.";
+    } else {
+        cache::set('mqttbe::vidageDepuis', time());
+        usleep(2000);
+        mqttbeAttentePublie('lampe', 'off');
+        if (method_exists('mqttbeDaemon', 'requeue')) {
+            $remet = new ReflectionMethod('mqttbeDaemon', 'requeue');
+            $remet->setAccessible(true);
+            $remet->invoke(null, $enVol['lampe']);
+        }
+        if (isset(mqttbeDaemon::queuedOrders()['lampe'])) {
+            $fautes[] = "l'« Allumer » en vol est revenu en file après un « Éteindre » direct.";
+        }
+    }
+    $resultats[] = empty($fautes) ? mqttbeOk($titre) : mqttbeEchec($titre, implode("\n", $fautes));
+
     return $resultats;
 }
 

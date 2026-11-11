@@ -9,7 +9,8 @@
   the daemon and the broker are ready. One command per topic, the latest; at
   most a hundred; a command queued for more than three minutes is dropped,
   with a warning in the log. A daemon stopped outside a start still refuses
-  commands.
+  commands. A more recent direct command on the same topic cancels the
+  queued one; a flush takes twenty seconds at most.
 - CameraOnTv: the empty camera list the app publishes when it starts no longer
   replaces the known list (no more "13 of 22 commands no longer appear"
   warning).

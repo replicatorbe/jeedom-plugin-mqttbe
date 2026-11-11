@@ -78,7 +78,8 @@
         "File des ordres en attente pleine : ordre sur « %s » abandonné": "Queue of pending commands full: command on “%s” dropped",
         "Démon pas encore prêt : ordre sur « %1$s » (%2$s) mis en attente": "Daemon not ready yet: command on “%1$s” (%2$s) queued",
         "Ordre sur « %1$s » (%2$s) abandonné : en attente depuis %3$s s, il ne correspond plus à rien": "Command on “%1$s” (%2$s) dropped: queued for %3$s s, it no longer makes sense",
-        "Ordre en attente publié sur « %1$s » (%2$s), émis il y a %3$s s": "Queued command published on “%1$s” (%2$s), issued %3$s s ago"
+        "Ordre en attente publié sur « %1$s » (%2$s), émis il y a %3$s s": "Queued command published on “%1$s” (%2$s), issued %3$s s ago",
+        "Ordre en attente sur « %s » annulé par un ordre plus récent": "Queued command on “%s” cancelled by a more recent command"
     },
     "plugins/mqttbe/core/class/mqttbeFactory.class.php": {
         "Canal disparu, commande désactivée :": "Channel gone, command disabled:",

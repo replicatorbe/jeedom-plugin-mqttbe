@@ -126,6 +126,15 @@ class mqttbeDaemon {
     /* Ce que start() accepte d'attendre la connexion au broker avant de
      * vider la file. Au-delà, le cron prend le relais à la minute suivante. */
     const ATTENTE_BROKER  = 5;
+    /* Les ordres partis directement, par topic : un ordre en file plus ancien
+     * qu'eux ne doit plus jamais partir (voir annuleEnFile()). */
+    const DIRECTS_KEY     = 'mqttbe::ordresDirects';
+    /* Posé pendant un vidage : la file est alors vide en apparence, mais des
+     * ordres sont en vol et peuvent y revenir. */
+    const CACHE_VIDAGE    = 'mqttbe::vidageDepuis';
+    /* Durée totale qu'un vidage s'accorde. Chaque envoi peut attendre quatre
+     * secondes un démon figé : cent ordres bloqueraient le cron sept minutes. */
+    const VIDAGE_MAX      = 20;
 
     /**
      * URL que le démon appellera pour parler à Jeedom.
@@ -744,7 +753,54 @@ class mqttbeDaemon {
             }
             return true;
         }
+        /* Cet ordre, qu'il réussisse ou échoue, est la dernière volonté
+         * exprimée pour ce topic : l'ordre en file, plus ancien, est caduc. */
+        self::annuleEnFile($_topic);
         return self::send($ordre);
+    }
+
+    /**
+     * Un ordre direct rend caduc l'ordre en file sur le même topic.
+     *
+     * Sans cela : « Allumer » mis en file au démarrage, le démon s'annonce
+     * mais le broker tarde, un « Éteindre » direct échoue, le broker revient
+     * — et le cron publie le vieil « Allumer ». L'ordre en file est retiré,
+     * et l'heure de l'ordre direct retenue : un ordre en vol dans un vidage
+     * (sorti de la file, pas encore publié) n'y reviendra pas s'il est plus
+     * ancien. Rien n'est fait — ni verrou, ni écriture — quand la file est
+     * vide et qu'aucun vidage ne tourne, c'est-à-dire presque toujours.
+     */
+    private static function annuleEnFile($_topic) {
+        $vidage = (int) self::cachedValue(self::CACHE_VIDAGE, 0);
+        $enVidage = $vidage > 0 && time() - $vidage <= self::VIDAGE_MAX + 10;
+        if (!$enVidage && empty(self::queuedOrders())) {
+            return;
+        }
+        $verrou = self::attenteLock();
+        try {
+            $file = self::queuedOrders();
+            if (isset($file[$_topic])) {
+                unset($file[$_topic]);
+                cache::set(self::ATTENTE_KEY, $file);
+                mqttbe::logger('info', sprintf(
+                    __('Ordre en attente sur « %s » annulé par un ordre plus récent', __FILE__), $_topic
+                ));
+            }
+            $directs = self::cachedValue(self::DIRECTS_KEY, array());
+            $directs = is_array($directs) ? $directs : array();
+            /* Au-delà de la durée de vie de la file, plus aucun ordre en
+             * attente ne peut être plus ancien : inutile de s'en souvenir. */
+            $limite = microtime(true) - self::ATTENTE_TTL;
+            foreach ($directs as $topic => $quand) {
+                if ($quand < $limite) {
+                    unset($directs[$topic]);
+                }
+            }
+            $directs[$_topic] = microtime(true);
+            cache::set(self::DIRECTS_KEY, $directs);
+        } finally {
+            self::pendingUnlock($verrou);
+        }
     }
 
     /* ------------------------------------------- ordres en attente du démon */
@@ -817,6 +873,9 @@ class mqttbeDaemon {
                 unset($file[$topic]);
             }
             $_ordre['at'] = $maintenant;
+            /* L'ordre d'arrivée, à la microseconde : c'est lui qui départage
+             * un ordre en file et un ordre direct émis dans la même seconde. */
+            $_ordre['seq'] = microtime(true);
             $file[$topic] = $_ordre;
             while (count($file) > self::ATTENTE_MAX) {
                 reset($file);
@@ -877,7 +936,12 @@ class mqttbeDaemon {
         $verrou = self::attenteLock();
         try {
             $file = self::queuedOrders();
-            if (!isset($file[$_ordre['topic']])) {
+            $directs = self::cachedValue(self::DIRECTS_KEY, array());
+            $direct = is_array($directs) && isset($directs[$_ordre['topic']])
+                    ? (float) $directs[$_ordre['topic']] : 0.0;
+            $seq = isset($_ordre['seq']) ? (float) $_ordre['seq'] : 0.0;
+            /* Un ordre plus récent — en file ou parti directement — l'emporte. */
+            if (!isset($file[$_ordre['topic']]) && $direct < $seq) {
                 $file[$_ordre['topic']] = $_ordre;
                 cache::set(self::ATTENTE_KEY, $file);
             }
@@ -898,21 +962,38 @@ class mqttbeDaemon {
             return 0;
         }
         $publies = 0;
-        foreach (self::takeQueued() as $topic => $ordre) {
-            $age = time() - (int) $ordre['at'];
-            $envoi = $ordre;
-            unset($envoi['at']);
-            if (self::send($envoi, false)) {
-                $publies++;
-                mqttbe::logger('info', sprintf(
-                    __('Ordre en attente publié sur « %1$s » (%2$s), émis il y a %3$s s', __FILE__),
-                    $topic, $ordre['payload'], $age
-                ));
-            } else {
-                self::requeue($ordre);
+        $debut = time();
+        cache::set(self::CACHE_VIDAGE, $debut);
+        try {
+            foreach (self::takeQueued() as $topic => $ordre) {
+                /* Le temps imparti est écoulé : le reste retourne en file,
+                 * pour le prochain passage du cron, s'il vit encore. */
+                if (time() - $debut >= self::VIDAGE_MAX) {
+                    self::requeue($ordre);
+                    continue;
+                }
+                $publies += self::publieDeFile($topic, $ordre);
             }
+        } finally {
+            cache::set(self::CACHE_VIDAGE, 0);
         }
         return $publies;
+    }
+
+    /** Publie un ordre sorti de la file ; rend 1 s'il est parti, 0 sinon. */
+    private static function publieDeFile($_topic, $_ordre) {
+        $age = time() - (int) $_ordre['at'];
+        $envoi = $_ordre;
+        unset($envoi['at'], $envoi['seq']);
+        if (self::send($envoi, false)) {
+            mqttbe::logger('info', sprintf(
+                __('Ordre en attente publié sur « %1$s » (%2$s), émis il y a %3$s s', __FILE__),
+                $_topic, $_ordre['payload'], $age
+            ));
+            return 1;
+        }
+        self::requeue($_ordre);
+        return 0;
     }
 
     /**

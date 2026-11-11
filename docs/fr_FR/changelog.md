@@ -11,12 +11,13 @@
   démon et le broker sont prêts. Un seul ordre par topic, le dernier ; cent au
   plus ; un ordre en attente depuis plus de trois minutes est abandonné, avec
   un avertissement au journal. Un démon arrêté hors démarrage refuse toujours
-  les ordres.
+  les ordres. Un ordre direct plus récent sur le même topic annule l'ordre en
+  file ; un vidage s'accorde vingt secondes au plus.
 - CameraOnTv : la liste de caméras vide que l'application publie à son
   démarrage ne remplace plus la liste connue. Fin de l'avertissement
   « 13 commandes sur 22 n'apparaissent plus » deux fois par jour.
-- Journal du démon : une découverte n'est écrite en info qu'à la première vue
-  d'un appareil dont la confiance n'est pas « guess ». Les réémissions (le
+- Journal du démon : une découverte n'est écrite en info qu'une fois, quand la
+  confiance de l'appareil n'est pas (ou plus) « guess ». Les réémissions (le
   modèle d'une balise qui gagne un canal) et les suppositions passent en debug
   — environ six cents lignes par jour de moins.
 
